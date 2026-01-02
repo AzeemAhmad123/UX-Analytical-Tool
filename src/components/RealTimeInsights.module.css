@@ -1,0 +1,131 @@
+/* CSS Variables */
+:root {
+  --primary: #5b8cff;
+  --dark: #2f3440;
+  --light: #f5f7fb;
+  --card: #ffffff;
+  --bg-blue: #e8f0ff;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, sans-serif;
+}
+
+/* Full width background section */
+.sectionWrapper {
+  width: 100%;
+  background-color: #F5F5F5;
+  color: var(--dark);
+}
+
+.container {
+  max-width: 1440px;
+  margin: auto;
+  padding: 80px 20px;
+}
+
+/* ===== HERO ===== */
+.hero {
+  text-align: center;
+  margin-bottom: 80px;
+}
+
+.hero small {
+  letter-spacing: 1px;
+  font-size: 14px;
+  color: #6b7280;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.hero h1 {
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.hero h1 span {
+  color: var(--primary);
+}
+
+/* ===== CONTENT ===== */
+.content {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  gap: 40px;
+  align-items: stretch;
+}
+
+/* LEFT CARDS */
+.features {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.card {
+  background: var(--card);
+  padding: 28px;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+}
+
+.card h3 {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.card h3 span {
+  color: var(--primary);
+}
+
+.card p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #6b7280;
+}
+
+.card a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  color: var(--primary);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+/* RIGHT MOCKUP */
+.preview {
+  background: var(--bg-blue);
+  border-radius: 18px;
+  padding: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.video {
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+  object-fit: cover;
+}
+
+/* RESPONSIVE */
+@media (max-width: 900px) {
+  .hero h1 {
+    font-size: 40px;
+  }
+
+  .content {
+    grid-template-columns: 1fr;
+  }
+}
