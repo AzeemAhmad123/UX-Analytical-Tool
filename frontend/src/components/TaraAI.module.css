@@ -1,0 +1,137 @@
+/* Tara AI Section */
+.sectionWrapper {
+  width: 100%;
+  background: #F5F5F5;
+  padding: 80px 20px;
+}
+
+.container {
+  max-width: 1400px;
+  margin: auto;
+  background: linear-gradient(135deg, #6B9FFF 0%, #B88FFF 100%);
+  border-radius: 24px;
+  padding: 60px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+  overflow: visible;
+  position: relative;
+}
+
+.content {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 60px;
+  align-items: center;
+}
+
+/* Text Content */
+.textContent {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  color: #ffffff;
+}
+
+.badge {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comingSoon {
+  display: inline-block;
+  background: #FFB3D9;
+  color: #1a1a1a;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+.subtitle {
+  font-size: 13px;
+  letter-spacing: 2px;
+  font-weight: 500;
+  opacity: 0.95;
+}
+
+.heading {
+  font-size: 56px;
+  font-weight: 800;
+  line-height: 1.2;
+  margin: 0;
+  color: #1a1a1a;
+}
+
+.highlight {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.learnMoreBtn {
+  background: #1a1a1a;
+  color: #ffffff;
+  border: none;
+  padding: 14px 32px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  transition: all 0.3s ease;
+}
+
+.learnMoreBtn:hover {
+  background: #2a2a2a;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}
+
+/* Image Content */
+.imageContent {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  position: relative;
+  overflow: visible;
+}
+
+.taraImage {
+  width: 120%;
+  height: auto;
+  object-fit: contain;
+  position: relative;
+  right: -60px;
+  border-radius: 0;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .container {
+    padding: 40px 30px;
+  }
+
+  .content {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+
+  .heading {
+    font-size: 40px;
+  }
+
+  .textContent {
+    text-align: center;
+    align-items: center;
+  }
+
+  .imageContent {
+    justify-content: center;
+  }
+
+  .taraImage {
+    width: 100%;
+    right: 0;
+  }
+}
+

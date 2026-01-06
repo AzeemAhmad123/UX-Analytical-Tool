@@ -1,0 +1,481 @@
+import { Router, Request, Response } from 'express'
+import * as LZString from 'lz-string'
+import { getSessionByProjectAndSessionId, getSessionsByProject } from '../services/sessionService'
+import { getSessionSnapshots, getSessionDurationFromSnapshots } from '../services/snapshotService'
+import { supabase } from '../config/supabase'
+
+const router = Router()
+
+/**
+ * GET /api/sessions/:projectId
+ * Get all sessions for a project with optional filtering
+ * 
+ * Query params:
+ * - limit: number (default: 50)
+ * - offset: number (default: 0)
+ * - start_date: ISO string
+ * - end_date: ISO string
+ * 
+ * Returns:
+ * {
+ *   sessions: [ ... ],
+ *   count: number,
+ *   total: number
+ * }
+ */
+router.get('/:projectId', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId
+    const limit = parseInt(req.query.limit as string) || 50
+    const offset = parseInt(req.query.offset as string) || 0
+    const startDate = req.query.start_date as string
+    const endDate = req.query.end_date as string
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'projectId is required'
+      })
+    }
+
+    // Build query
+    let query = supabase
+      .from('sessions')
+      .select('*', { count: 'exact' })
+      .eq('project_id', projectId)
+      .order('start_time', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    // Apply date filters if provided
+    if (startDate) {
+      query = query.gte('start_time', startDate)
+    }
+    if (endDate) {
+      query = query.lte('start_time', endDate)
+    }
+
+    const { data: sessions, error, count } = await query
+
+    if (error) {
+      throw new Error(`Failed to retrieve sessions: ${error.message}`)
+    }
+
+    // Calculate accurate duration for each session from actual event timestamps
+    // This prevents showing 10 minutes when the actual video is only 10 seconds
+    // Use Promise.allSettled to prevent one slow session from blocking all others
+    const sessionsWithAccurateDuration = await Promise.allSettled(
+      (sessions || []).map(async (session: any) => {
+        // Try to get duration from event timestamps (most accurate)
+        // Add timeout to prevent hanging
+        const durationPromise = getSessionDurationFromSnapshots(session.id)
+        const timeoutPromise = new Promise<null>((resolve) => 
+          setTimeout(() => resolve(null), 2000) // 2 second timeout
+        )
+        
+        const eventBasedDuration = await Promise.race([durationPromise, timeoutPromise])
+        
+        if (eventBasedDuration && eventBasedDuration > 0) {
+          // Use event-based duration (most accurate)
+          return {
+            ...session,
+            duration: eventBasedDuration
+          }
+        }
+        
+        // Fallback: use stored duration or calculate from timestamps
+        const startTime = new Date(session.start_time).getTime()
+        const lastActivityTime = new Date(session.last_activity_time).getTime()
+        const timeBasedDuration = lastActivityTime - startTime
+        
+        // Use stored duration if it's reasonable, otherwise use time-based
+        let finalDuration = session.duration || 0
+        
+        // Cap at reasonable maximum (10 minutes)
+        const maxReasonableDuration = 10 * 60 * 1000
+        
+        if (finalDuration === 0) {
+          finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
+        } else if (finalDuration > maxReasonableDuration) {
+          finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
+        }
+        
+        return {
+          ...session,
+          duration: finalDuration
+        }
+      })
+    ).then(results => 
+      results
+        .filter(result => result.status === 'fulfilled')
+        .map(result => (result as PromiseFulfilledResult<any>).value)
+        .filter(session => session && typeof session === 'object' && session.id)
+    )
+
+    res.json({
+      success: true,
+      sessions: sessionsWithAccurateDuration,
+      count: sessionsWithAccurateDuration.length,
+      total: count || 0,
+      limit,
+      offset
+    })
+  } catch (error: any) {
+    console.error('Error in /api/sessions/:projectId:', error)
+    res.status(500).json({
+      error: 'Failed to retrieve sessions',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * GET /api/sessions/:projectId/:sessionId
+ * Get session data and all snapshots for replay
+ * 
+ * Returns:
+ * {
+ *   session: { ... },
+ *   snapshots: [ ... ], // Array of decompressed rrweb events
+ *   total_snapshots: number
+ * }
+ */
+router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId
+    const sessionId = req.params.sessionId
+
+    if (!projectId || !sessionId) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        message: 'projectId and sessionId are required'
+      })
+    }
+
+    // Get session
+    const session = await getSessionByProjectAndSessionId(projectId, sessionId)
+
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found',
+        message: `Session ${sessionId} not found for project ${projectId}`
+      })
+    }
+
+    // Get all snapshots for this session
+    const snapshots = await getSessionSnapshots(session.id)
+
+    console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`)
+
+    // Decompress and parse all snapshots
+    const decompressedSnapshots: any[] = []
+    
+    for (const snapshot of snapshots) {
+      try {
+        let events: any
+
+        // Log snapshot info for debugging
+        console.log(`📄 Processing snapshot ${snapshot.id}`, {
+          dataLength: snapshot.snapshot_data?.length || 0,
+          dataType: typeof snapshot.snapshot_data,
+          snapshotCount: snapshot.snapshot_count,
+          isInitial: snapshot.is_initial_snapshot
+        })
+
+        // First, ensure we have a proper string (handle Buffer objects)
+        let snapshotString = snapshot.snapshot_data
+        if (typeof snapshotString === 'string') {
+          // Check if it's a JSON-serialized Buffer object
+          try {
+            const parsed = JSON.parse(snapshotString)
+            if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
+              // Convert Buffer object to actual string
+              const buffer = Buffer.from(parsed.data)
+              snapshotString = buffer.toString('utf8')
+              console.log(`✅ Converted Buffer object to string (${buffer.length} bytes)`)
+            }
+          } catch (e) {
+            // Not a JSON Buffer object, use as-is
+          }
+        }
+
+        // Try to decompress with LZString first (SDK sends compressed data)
+        const decompressed = LZString.decompress(snapshotString)
+        if (decompressed && decompressed.length > 0) {
+          // Successfully decompressed
+          events = JSON.parse(decompressed)
+          console.log(`✅ Decompressed snapshot ${snapshot.id}`, {
+            decompressedLength: decompressed.length,
+            isArray: Array.isArray(events),
+            eventCount: Array.isArray(events) ? events.length : 1,
+            expectedCount: snapshot.snapshot_count,
+            firstEventType: Array.isArray(events) ? events[0]?.type : events?.type,
+            // Debug: Check if first element is an array (double-wrapped)
+            firstElementIsArray: Array.isArray(events) && events.length > 0 ? Array.isArray(events[0]) : false
+          })
+        } else {
+          // Try parsing as JSON directly (might already be decompressed)
+          try {
+            events = JSON.parse(snapshotString)
+            
+            // Check if parsed result is a Buffer object (shouldn't happen, but handle it)
+            if (events && typeof events === 'object' && events.type === 'Buffer' && Array.isArray(events.data)) {
+              const buffer = Buffer.from(events.data)
+              const bufferString = buffer.toString('utf8')
+              events = JSON.parse(bufferString)
+              console.log(`✅ Parsed Buffer object and extracted JSON (${buffer.length} bytes)`)
+            }
+            
+            console.log(`✅ Parsed snapshot ${snapshot.id} as JSON`, {
+              dataLength: snapshotString.length,
+              isArray: Array.isArray(events),
+              eventCount: Array.isArray(events) ? events.length : 1,
+              expectedCount: snapshot.snapshot_count,
+              firstEventType: Array.isArray(events) ? events[0]?.type : events?.type,
+              // Debug: Check if first element is an array (double-wrapped)
+              firstElementIsArray: Array.isArray(events) && events.length > 0 ? Array.isArray(events[0]) : false,
+              // Debug: Show first 200 chars of parsed data to understand structure
+              parsedPreview: JSON.stringify(events).substring(0, 200)
+            })
+          } catch (parseError: any) {
+            console.error(`❌ Failed to parse snapshot ${snapshot.id}:`, parseError.message)
+            throw new Error(`Failed to parse snapshot: ${parseError.message}`)
+          }
+        }
+
+        // Ensure events is an array - CRITICAL: SDK sends arrays of events
+        // Handle different data structures that might come from decompression
+        let eventsToAdd: any[] = []
+        
+        if (Array.isArray(events)) {
+          // Check if array length matches expected count
+          if (events.length === snapshot.snapshot_count) {
+            // Perfect match - use as-is
+            eventsToAdd = events
+            console.log(`✅ Array length matches: ${events.length} events (expected ${snapshot.snapshot_count})`)
+          } else if (events.length === 1 && Array.isArray(events[0])) {
+            // Double-wrapped array: [[event1, event2, ...]]
+            console.log(`📦 Unwrapping double-wrapped array: outer length=${events.length}, inner length=${events[0].length}`)
+            eventsToAdd = events[0]
+          } else if (events.length === 1 && events[0] && typeof events[0] === 'object' && events[0].type) {
+            // Single event in array - might be correct if snapshot_count is 1
+            if (snapshot.snapshot_count === 1) {
+              eventsToAdd = events
+              console.log(`✅ Single event in array (expected)`)
+            } else {
+              // Unexpected: should have more events
+              console.warn(`⚠️ Array has 1 element but expected ${snapshot.snapshot_count} events`)
+              console.warn(`   First element structure:`, {
+                type: events[0].type,
+                hasData: !!events[0].data,
+                keys: Object.keys(events[0]),
+                dataKeys: events[0].data ? Object.keys(events[0].data) : []
+              })
+              eventsToAdd = events // Add what we have
+            }
+          } else {
+            // Array length doesn't match - use what we have
+            console.warn(`⚠️ Array length mismatch: got ${events.length}, expected ${snapshot.snapshot_count}`)
+            eventsToAdd = events
+          }
+        } else if (events && typeof events === 'object') {
+          // Check if it's an object that might contain an array
+          if (events.events && Array.isArray(events.events)) {
+            console.log(`📦 Found events array in object, got ${events.events.length} events`)
+            eventsToAdd = events.events
+          } else if (events.data && Array.isArray(events.data)) {
+            console.log(`📦 Found data array in object, got ${events.data.length} events`)
+            eventsToAdd = events.data
+          } else if (events.type !== undefined) {
+            // Single event object
+            eventsToAdd = [events]
+            console.warn(`⚠️ Snapshot ${snapshot.id} returned single event object instead of array (expected ${snapshot.snapshot_count} events)`)
+            console.warn(`   Event structure:`, { type: events.type, hasData: !!events.data, keys: Object.keys(events) })
+          } else {
+            // Unknown object structure
+            console.warn(`⚠️ Unknown object structure:`, Object.keys(events))
+            eventsToAdd = [events]
+          }
+        } else {
+          // Fallback: add as-is
+          console.warn(`⚠️ Snapshot ${snapshot.id} returned unexpected format:`, typeof events)
+          eventsToAdd = [events]
+        }
+        
+        // Add all events to the decompressed snapshots
+        decompressedSnapshots.push(...eventsToAdd)
+        console.log(`📦 Added ${eventsToAdd.length} events from snapshot ${snapshot.id} (expected ${snapshot.snapshot_count}, total so far: ${decompressedSnapshots.length})`)
+      } catch (error: any) {
+        console.error(`❌ Error processing snapshot ${snapshot.id}:`, error.message)
+        console.error('Snapshot data preview:', snapshot.snapshot_data?.substring(0, 100))
+        // Skip this snapshot if decompression fails
+      }
+    }
+
+    console.log(`✅ Total decompressed events: ${decompressedSnapshots.length}`)
+
+    // Calculate actual duration from event timestamps (more accurate than database duration)
+    let calculatedDuration = session.duration || 0
+    if (decompressedSnapshots.length > 0) {
+      const timestamps = decompressedSnapshots
+        .map((e: any) => e.timestamp)
+        .filter((ts: any) => ts && typeof ts === 'number')
+        .sort((a: number, b: number) => a - b)
+      
+      if (timestamps.length >= 2) {
+        const firstTimestamp = timestamps[0]
+        const lastTimestamp = timestamps[timestamps.length - 1]
+        calculatedDuration = lastTimestamp - firstTimestamp
+        console.log(`📊 Calculated duration from events: ${calculatedDuration}ms (${Math.round(calculatedDuration / 1000)}s)`)
+      } else if (timestamps.length === 1) {
+        calculatedDuration = 1000 // 1 second minimum
+      }
+    }
+
+    // Return session with all events combined
+    res.json({
+      session: {
+        id: session.id,
+        session_id: session.session_id,
+        project_id: session.project_id,
+        device_info: session.device_info,
+        start_time: session.start_time,
+        last_activity_time: session.last_activity_time,
+        duration: calculatedDuration, // Use calculated duration from events
+        event_count: session.event_count,
+        created_at: session.created_at
+      },
+      snapshots: decompressedSnapshots,
+      total_snapshots: decompressedSnapshots.length,
+      snapshot_batches: snapshots.length
+    })
+  } catch (error: any) {
+    console.error('Error in /api/sessions/:projectId/:sessionId:', error)
+    res.status(500).json({
+      error: 'Failed to retrieve session',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * DELETE /api/sessions/:projectId/:sessionId
+ * Delete a specific session
+ */
+router.delete('/:projectId/:sessionId', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId
+    const sessionId = req.params.sessionId
+
+    if (!projectId || !sessionId) {
+      return res.status(400).json({
+        error: 'Missing required parameters',
+        message: 'projectId and sessionId are required'
+      })
+    }
+
+    // Get session first to verify it exists and belongs to project
+    const session = await getSessionByProjectAndSessionId(projectId, sessionId)
+
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found',
+        message: `Session ${sessionId} not found for project ${projectId}`
+      })
+    }
+
+    // Delete session (cascade will delete snapshots and events)
+    const { error } = await supabase
+      .from('sessions')
+      .delete()
+      .eq('id', session.id)
+
+    if (error) {
+      throw new Error(`Failed to delete session: ${error.message}`)
+    }
+
+    res.json({
+      success: true,
+      message: 'Session deleted successfully'
+    })
+  } catch (error: any) {
+    console.error('Error in DELETE /api/sessions/:projectId/:sessionId:', error)
+    res.status(500).json({
+      error: 'Failed to delete session',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * DELETE /api/sessions/:projectId
+ * Delete multiple sessions
+ * 
+ * Request body:
+ * {
+ *   sessionIds: string[]
+ * }
+ */
+router.delete('/:projectId', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId
+    const { sessionIds } = req.body
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'projectId is required'
+      })
+    }
+
+    if (!Array.isArray(sessionIds) || sessionIds.length === 0) {
+      return res.status(400).json({
+        error: 'Invalid request',
+        message: 'sessionIds must be a non-empty array'
+      })
+    }
+
+    // Get all sessions for this project
+    const { data: sessions, error: fetchError } = await supabase
+      .from('sessions')
+      .select('id, session_id')
+      .eq('project_id', projectId)
+      .in('session_id', sessionIds)
+
+    if (fetchError) {
+      throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
+    }
+
+    if (!sessions || sessions.length === 0) {
+      return res.status(404).json({
+        error: 'No sessions found',
+        message: 'No matching sessions found for deletion'
+      })
+    }
+
+    // Delete sessions
+    const sessionDbIds = sessions.map(s => s.id)
+    const { error: deleteError } = await supabase
+      .from('sessions')
+      .delete()
+      .in('id', sessionDbIds)
+
+    if (deleteError) {
+      throw new Error(`Failed to delete sessions: ${deleteError.message}`)
+    }
+
+    res.json({
+      success: true,
+      deleted_count: sessions.length,
+      message: `Successfully deleted ${sessions.length} session(s)`
+    })
+  } catch (error: any) {
+    console.error('Error in DELETE /api/sessions/:projectId:', error)
+    res.status(500).json({
+      error: 'Failed to delete sessions',
+      message: error.message
+    })
+  }
+})
+
+export default router
+

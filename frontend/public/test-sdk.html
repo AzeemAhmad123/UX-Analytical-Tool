@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UXCam SDK Test Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    .test-section {
+      margin: 2rem 0;
+      padding: 1.5rem;
+      border: 2px solid #e5e7eb;
+      border-radius: 8px;
+    }
+    button {
+      padding: 0.75rem 1.5rem;
+      background-color: #9333ea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1rem;
+      margin: 0.5rem;
+    }
+    button:hover {
+      background-color: #7e22ce;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      margin: 0.5rem 0;
+    }
+    .scroll-area {
+      height: 2000px;
+      background: linear-gradient(to bottom, #f3f4f6, #ffffff);
+      padding: 2rem;
+      margin: 1rem 0;
+      border-radius: 8px;
+    }
+    .status {
+      padding: 1rem;
+      background-color: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 6px;
+      margin: 1rem 0;
+    }
+    .error {
+      background-color: #fef2f2;
+      border-color: #fca5a5;
+    }
+  </style>
+  
+  <!-- Load rrweb FIRST and SYNCHRONOUSLY (before page loads) -->
+  <!-- Using unpkg instead of jsdelivr for better compatibility -->
+  <script src="https://unpkg.com/rrweb@latest/dist/rrweb.min.js"></script>
+  <!-- Also load snapshot module if available -->
+  <script src="https://unpkg.com/rrweb@latest/dist/rrweb-snapshot.min.js"></script>
+  
+  <!-- UXCam SDK Configuration -->
+  <script>
+    // ============================================
+    // CONFIGURATION - UPDATE THESE VALUES
+    // ============================================
+    window.UXCamSDK = {
+      key: 'ux_efdb678cd37b48ab9108a227234ebdf4',  // Your SDK Key (update if you have a different one)
+      apiUrl: 'http://localhost:3001'  // Your backend URL (change to production URL for live testing)
+    };
+    // ============================================
+  </script>
+  
+  <!-- Load UXCam SDK SYNCHRONOUSLY (not async!) to ensure it starts before page renders -->
+  <script src="/uxcam-sdk-rrweb.js"></script>
+</head>
+<body>
+  <h1>🎯 UXCam SDK Test Page</h1>
+  
+  <div class="status" id="status">
+    <strong>Status:</strong> <span id="statusText">Initializing SDK...</span>
+  </div>
+  
+  <div class="test-section">
+    <h2>1. Click Tracking Test</h2>
+    <p>Click these buttons to test click tracking:</p>
+    <button onclick="alert('Button 1 clicked!')">Button 1</button>
+    <button onclick="alert('Button 2 clicked!')">Button 2</button>
+    <button onclick="testCustomEvent()">Trigger Custom Event</button>
+  </div>
+  
+  <div class="test-section">
+    <h2>2. Input Tracking Test</h2>
+    <p>Type in these fields to test input tracking:</p>
+    <input type="text" placeholder="Type your name..." />
+    <input type="email" placeholder="Type your email..." />
+    <textarea placeholder="Type a message..." rows="4"></textarea>
+  </div>
+  
+  <div class="test-section">
+    <h2>3. Scroll Tracking Test</h2>
+    <p>Scroll down this area to test scroll tracking:</p>
+    <div class="scroll-area">
+      <h3>Scroll Area</h3>
+      <p>Keep scrolling down...</p>
+      <div style="margin-top: 1500px;">
+        <p>You reached the bottom! ✅</p>
+        <p>Scroll back up to test more.</p>
+      </div>
+    </div>
+  </div>
+  
+  <div class="test-section">
+    <h2>4. Navigation Test</h2>
+    <p>Test page navigation (if you have multiple pages):</p>
+    <button onclick="window.location.href = window.location.href + '?page=2'">Navigate to Page 2</button>
+  </div>
+  
+  <div class="test-section">
+    <h2>5. Check Console</h2>
+    <p>Open browser console (F12) to see SDK logs:</p>
+    <ul>
+      <li>Look for: "UXCam SDK: DOM recording started"</li>
+      <li>Look for: "UXCam SDK: Initialized with DOM recording"</li>
+      <li>Check Network tab for API calls to `/api/events/ingest` and `/api/snapshots/ingest`</li>
+    </ul>
+  </div>
+  
+  <div class="test-section">
+    <h2>6. View in Dashboard</h2>
+    <p>After interacting with this page:</p>
+    <ol>
+      <li>Wait 10-15 seconds for events to be sent</li>
+      <li>Go to <a href="/dashboard/sessions" target="_blank">Dashboard → Sessions</a></li>
+      <li>Find your session</li>
+      <li>Click on it to view visual replay</li>
+    </ol>
+  </div>
+
+  <script>
+    // Check SDK status
+    function checkSDKStatus() {
+      const statusDiv = document.getElementById('status');
+      const statusText = document.getElementById('statusText');
+      
+      if (!window.UXCamSDK || !window.UXCamSDK.key || window.UXCamSDK.key === 'PASTE_YOUR_SDK_KEY_HERE') {
+        statusDiv.className = 'status error';
+        statusText.textContent = '❌ SDK key not configured! Please update the SDK key in the script tag.';
+        return;
+      }
+      
+      if (window.UXCam) {
+        statusDiv.className = 'status';
+        statusText.textContent = '✅ SDK loaded and ready! Check console for recording status.';
+      } else {
+        statusDiv.className = 'status error';
+        statusText.textContent = '⏳ SDK loading...';
+      }
+    }
+    
+    // Test custom event
+    function testCustomEvent() {
+      if (window.UXCam) {
+        window.UXCam.track('custom_event', {
+          event_name: 'test_button_click',
+          timestamp: new Date().toISOString()
+        });
+        alert('Custom event tracked! Check dashboard.');
+      } else {
+        alert('SDK not loaded yet. Wait a moment and try again.');
+      }
+    }
+    
+    // Check status on load
+    window.addEventListener('load', () => {
+      setTimeout(checkSDKStatus, 2000);
+    });
+    
+    // Log SDK info
+    console.log('=== UXCam SDK Test Page ===');
+    console.log('SDK Config:', window.UXCamSDK);
+    console.log('Waiting for SDK to initialize...');
+    
+    // Monitor SDK initialization
+    const checkInterval = setInterval(() => {
+      if (window.UXCam) {
+        console.log('✅ UXCam SDK is ready!');
+        console.log('SDK Methods:', Object.keys(window.UXCam));
+        clearInterval(checkInterval);
+        checkSDKStatus();
+      }
+    }, 500);
+    
+    // Clear interval after 10 seconds
+    setTimeout(() => clearInterval(checkInterval), 10000);
+  </script>
+</body>
+</html>
+
