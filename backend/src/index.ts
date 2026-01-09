@@ -107,5 +107,10 @@ app.use((req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Backend server running on http://0.0.0.0:${PORT}`)
   console.log(`📡 CORS enabled for: ${FRONTEND_URL}`)
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`)
+  console.log(`✅ Server is ready to accept connections`)
+}).on('error', (err: any) => {
+  console.error('❌ Failed to start server:', err)
+  process.exit(1)
 })
 
