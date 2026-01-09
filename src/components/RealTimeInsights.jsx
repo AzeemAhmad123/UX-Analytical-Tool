@@ -37,7 +37,7 @@ const RealTimeInsights = () => {
                 Automatically capture screens, events, issues and gestures —
                 all with a single snippet of code.
               </p>
-              <a href="#">Learn more about autocapture →</a>
+              <button type="button" className={styles.linkButton}>Learn more about autocapture →</button>
             </div>
 
             <div className={styles.card}>

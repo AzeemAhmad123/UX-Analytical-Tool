@@ -89,7 +89,8 @@
   color: #6b7280;
 }
 
-.card a {
+.card a,
+.card button.linkButton {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -97,6 +98,16 @@
   color: var(--primary);
   font-weight: 600;
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+
+.card button.linkButton:hover {
+  text-decoration: underline;
 }
 
 /* RIGHT MOCKUP */

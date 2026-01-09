@@ -20,9 +20,9 @@ const UsersLoveUs = () => {
             <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-4">
               <span className="text-red-600 font-bold text-xl">CC</span>
             </div>
-            <a href="#" className="text-blue-600 text-sm font-medium flex items-center mb-4">
+            <button type="button" className="text-blue-600 text-sm font-medium flex items-center mb-4 hover:underline">
               Case Study <span className="ml-1">→</span>
-            </a>
+            </button>
             <p className="text-5xl font-bold text-gray-900 mb-2">15%</p>
             <p className="text-gray-600 text-center">Registration rate increase</p>
           </div>
@@ -32,9 +32,9 @@ const UsersLoveUs = () => {
             <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
               <span className="text-blue-600 font-bold text-xl">HC</span>
             </div>
-            <a href="#" className="text-blue-600 text-sm font-medium flex items-center mb-4">
+            <button type="button" className="text-blue-600 text-sm font-medium flex items-center mb-4 hover:underline">
               Case Study <span className="ml-1">→</span>
-            </a>
+            </button>
             <p className="text-5xl font-bold text-gray-900 mb-2">20%</p>
             <p className="text-gray-600 text-center">Feature adoption increase</p>
           </div>
@@ -44,9 +44,9 @@ const UsersLoveUs = () => {
             <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
               <span className="text-green-600 font-bold text-xl">PM</span>
             </div>
-            <a href="#" className="text-blue-600 text-sm font-medium flex items-center mb-4">
+            <button type="button" className="text-blue-600 text-sm font-medium flex items-center mb-4 hover:underline">
               Case Study <span className="ml-1">→</span>
-            </a>
+            </button>
             <p className="text-5xl font-bold text-gray-900 mb-2">2x</p>
             <p className="text-gray-600 text-center">Items sold</p>
           </div>
