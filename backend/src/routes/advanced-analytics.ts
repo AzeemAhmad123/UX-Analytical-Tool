@@ -48,7 +48,7 @@ router.post('/:projectId/rage-clicks/detect', validateProject, async (req: Reque
       return res.status(400).json({ error: 'session_id and click_events array are required' })
     }
 
-    const rageClicks = await detectRageClicks(projectId, session_id, click_events)
+    const rageClicks = await detectRageClicks(String(projectId), session_id, click_events)
 
     res.json({
       success: true,
@@ -74,7 +74,7 @@ router.post('/:projectId/dead-taps/detect', validateProject, async (req: Request
       return res.status(400).json({ error: 'session_id and tap_events array are required' })
     }
 
-    const deadTaps = await detectDeadTaps(projectId, session_id, tap_events)
+    const deadTaps = await detectDeadTaps(String(projectId), session_id, tap_events)
 
     res.json({
       success: true,
@@ -94,7 +94,7 @@ router.post('/:projectId/dead-taps/detect', validateProject, async (req: Request
 router.get('/:projectId/rage-clicks/session/:sessionId', validateProject, async (req: Request, res: Response) => {
   try {
     const { sessionId } = req.params
-    const rageClicks = await getSessionRageClicks(sessionId)
+    const rageClicks = await getSessionRageClicks(String(sessionId))
 
     res.json({ success: true, rage_clicks: rageClicks })
   } catch (error: any) {
@@ -113,7 +113,7 @@ router.get('/:projectId/rage-clicks/summary', validateProject, async (req: Reque
     const { start_date, end_date } = req.query
 
     const summary = await getRageClicksSummary(
-      projectId,
+      String(projectId),
       start_date as string,
       end_date as string
     )
@@ -150,7 +150,7 @@ router.post('/:projectId/heatmaps/generate', validateProject, async (req: Reques
     }
 
     const heatmap = await generateHeatmap(
-      projectId,
+      String(projectId),
       page_url,
       heatmap_type,
       start_date,
@@ -179,7 +179,7 @@ router.get('/:projectId/heatmaps', validateProject, async (req: Request, res: Re
     const { projectId } = req.params
     const { page_url } = req.query
 
-    const heatmaps = await getProjectHeatmaps(projectId, page_url as string)
+    const heatmaps = await getProjectHeatmaps(String(projectId), page_url as string)
 
     res.json({ success: true, heatmaps })
   } catch (error: any) {
@@ -213,7 +213,7 @@ router.post('/:projectId/performance/record', async (req: Request, res: Response
       })
     }
 
-    const metric = await recordPerformanceMetric(session_id, projectId, {
+    const metric = await recordPerformanceMetric(session_id, String(projectId), {
       page_url,
       metric_type,
       value,
@@ -243,7 +243,7 @@ router.get('/:projectId/performance/summary', validateProject, async (req: Reque
     const { start_date, end_date, page_url } = req.query
 
     const summary = await getPerformanceSummary(
-      projectId,
+      String(projectId),
       start_date as string,
       end_date as string,
       page_url as string
@@ -272,7 +272,7 @@ router.get('/:projectId/performance/trends', validateProject, async (req: Reques
     }
 
     const trends = await getPerformanceTrends(
-      projectId,
+      String(projectId),
       metric_type as any,
       start_date as string,
       end_date as string,
@@ -295,7 +295,7 @@ router.get('/:projectId/performance/trends', validateProject, async (req: Reques
 router.get('/:projectId/segments', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const segments = await getProjectSegments(projectId)
+    const segments = await getProjectSegments(String(projectId))
 
     res.json({ success: true, segments })
   } catch (error: any) {
@@ -321,7 +321,7 @@ router.post('/:projectId/segments', validateProject, async (req: Request, res: R
 
     const userId = (req as any).user?.id
 
-    const segment = await createUserSegment(projectId, {
+    const segment = await createUserSegment(String(projectId), {
       name,
       description,
       conditions,
@@ -342,7 +342,7 @@ router.post('/:projectId/segments', validateProject, async (req: Request, res: R
 router.put('/:projectId/segments/:segmentId', validateProject, async (req: Request, res: Response) => {
   try {
     const { segmentId } = req.params
-    const segment = await updateSegment(segmentId, req.body)
+    const segment = await updateSegment(String(segmentId), req.body)
 
     res.json({ success: true, segment })
   } catch (error: any) {
@@ -358,7 +358,7 @@ router.put('/:projectId/segments/:segmentId', validateProject, async (req: Reque
 router.delete('/:projectId/segments/:segmentId', validateProject, async (req: Request, res: Response) => {
   try {
     const { segmentId } = req.params
-    await deleteSegment(segmentId)
+    await deleteSegment(String(segmentId))
 
     res.json({ success: true, message: 'Segment deleted' })
   } catch (error: any) {
@@ -374,7 +374,7 @@ router.delete('/:projectId/segments/:segmentId', validateProject, async (req: Re
 router.post('/:projectId/segments/:segmentId/refresh', validateProject, async (req: Request, res: Response) => {
   try {
     const { segmentId } = req.params
-    const userCount = await refreshSegmentCount(segmentId)
+    const userCount = await refreshSegmentCount(String(segmentId))
 
     res.json({ success: true, user_count: userCount })
   } catch (error: any) {
