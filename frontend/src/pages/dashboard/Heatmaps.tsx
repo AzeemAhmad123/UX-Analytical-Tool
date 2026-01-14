@@ -124,7 +124,6 @@ export function Heatmaps() {
 
   const renderHeatmapPreview = (heatmap: Heatmap) => {
     // Simple heatmap visualization using data points
-    const maxIntensity = Math.max(...heatmap.data_points.map(p => p.intensity), 1)
     
     return (
       <div className="heatmap-preview">

@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Mail, Calendar, Clock, X, Edit2, Trash2, Play, FileText, Users, ArrowLeft } from 'lucide-react'
+import { Plus, Mail, X, Edit2, Trash2, Play, FileText, ArrowLeft } from 'lucide-react'
 import { projectsAPI, scheduledReportsAPI, funnelsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './ScheduledReports.css'
@@ -164,13 +164,14 @@ export function ScheduledReports() {
     }
   }
 
-  const handleTriggerReport = async (funnelId: string, reportId: string) => {
+  const handleTriggerReport = async (_funnelId: string, _reportId: string) => {
     if (!selectedProject) return
 
     setLoading(true)
     try {
-      await scheduledReportsAPI.trigger(selectedProject, funnelId, reportId)
-      alert('Report triggered successfully!')
+      // TODO: Implement trigger API endpoint
+      // await scheduledReportsAPI.trigger(selectedProject, funnelId, reportId)
+      alert('Report trigger feature is not yet implemented')
       await loadReports()
     } catch (error: any) {
       alert('Error triggering report: ' + (error.message || 'Unknown error'))
@@ -200,15 +201,21 @@ export function ScheduledReports() {
 
   const openEditModal = (report: ScheduledReport) => {
     setEditingReport(report)
+    const defaultConfig = {
+      day_of_week: 1,
+      day_of_month: 1,
+      time: '09:00',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    }
     setReportForm({
       funnel_id: report.funnel_id,
       name: report.name,
       schedule_type: report.schedule_type,
-      schedule_config: report.schedule_config || {
-        day_of_week: 1,
-        day_of_month: 1,
-        time: '09:00',
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      schedule_config: {
+        day_of_week: report.schedule_config?.day_of_week ?? defaultConfig.day_of_week,
+        day_of_month: report.schedule_config?.day_of_month ?? defaultConfig.day_of_month,
+        time: report.schedule_config?.time ?? defaultConfig.time,
+        timezone: report.schedule_config?.timezone ?? defaultConfig.timezone
       },
       recipients: report.recipients,
       report_format: report.report_format,

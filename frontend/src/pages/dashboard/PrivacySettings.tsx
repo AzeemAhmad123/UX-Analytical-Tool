@@ -51,7 +51,7 @@ export function PrivacySettings() {
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [settings, setSettings] = useState<PrivacySettings | null>(null)
   const [consentHistory, setConsentHistory] = useState<ConsentRecord[]>([])
-  const [loading, setLoading] = useState(false)
+  const [, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [newMaskedField, setNewMaskedField] = useState('')
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, LogOut, Mail, Lock, Shield, Upload } from 'lucide-react'
+import { ArrowLeft, LogOut, Lock, Shield, Upload } from 'lucide-react'
 import { auth } from '../../config/supabase'
 import '../../components/dashboard/Dashboard.css'
 
@@ -16,20 +16,18 @@ export function Profile() {
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [newEmail, setNewEmail] = useState('')
-  const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
   // UI states
   const [showChangeEmail, setShowChangeEmail] = useState(false)
   const [showChangePassword, setShowChangePassword] = useState(false)
-  const [showSignOutMenu, setShowSignOutMenu] = useState(false)
 
   useEffect(() => {
     loadUser()
     
     // Listen for auth changes
-    const { data: { subscription } } = auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser(session.user)
         updateFormData(session.user)
@@ -166,7 +164,6 @@ export function Profile() {
 
       setSuccess('Password updated successfully')
       setShowChangePassword(false)
-      setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
     } catch (err: any) {

@@ -23,7 +23,7 @@ interface VariantFilter {
   label: string
 }
 
-export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange, onClose }: FunnelComparisonProps) {
+export function FunnelComparison({ projectId: _projectId, selectedFunnel, funnels, dateRange: _dateRange, onClose }: FunnelComparisonProps) {
   const [comparisonMode, setComparisonMode] = useState<'variants' | 'funnels'>('variants')
   const [variantFilters, setVariantFilters] = useState<VariantFilter[]>([
     { platform: 'android', label: 'Android' },

@@ -970,7 +970,7 @@ function AnomaliesTab({ anomalies, selectedProject, selectedFunnel, onRefresh }:
 }
 
 // Drop-off Tab Component
-function DropoffTab({ analysisResult, selectedFunnel, heatmaps, rageClicks }: any) {
+function DropoffTab({ analysisResult, selectedFunnel: _selectedFunnel, heatmaps, rageClicks }: any) {
   const steps = analysisResult.steps || []
   const maxDropoff = Math.max(...steps.map((s: any) => s.drop_off_rate || 0), 0)
   const biggestDropoffStep = steps.find((s: any) => s.drop_off_rate === maxDropoff)

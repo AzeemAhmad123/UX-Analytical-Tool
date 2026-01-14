@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, MousePointerClick, Hand, ExternalLink, Calendar, Filter, ArrowLeft } from 'lucide-react'
+import { AlertTriangle, MousePointerClick, Hand, ExternalLink, ArrowLeft } from 'lucide-react'
 import { projectsAPI, advancedAnalyticsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './RageClicks.css'
