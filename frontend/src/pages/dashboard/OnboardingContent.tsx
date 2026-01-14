@@ -268,7 +268,7 @@ export function OnboardingContent() {
     document.head.appendChild(script);
   })();
 </script>`
-                        })()}}
+                        })()}
                       </pre>
                       <button
                         onClick={handleCopyCode}
