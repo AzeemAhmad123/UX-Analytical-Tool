@@ -12,7 +12,7 @@ export function DashboardHeader() {
     loadUser()
     
     // Listen for auth changes
-    const { data: { subscription } } = auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser(session.user)
       } else {

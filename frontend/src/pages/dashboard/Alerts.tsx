@@ -6,8 +6,8 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Bell, AlertTriangle, CheckCircle, X, Edit2, Trash2, Mail, Webhook, TrendingDown, ArrowLeft } from 'lucide-react'
-import { projectsAPI, alertsAPI } from '../../services/api'
+import { Plus, Bell, AlertTriangle, X, Edit2, Trash2, Mail, Webhook, TrendingDown, ArrowLeft } from 'lucide-react'
+import { projectsAPI, alertsAPI, funnelsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './Alerts.css'
 
@@ -77,7 +77,7 @@ export function Alerts() {
     if (!selectedProject) return
 
     try {
-      const response = await alertsAPI.getFunnels(selectedProject)
+      const response = await funnelsAPI.getAll(selectedProject)
       setFunnels(response.funnels || [])
     } catch (error) {
       console.error('Error loading funnels:', error)
@@ -89,8 +89,26 @@ export function Alerts() {
 
     setLoading(true)
     try {
-      const response = await alertsAPI.getAll(selectedProject)
-      setAlerts(response.alerts || [])
+      // Load alerts for all funnels
+      const funnelsResponse = await funnelsAPI.getAll(selectedProject)
+      const allFunnels = funnelsResponse.funnels || []
+      const allAlerts: Alert[] = []
+      
+      for (const funnel of allFunnels) {
+        try {
+          const response = await alertsAPI.getAll(selectedProject, funnel.id)
+          const alerts = (response.alerts || []).map((alert: any) => ({
+            ...alert,
+            funnel_name: funnel.name
+          }))
+          allAlerts.push(...alerts)
+        } catch (error) {
+          // Skip funnels without alerts
+          console.warn(`No alerts for funnel ${funnel.id}`)
+        }
+      }
+      
+      setAlerts(allAlerts)
     } catch (error) {
       console.error('Error loading alerts:', error)
     } finally {
@@ -107,9 +125,9 @@ export function Alerts() {
     setLoading(true)
     try {
       if (editingAlert) {
-        await alertsAPI.update(selectedProject, editingAlert.id, alertForm)
+        await alertsAPI.update(selectedProject, alertForm.funnel_id, editingAlert.id, alertForm)
       } else {
-        await alertsAPI.create(selectedProject, alertForm)
+        await alertsAPI.create(selectedProject, alertForm.funnel_id, alertForm)
       }
       await loadAlerts()
       setShowCreateModal(false)
@@ -122,12 +140,12 @@ export function Alerts() {
     }
   }
 
-  const handleDeleteAlert = async (alertId: string) => {
+  const handleDeleteAlert = async (alertId: string, alertFunnelId: string) => {
     if (!selectedProject || !confirm('Are you sure you want to delete this alert?')) return
 
     setLoading(true)
     try {
-      await alertsAPI.delete(selectedProject, alertId)
+      await alertsAPI.delete(selectedProject, alertFunnelId, alertId)
       await loadAlerts()
     } catch (error: any) {
       alert('Error deleting alert: ' + (error.message || 'Unknown error'))
@@ -136,12 +154,12 @@ export function Alerts() {
     }
   }
 
-  const handleToggleAlert = async (alertId: string, enabled: boolean) => {
+  const handleToggleAlert = async (alertId: string, alertFunnelId: string, enabled: boolean) => {
     if (!selectedProject) return
 
     setLoading(true)
     try {
-      await alertsAPI.update(selectedProject, alertId, { enabled })
+      await alertsAPI.update(selectedProject, alertFunnelId, alertId, { enabled })
       await loadAlerts()
     } catch (error: any) {
       alert('Error updating alert: ' + (error.message || 'Unknown error'))
@@ -286,7 +304,7 @@ export function Alerts() {
                     <input
                       type="checkbox"
                       checked={alert.enabled}
-                      onChange={(e) => handleToggleAlert(alert.id, e.target.checked)}
+                      onChange={(e) => handleToggleAlert(alert.id, alert.funnel_id, e.target.checked)}
                     />
                     <span className="toggle-slider"></span>
                   </label>
@@ -299,7 +317,7 @@ export function Alerts() {
                   </button>
                   <button
                     className="icon-button"
-                    onClick={() => handleDeleteAlert(alert.id)}
+                    onClick={() => handleDeleteAlert(alert.id, alert.funnel_id)}
                     title="Delete alert"
                   >
                     <Trash2 size={16} />

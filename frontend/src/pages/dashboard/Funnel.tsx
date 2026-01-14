@@ -142,7 +142,7 @@ export function Funnel() {
   const [heatmaps, setHeatmaps] = useState<any[]>([])
   const [rageClicks, setRageClicks] = useState<any[]>([])
   const [performanceMetrics, setPerformanceMetrics] = useState<any[]>([])
-  const [loadingSidebar, setLoadingSidebar] = useState(false)
+  const [, setLoadingSidebar] = useState(false)
 
   useEffect(() => {
     loadProjects()

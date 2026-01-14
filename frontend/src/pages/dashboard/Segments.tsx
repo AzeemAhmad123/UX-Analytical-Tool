@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { Plus, Search, Star, Users, X, Save, Trash2, RefreshCw, Edit2, Check } from 'lucide-react'
+import { Plus, Search, Users, X, Trash2, RefreshCw, Edit2 } from 'lucide-react'
 import { projectsAPI, advancedAnalyticsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './Segments.css'

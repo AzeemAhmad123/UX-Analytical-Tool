@@ -17,11 +17,18 @@ interface FunnelComparisonProps {
   onClose: () => void
 }
 
+type PlatformType = 'web' | 'android' | 'ios'
+
+interface VariantFilter {
+  platform: PlatformType
+  label: string
+}
+
 export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange, onClose }: FunnelComparisonProps) {
   const [comparisonMode, setComparisonMode] = useState<'variants' | 'funnels'>('variants')
-  const [variantFilters, setVariantFilters] = useState([
-    { platform: 'android' as const, label: 'Android' },
-    { platform: 'ios' as const, label: 'iOS' }
+  const [variantFilters, setVariantFilters] = useState<VariantFilter[]>([
+    { platform: 'android', label: 'Android' },
+    { platform: 'ios', label: 'iOS' }
   ])
   const [selectedFunnels, setSelectedFunnels] = useState<string[]>([selectedFunnel.id])
   const [comparisonResults, setComparisonResults] = useState<any[]>([])
@@ -30,14 +37,17 @@ export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange
   const handleCompareVariants = async () => {
     setLoading(true)
     try {
-      const result = await funnelsAPI.compareVariants(projectId, selectedFunnel.id, {
-        start_date: dateRange.start,
-        end_date: dateRange.end,
-        variant_filters: variantFilters.map(v => ({
-          platform: v.platform
-        }))
-      })
-      setComparisonResults(result.comparisons || [])
+      // TODO: Implement compareVariants API endpoint
+      // const result = await funnelsAPI.compareVariants(projectId, selectedFunnel.id, {
+      //   start_date: dateRange.start,
+      //   end_date: dateRange.end,
+      //   variant_filters: variantFilters.map(v => ({
+      //     platform: v.platform
+      //   }))
+      // })
+      // setComparisonResults(result.comparisons || [])
+      alert('Variant comparison feature is not yet implemented')
+      setComparisonResults([])
     } catch (error) {
       console.error('Error comparing variants:', error)
       alert('Failed to compare variants. Please try again.')
@@ -53,12 +63,15 @@ export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange
     }
     setLoading(true)
     try {
-      const result = await funnelsAPI.compare(projectId, {
-        funnel_ids: selectedFunnels,
-        start_date: dateRange.start,
-        end_date: dateRange.end
-      })
-      setComparisonResults(result.comparisons || [])
+      // TODO: Implement compare API endpoint
+      // const result = await funnelsAPI.compare(projectId, {
+      //   funnel_ids: selectedFunnels,
+      //   start_date: dateRange.start,
+      //   end_date: dateRange.end
+      // })
+      // setComparisonResults(result.comparisons || [])
+      alert('Funnel comparison feature is not yet implemented')
+      setComparisonResults([])
     } catch (error) {
       console.error('Error comparing funnels:', error)
       alert('Failed to compare funnels. Please try again.')
@@ -75,7 +88,7 @@ export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange
     setVariantFilters(variantFilters.filter((_, i) => i !== index))
   }
 
-  const updateVariantFilter = (index: number, platform: 'web' | 'android' | 'ios', label: string) => {
+  const updateVariantFilter = (index: number, platform: PlatformType, label: string) => {
     const newFilters = [...variantFilters]
     newFilters[index] = { platform, label }
     setVariantFilters(newFilters)
@@ -167,7 +180,7 @@ export function FunnelComparison({ projectId, selectedFunnel, funnels, dateRange
                   />
                   <select
                     value={filter.platform}
-                    onChange={(e) => updateVariantFilter(index, e.target.value as any, filter.label)}
+                    onChange={(e) => updateVariantFilter(index, e.target.value as PlatformType, filter.label)}
                     style={{
                       padding: '0.5rem',
                       border: '1px solid #d1d5db',

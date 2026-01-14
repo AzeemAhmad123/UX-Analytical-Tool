@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, X, GripVertical, Edit2, Trash2 } from 'lucide-react'
+import { Plus, GripVertical, Edit2, Trash2 } from 'lucide-react'
 import {
   DndContext,
   closestCenter,

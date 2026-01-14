@@ -5,7 +5,7 @@ import '../../components/dashboard/Dashboard.css'
 
 export function SessionReplay() {
   const [activeTab, setActiveTab] = useState<'all' | 'favorites'>('all')
-  const [showBy, setShowBy] = useState('Sessions')
+  const showBy = 'Sessions' // eslint-disable-line @typescript-eslint/no-unused-vars
   const [sessions, setSessions] = useState<any[]>([])
   const [projects, setProjects] = useState<any[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)

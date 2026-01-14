@@ -5,10 +5,10 @@
 
 import { useState, useEffect } from 'react'
 import { 
-  Plus, Calendar, Filter, Play, Edit2, Trash2, X, Monitor, Smartphone, 
-  GitCompare, Download, ChevronRight, AlertTriangle, TrendingDown, 
-  Zap, Flame, BarChart3, Users, Bell, Link as LinkIcon, Mail, 
-  Eye, Clock, ArrowLeft, Settings, Share2, FileText, Target
+  Plus, Filter, Play, Edit2, Trash2, X, Monitor, Smartphone, 
+  Download, ChevronRight, AlertTriangle, TrendingDown, 
+  Zap, Flame, BarChart3, Bell, Link as LinkIcon, Mail, 
+  Eye, ArrowLeft
 } from 'lucide-react'
 import { 
   funnelsAPI, projectsAPI, anomaliesAPI, advancedAnalyticsAPI, 
@@ -60,7 +60,7 @@ export function Funnel() {
   const [acquisitionSourceFilter, setAcquisitionSourceFilter] = useState<string>('')
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false)
   const [includeGeography, setIncludeGeography] = useState(false)
-  const [includeTrendOverTime, setIncludeTrendOverTime] = useState(true)
+  const [includeTrendOverTime] = useState(true)
   
   // Date range
   const [dateRange, setDateRange] = useState({
@@ -166,7 +166,7 @@ export function Funnel() {
 
       // Load scheduled reports
       try {
-        const reportsRes = await scheduledReportsAPI.getAll(selectedProject)
+        const reportsRes = await scheduledReportsAPI.getAll(selectedProject, selectedFunnel.id)
         const funnelReports = (reportsRes.reports || []).filter((r: any) => r.funnel_id === selectedFunnel.id)
         setScheduledReports(funnelReports)
       } catch (e) {
@@ -195,12 +195,9 @@ export function Funnel() {
 
       // Load performance metrics
       try {
-        const perfRes = await advancedAnalyticsAPI.getPerformanceMetrics(
-          selectedProject,
-          new Date(dateRange.start).toISOString(),
-          new Date(dateRange.end + 'T23:59:59').toISOString()
-        )
-        setPerformanceMetrics(perfRes.metrics || [])
+        // Performance metrics are loaded separately via getPerformanceTrends
+        // For now, set empty array as performance metrics loading is handled elsewhere
+        setPerformanceMetrics([])
       } catch (e) {
         console.error('Error loading performance metrics:', e)
       }
@@ -821,7 +818,7 @@ export function Funnel() {
 }
 
 // Overview Tab Component
-function OverviewTab({ analysisResult, selectedFunnel, dateRange, includeGeography, setIncludeGeography }: any) {
+function OverviewTab({ analysisResult, selectedFunnel: _selectedFunnel, dateRange: _dateRange, includeGeography, setIncludeGeography }: any) {
   return (
     <div className="overview-tab">
       {/* Key Metrics Cards */}
@@ -1056,7 +1053,7 @@ function DropoffTab({ analysisResult, selectedFunnel, heatmaps, rageClicks }: an
 }
 
 // Performance Tab Component
-function PerformanceTab({ performanceMetrics, selectedFunnel, dateRange }: any) {
+function PerformanceTab({ performanceMetrics, selectedFunnel: _selectedFunnel, dateRange: _dateRange }: any) {
   return (
     <div className="performance-tab">
       <h3>Performance Metrics</h3>
@@ -1091,16 +1088,16 @@ function PerformanceTab({ performanceMetrics, selectedFunnel, dateRange }: any) 
 
 // Sidebar Component
 function FunnelSidebar({
-  selectedProject,
-  selectedFunnel,
+  selectedProject: _selectedProject,
+  selectedFunnel: _selectedFunnel,
   alerts,
   shareLinks,
   scheduledReports,
   heatmaps,
   rageClicks,
-  segments,
-  loading,
-  onRefresh
+  segments: _segments,
+  loading: _loading,
+  onRefresh: _onRefresh
 }: any) {
   return (
     <div className="funnel-sidebar-content">

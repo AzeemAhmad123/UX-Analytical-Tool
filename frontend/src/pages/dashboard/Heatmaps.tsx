@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Eye, Download, Calendar, MousePointerClick, Scroll, Move, X, ArrowLeft } from 'lucide-react'
+import { Plus, Eye, Download, MousePointerClick, Scroll, Move, X, ArrowLeft } from 'lucide-react'
 import { projectsAPI, advancedAnalyticsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './Heatmaps.css'

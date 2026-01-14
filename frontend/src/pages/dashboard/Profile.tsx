@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, User, LogOut, Mail, Lock, Shield, Upload } from 'lucide-react'
-import { auth, supabase } from '../../config/supabase'
+import { ArrowLeft, LogOut, Mail, Lock, Shield, Upload } from 'lucide-react'
+import { auth } from '../../config/supabase'
 import '../../components/dashboard/Dashboard.css'
 
 export function Profile() {

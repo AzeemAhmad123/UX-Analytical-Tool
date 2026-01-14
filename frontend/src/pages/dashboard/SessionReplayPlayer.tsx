@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, ChevronDown, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye } from 'lucide-react'
-import { sessionsAPI, snapshotsAPI } from '../../services/api'
+import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye } from 'lucide-react'
+import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
-import type { eventWithTime } from 'rrweb/typings/types'
 import '../../components/dashboard/Dashboard.css'
 
 type Platform = 'web' | 'mobile'
@@ -17,7 +16,7 @@ export function SessionReplayPlayer() {
   const [session, setSession] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([]) // All sessions for left panel
   const [events, setEvents] = useState<any[]>([]) // Events for activity timeline
-  const [snapshots, setSnapshots] = useState<eventWithTime[]>([])
+  const [snapshots, setSnapshots] = useState<any[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -215,7 +214,7 @@ export function SessionReplayPlayer() {
         fullData: data // Log full response for debugging
       })
       
-      let events: eventWithTime[] = []
+      let events: any[] = []
       
       // Check for video first (mobile sessions)
       if (data.session?.has_video && data.session?.video_url) {
@@ -474,8 +473,6 @@ export function SessionReplayPlayer() {
           lineWidth: 3,
           duration: 1500, // Show cursor trail for 1.5 seconds
         },
-        // Show cursor sprite (visual cursor icon) - CRITICAL for visible cursor
-        showCursor: true,
         // Cursor configuration for better visibility
         plugins: [
           // Add custom cursor plugin if available
@@ -542,13 +539,9 @@ export function SessionReplayPlayer() {
         }, 2000)
       }, 1000)
 
-      // Track mouse movements from events and show cursor
-      let lastMouseX = 0
-      let lastMouseY = 0
-      
       // Track mouse movements and clicks from replay events
       // Use a more direct approach - iterate through events and track mouse positions
-      let mouseMoveInterval: NodeJS.Timeout | null = null
+      let mouseMoveInterval: ReturnType<typeof setInterval> | null = null
       let lastKnownMouseX = 0
       let lastKnownMouseY = 0
       

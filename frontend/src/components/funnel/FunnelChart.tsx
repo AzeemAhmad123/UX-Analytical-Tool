@@ -29,7 +29,7 @@ interface FunnelChartProps {
   selectedProject?: string
 }
 
-export function FunnelChart({ steps, totalUsers, overallConversion, platformBreakdown, platformFilter = 'all', selectedProject }: FunnelChartProps) {
+export function FunnelChart({ steps, totalUsers, overallConversion, platformBreakdown: _platformBreakdown, platformFilter = 'all', selectedProject }: FunnelChartProps) {
   if (steps.length === 0) {
     return (
       <div style={{

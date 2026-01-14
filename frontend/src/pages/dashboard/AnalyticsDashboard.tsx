@@ -69,13 +69,15 @@ export function AnalyticsDashboard() {
       const startDate = new Date(Date.now() - (dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90) * 24 * 60 * 60 * 1000).toISOString()
 
       // Load all metrics in parallel
-      const [sessionsData, eventsData, anomaliesData, rageClicksData, performanceData] = await Promise.all([
-        analyticsAPI.getSessions(selectedProject, { start_date: startDate, end_date: endDate }).catch(() => ({ sessions: [] })),
-        analyticsAPI.getEvents(selectedProject, { start_date: startDate, end_date: endDate }).catch(() => ({ events: [] })),
+      const [overviewData, anomaliesData, rageClicksData, performanceData] = await Promise.all([
+        analyticsAPI.getOverview(selectedProject, { start_date: startDate, end_date: endDate }).catch(() => ({ sessions: [], events: [] })),
         anomaliesAPI.getStats(selectedProject).catch(() => ({ stats: { open: 0 } })),
         advancedAnalyticsAPI.getRageClicksSummary(selectedProject, startDate, endDate).catch(() => ({ summary: { total: 0 } })),
         advancedAnalyticsAPI.getPerformanceSummary(selectedProject, startDate, endDate).catch(() => ({ summary: { metrics: [] } }))
       ])
+      
+      const sessionsData = { sessions: overviewData.sessions || [] }
+      const eventsData = { events: overviewData.events || [] }
 
       const sessions = sessionsData.sessions || []
       const events = eventsData.events || []

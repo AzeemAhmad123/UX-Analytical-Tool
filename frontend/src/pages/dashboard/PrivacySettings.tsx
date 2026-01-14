@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { Shield, Eye, EyeOff, Lock, Trash2, Save, AlertCircle, CheckCircle, Calendar, Users } from 'lucide-react'
+import { Shield, EyeOff, Lock, Save, CheckCircle, Calendar, Users, X } from 'lucide-react'
 import { projectsAPI, privacyAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './PrivacySettings.css'

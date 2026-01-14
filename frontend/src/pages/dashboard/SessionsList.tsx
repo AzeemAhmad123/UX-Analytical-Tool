@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Play, Download, MoreVertical, Bookmark, MessageSquare, Filter, Calendar, Search, Bell, Trash2, Flame, AlertTriangle, Snowflake, X, Monitor, Smartphone } from 'lucide-react'
-import { sessionsAPI, projectsAPI, analyticsAPI } from '../../services/api'
+import { Play, Download, MoreVertical, Filter, Search, Trash2, Flame, AlertTriangle, Snowflake, X, Monitor, Smartphone } from 'lucide-react'
+import { sessionsAPI, projectsAPI } from '../../services/api'
 import { DateRangePicker } from '../../components/dashboard/DateRangePicker'
 import '../../components/dashboard/Dashboard.css'
 

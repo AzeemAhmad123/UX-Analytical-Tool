@@ -1,4 +1,4 @@
-import { Video, User, Star, Calendar, Clock, Hand, MapPin, Smartphone, Check, Monitor } from 'lucide-react'
+import { Video, User, Star, Calendar, Clock, Smartphone, Monitor } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { analyticsAPI, projectsAPI } from '../../services/api'
 import './Dashboard.css'
