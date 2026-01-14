@@ -135,14 +135,26 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' })
 })
 
-// Start server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Backend server running on http://0.0.0.0:${PORT}`)
-  console.log(`📡 CORS enabled for: ${FRONTEND_URL}`)
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`)
-  console.log(`✅ Server is ready to accept connections`)
-}).on('error', (err: any) => {
-  console.error('❌ Failed to start server:', err)
-  process.exit(1)
-})
+// Export app for Vercel serverless functions
+// Use both ESM and CommonJS exports for compatibility
+export default app
+
+// Also export as CommonJS for Vercel
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = app
+  module.exports.default = app
+}
+
+// Start server only if not in Vercel environment
+if (process.env.VERCEL !== '1' && typeof process !== 'undefined') {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Backend server running on http://0.0.0.0:${PORT}`)
+    console.log(`📡 CORS enabled for: ${FRONTEND_URL}`)
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`)
+    console.log(`✅ Server is ready to accept connections`)
+  }).on('error', (err: any) => {
+    console.error('❌ Failed to start server:', err)
+    process.exit(1)
+  })
+}
 

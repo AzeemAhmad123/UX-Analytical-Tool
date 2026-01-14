@@ -1,43 +1,37 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 
-// Import the Express app from source (Vercel will compile TypeScript)
-// Using dynamic import to handle both ESM and CommonJS
+// Import Express app - Vercel compiles TypeScript to CommonJS
+// The app is exported as default from src/index.ts
 let app: any
 
 try {
-  // For Vercel, import from source - it will compile TypeScript
+  // Try to require the compiled or source module
   const indexModule = require('../src/index')
   app = indexModule.default || indexModule
 } catch (error) {
-  console.error('Error loading app:', error)
-  // Fallback: try ES6 import
-  import('../src/index').then(module => {
-    app = module.default
-  }).catch(err => {
-    console.error('Failed to import app:', err)
-  })
+  console.error('Failed to load app module:', error)
+  // Fallback: create error handler
+  app = (req: any, res: any) => {
+    res.status(500).json({
+      error: 'Failed to initialize application',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    })
+  }
 }
 
 // Vercel serverless function handler
-export default async function handler(
+export default function handler(
   req: VercelRequest,
   res: VercelResponse
 ) {
   try {
-    // Ensure app is loaded
-    if (!app) {
-      const indexModule = require('../src/index')
-      app = indexModule.default || indexModule
-    }
-    
-    // Call Express app as middleware
+    // Call Express app
     return app(req, res)
   } catch (error: any) {
-    console.error('Function error:', error)
+    console.error('Function execution error:', error)
     return res.status(500).json({
       error: 'Internal server error',
-      message: error?.message || 'Unknown error',
-      stack: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+      message: error?.message || 'Unknown error'
     })
   }
 }
