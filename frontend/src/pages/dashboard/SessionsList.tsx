@@ -49,7 +49,7 @@ export function SessionsList() {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<any[]>([])
   const [allSessions, setAllSessions] = useState<any[]>([]) // Store all sessions for comparison
-  const [projects, setProjects] = useState<any[]>([])
+  // const [projects, setProjects] = useState<any[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
@@ -76,7 +76,7 @@ export function SessionsList() {
     
     // Check for new sessions in background (every 60 seconds - less frequent)
     // Only start checking after initial load is complete
-    let intervalId: NodeJS.Timeout | null = null
+    let intervalId: number | null = null
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
         checkForNewSessions()
@@ -95,7 +95,7 @@ export function SessionsList() {
     try {
       const response = await projectsAPI.getAll()
       const projectsList = response.projects || []
-      setProjects(projectsList)
+      // setProjects(projectsList)
       if (projectsList.length > 0) {
         setSelectedProject(projectsList[0].id)
       }
@@ -144,10 +144,10 @@ export function SessionsList() {
       })
       
       const recentSessions = response.sessions || []
-      const currentSessionIds = new Set(allSessions.map(s => s.id))
+      const currentSessionIds = new Set(allSessions.map((s: any) => s.id))
       
       // Find truly new sessions (not in current list)
-      const trulyNewSessions = recentSessions.filter(s => !currentSessionIds.has(s.id))
+      const trulyNewSessions = recentSessions.filter((s: any) => !currentSessionIds.has(s.id))
       
       if (trulyNewSessions.length > 0) {
         // Only update if there are new sessions
@@ -161,7 +161,7 @@ export function SessionsList() {
     } catch (error) {
       // Silently fail in background - don't disturb user
       // Only log in development
-      if (process.env.NODE_ENV === 'development') {
+      if (import.meta.env.DEV) {
         console.error('Error checking for new sessions:', error)
       }
     }
@@ -522,22 +522,22 @@ export function SessionsList() {
     }
   }
 
-  const deleteSession = async (sessionId: string) => {
-    if (!selectedProject || !window.confirm('Are you sure you want to delete this session?')) {
-      return
-    }
+  // const deleteSession = async (sessionId: string) => {
+  //   if (!selectedProject || !window.confirm('Are you sure you want to delete this session?')) {
+  //     return
+  //   }
 
-    try {
-      await sessionsAPI.delete(selectedProject, sessionId)
-      loadSessions()
-      const newSelected = new Set(selectedSessions)
-      newSelected.delete(sessionId)
-      setSelectedSessions(newSelected)
-    } catch (error) {
-      console.error('Error deleting session:', error)
-      alert('Failed to delete session. Please try again.')
-    }
-  }
+  //   try {
+  //     await sessionsAPI.delete(selectedProject, sessionId)
+  //     loadSessions()
+  //     const newSelected = new Set(selectedSessions)
+  //     newSelected.delete(sessionId)
+  //     setSelectedSessions(newSelected)
+  //   } catch (error) {
+  //     console.error('Error deleting session:', error)
+  //     alert('Failed to delete session. Please try again.')
+  //   }
+  // }
 
   const deleteSelectedSessions = async () => {
     if (!selectedProject || selectedSessions.size === 0) {
@@ -586,13 +586,17 @@ export function SessionsList() {
   // Calculate percentage changes (compare filtered vs all sessions)
   const baselineMetrics = previousMetrics || currentMetrics
   const sessionsChange = calculateChange(currentMetrics.sessions, baselineMetrics.sessions)
-  const usersChange = calculateChange(currentMetrics.users, baselineMetrics.users)
+  // const usersChange = calculateChange(currentMetrics.users, baselineMetrics.users)
   const newUsersChange = calculateChange(currentMetrics.newUsers, baselineMetrics.newUsers)
   const crashesChange = calculateChange(currentMetrics.crashes, baselineMetrics.crashes)
-  const crashFreqChange = calculateChange(currentMetrics.crashFrequency, baselineMetrics.crashFrequency)
+  // const crashFreqChange = calculateChange(currentMetrics.crashFrequency, baselineMetrics.crashFrequency)
   const rageTapsChange = calculateChange(currentMetrics.rageTaps, baselineMetrics.rageTaps || 0)
   // const rageTapAvgChange = calculateChange(currentMetrics.rageTapAverage, baselineMetrics.rageTapAverage || 0)
   // const rageClicksChange = calculateChange(currentMetrics.rageClicks, baselineMetrics.rageClicks || 0)
+  // const rageClickAvgChange = calculateChange(currentMetrics.rageClickAverage, baselineMetrics.rageClickAverage || 0)
+  const totalTimeChange = calculateChange(currentMetrics.totalTimeInApp, baselineMetrics.totalTimeInApp)
+  // const avgTimeChange = calculateChange(currentMetrics.averageTimeInApp, baselineMetrics.averageTimeInApp)
+  const screenVisitsChange = calculateChange(currentMetrics.screenVisits, baselineMetrics.screenVisits)
   // const rageClickAvgChange = calculateChange(currentMetrics.rageClickAverage, baselineMetrics.rageClickAverage || 0)
   // const totalTimeChange = calculateChange(currentMetrics.totalTimeInApp, baselineMetrics.totalTimeInApp)
   // const avgTimeChange = calculateChange(currentMetrics.averageTimeInApp, baselineMetrics.averageTimeInApp)

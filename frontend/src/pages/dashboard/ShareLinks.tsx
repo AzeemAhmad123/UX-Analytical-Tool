@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Link2, Copy, Eye, Lock, Unlock, X, Trash2, ExternalLink, ArrowLeft } from 'lucide-react'
+import { Plus, Link2, Copy, Lock, Unlock, X, Trash2, ExternalLink, ArrowLeft } from 'lucide-react'
 import { projectsAPI, shareLinksAPI, funnelsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './ShareLinks.css'
@@ -37,7 +37,7 @@ export function ShareLinks() {
   const [shareLinks, setShareLinks] = useState<ShareLink[]>([])
   const [loading, setLoading] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [editingLink, setEditingLink] = useState<ShareLink | null>(null)
+  // const [editingLink, setEditingLink] = useState<ShareLink | null>(null)
 
   const [linkForm, setLinkForm] = useState({
     funnel_id: '',
@@ -137,7 +137,7 @@ export function ShareLinks() {
       if (response.share_link) {
         await loadShareLinks()
         setShowCreateModal(false)
-        setEditingLink(null)
+        // setEditingLink(null)
         resetForm()
       }
     } catch (error: any) {
@@ -243,7 +243,7 @@ export function ShareLinks() {
               ))}
             </select>
           )}
-          <button className="btn-primary" onClick={() => { resetForm(); setEditingLink(null); setShowCreateModal(true) }}>
+          <button className="btn-primary" onClick={() => { resetForm(); setShowCreateModal(true) }}>
             <Plus className="icon-small" />
             <span>New Share Link</span>
           </button>
@@ -347,7 +347,7 @@ export function ShareLinks() {
           <div className="empty-state-icon">🔗</div>
           <h3>No share links created</h3>
           <p>Create shareable links to share funnel analysis with stakeholders.</p>
-          <button className="btn-primary" onClick={() => { resetForm(); setEditingLink(null); setShowCreateModal(true) }}>
+          <button className="btn-primary" onClick={() => { resetForm(); setShowCreateModal(true) }}>
             <Plus className="icon-small" />
             <span>Create Share Link</span>
           </button>
@@ -356,11 +356,11 @@ export function ShareLinks() {
 
       {/* Create Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={() => { setShowCreateModal(false); setEditingLink(null); resetForm() }}>
+        <div className="modal-overlay" onClick={() => { setShowCreateModal(false); resetForm() }}>
           <div className="modal-content large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Create New Share Link</h2>
-              <button className="modal-close" onClick={() => { setShowCreateModal(false); setEditingLink(null); resetForm() }}>
+              <button className="modal-close" onClick={() => { setShowCreateModal(false); resetForm() }}>
                 <X size={20} />
               </button>
             </div>
@@ -454,7 +454,7 @@ export function ShareLinks() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => { setShowCreateModal(false); setEditingLink(null); resetForm() }}>
+              <button className="btn-secondary" onClick={() => { setShowCreateModal(false); resetForm() }}>
                 Cancel
               </button>
               <button className="btn-primary" onClick={handleCreateLink} disabled={loading}>

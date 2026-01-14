@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, Activity, Clock, Zap, AlertCircle } from 'lucide-react'
+// import { TrendingUp, TrendingDown, Activity, Clock, Zap, AlertCircle } from 'lucide-react'
 import { projectsAPI, advancedAnalyticsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './WebPerformance.css'
