@@ -17,7 +17,7 @@ const router = Router()
 router.get('/:projectId/privacy', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const settings = await getPrivacySettings(projectId)
+    const settings = await getPrivacySettings(String(projectId))
     res.json({ success: true, settings })
   } catch (error: any) {
     console.error('Error fetching privacy settings:', error)
@@ -32,7 +32,7 @@ router.get('/:projectId/privacy', validateProject, async (req: Request, res: Res
 router.put('/:projectId/privacy', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const settings = await updatePrivacySettings(projectId, req.body)
+    const settings = await updatePrivacySettings(String(projectId), req.body)
     res.json({ success: true, settings })
   } catch (error: any) {
     console.error('Error updating privacy settings:', error)
@@ -47,7 +47,7 @@ router.put('/:projectId/privacy', validateProject, async (req: Request, res: Res
 router.post('/:projectId/privacy/consent', async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const consent = await recordConsent(projectId, {
+    const consent = await recordConsent(String(projectId), {
       ...req.body,
       ip_address: req.ip,
       user_agent: req.get('user-agent')
@@ -73,7 +73,7 @@ router.get('/:projectId/privacy/consent', async (req: Request, res: Response) =>
     }
 
     const consented = await hasConsent(
-      projectId,
+      String(projectId),
       session_id as string,
       (consent_type as any) || 'analytics'
     )

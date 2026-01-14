@@ -28,7 +28,7 @@ router.get('/:projectId/:funnelId/export/csv', validateProject, async (req: Requ
     const { start_date, end_date, platform_filter } = req.query
 
     // Verify funnel exists
-    const funnel = await getFunnelById(funnelId)
+    const funnel = await getFunnelById(String(funnelId))
     if (!funnel || funnel.project_id !== projectId) {
       return res.status(404).json({ error: 'Funnel not found' })
     }
@@ -51,7 +51,7 @@ router.get('/:projectId/:funnelId/export/csv', validateProject, async (req: Requ
     // 'mobile' and 'all' both default to 'all' - mobile filtering would require separate logic
     
     const analysisResult = await analyzeFunnel(
-      funnelId,
+      String(funnelId),
       startDate,
       endDate,
       false,
@@ -106,7 +106,7 @@ router.post('/:projectId/:funnelId/share', validateProject, async (req: Request,
     } = req.body
 
     // Verify funnel exists
-    const funnel = await getFunnelById(funnelId)
+    const funnel = await getFunnelById(String(funnelId))
     if (!funnel || funnel.project_id !== projectId) {
       return res.status(404).json({ error: 'Funnel not found' })
     }
@@ -127,7 +127,7 @@ router.post('/:projectId/:funnelId/share', validateProject, async (req: Request,
       sharePlatformFilter = 'all'
     }
 
-    const shareLink = await createShareLink(funnelId, projectId, {
+    const shareLink = await createShareLink(String(funnelId), String(projectId), {
       expires_in_days,
       max_views,
       password,
@@ -164,12 +164,12 @@ router.get('/:projectId/:funnelId/share-links', validateProject, async (req: Req
     const { projectId, funnelId } = req.params
 
     // Verify funnel exists
-    const funnel = await getFunnelById(funnelId)
+    const funnel = await getFunnelById(String(funnelId))
     if (!funnel || funnel.project_id !== projectId) {
       return res.status(404).json({ error: 'Funnel not found' })
     }
 
-    const shareLinks = await getFunnelShareLinks(funnelId)
+    const shareLinks = await getFunnelShareLinks(String(funnelId))
 
     res.json({
       success: true,
@@ -192,7 +192,7 @@ router.delete('/:projectId/:funnelId/share-links/:shareLinkId', validateProject,
   try {
     const { shareLinkId } = req.params
 
-    await deleteShareLink(shareLinkId)
+    await deleteShareLink(String(shareLinkId))
 
     res.json({
       success: true,
@@ -215,7 +215,7 @@ router.patch('/:projectId/:funnelId/share-links/:shareLinkId/revoke', validatePr
   try {
     const { shareLinkId } = req.params
 
-    await revokeShareLink(shareLinkId)
+    await revokeShareLink(String(shareLinkId))
 
     res.json({
       success: true,
