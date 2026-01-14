@@ -198,7 +198,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     }
 
     // Get session
-    const session = await getSessionByProjectAndSessionId(projectId, sessionId)
+    const session = await getSessionByProjectAndSessionId(String(projectId), String(sessionId))
 
     if (!session) {
       return res.status(404).json({
@@ -457,7 +457,7 @@ router.delete('/:projectId/:sessionId', async (req: Request, res: Response) => {
     }
 
     // Get session first to verify it exists and belongs to project
-    const session = await getSessionByProjectAndSessionId(projectId, sessionId)
+    const session = await getSessionByProjectAndSessionId(String(projectId), String(sessionId))
 
     if (!session) {
       return res.status(404).json({

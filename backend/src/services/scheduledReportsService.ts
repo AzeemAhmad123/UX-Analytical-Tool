@@ -234,13 +234,18 @@ export async function sendScheduledReport(report: ScheduledReport): Promise<bool
       startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
     }
 
+    // Convert 'mobile' to 'all' since analyzeFunnel doesn't support 'mobile' directly
+    const platformFilter = report.report_params.platform_filter === 'mobile' 
+      ? 'all' 
+      : (report.report_params.platform_filter || 'all') as 'all' | 'web' | 'android' | 'ios'
+
     // Perform funnel analysis
     const analysisResult = await analyzeFunnel(
       report.funnel_id,
       startDate,
       endDate,
       false,
-      report.report_params.platform_filter || 'all',
+      platformFilter,
       report.report_params.country_filter,
       report.report_params.device_filter,
       report.report_params.app_version_filter,

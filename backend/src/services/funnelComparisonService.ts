@@ -154,8 +154,10 @@ export async function compareFunnelByVariants(
         undefined, // deviceFilter
         undefined, // appVersionFilter
         false,
-        undefined, // cohortFilter
-        variant.variant_name // variant filter
+        {
+          // cohortFilter with variant info
+          custom_properties: { variant: variant.variant_name }
+        }
       )
 
       if (result) {

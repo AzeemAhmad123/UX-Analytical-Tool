@@ -17,7 +17,7 @@ const router = Router()
 router.get('/:projectId/experiments', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const experiments = await getProjectExperiments(projectId)
+    const experiments = await getProjectExperiments(String(projectId))
     res.json({ success: true, experiments })
   } catch (error: any) {
     console.error('Error fetching experiments:', error)
@@ -32,7 +32,7 @@ router.get('/:projectId/experiments', validateProject, async (req: Request, res:
 router.post('/:projectId/experiments', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const experiment = await createExperiment(projectId, req.body)
+    const experiment = await createExperiment(String(projectId), req.body)
     res.json({ success: true, experiment })
   } catch (error: any) {
     console.error('Error creating experiment:', error)

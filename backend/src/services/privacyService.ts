@@ -346,26 +346,23 @@ export async function cleanupOldData(projectId: string): Promise<{
     // Delete old events
     const { count: eventsCount } = await supabase
       .from('events')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('project_id', projectId)
       .lt('timestamp', cutoffDate.toISOString())
-      .select('*', { count: 'exact', head: true })
 
     // Delete old sessions
     const { count: sessionsCount } = await supabase
       .from('sessions')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('project_id', projectId)
       .lt('start_time', cutoffDate.toISOString())
-      .select('*', { count: 'exact', head: true })
 
     // Delete old snapshots
     const { count: snapshotsCount } = await supabase
       .from('snapshots')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('project_id', projectId)
       .lt('timestamp', cutoffDate.toISOString())
-      .select('*', { count: 'exact', head: true })
 
     return {
       events_deleted: eventsCount || 0,

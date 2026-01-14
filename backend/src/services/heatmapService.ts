@@ -232,10 +232,9 @@ export async function cleanupOldHeatmaps(projectId: string, daysToKeep: number =
 
   const { count, error } = await supabase
     .from('heatmaps')
-    .delete()
+    .delete({ count: 'exact' })
     .eq('project_id', projectId)
     .lt('updated_at', cutoffDate.toISOString())
-    .select('*', { count: 'exact', head: true })
 
   if (error) {
     console.error('Error cleaning up heatmaps:', error)

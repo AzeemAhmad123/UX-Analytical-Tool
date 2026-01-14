@@ -154,22 +154,23 @@ export async function recordShareLinkView(
   } = {}
 ): Promise<void> {
   // Increment view count
-  await supabase.rpc('increment_share_link_views', { link_id: shareLinkId })
-    .catch(async () => {
-      // Fallback if RPC doesn't exist
-      const { data } = await supabase
+  try {
+    await supabase.rpc('increment_share_link_views', { link_id: shareLinkId })
+  } catch {
+    // Fallback if RPC doesn't exist
+    const { data } = await supabase
+      .from('funnel_share_links')
+      .select('view_count')
+      .eq('id', shareLinkId)
+      .single()
+    
+    if (data) {
+      await supabase
         .from('funnel_share_links')
-        .select('view_count')
+        .update({ view_count: (data.view_count || 0) + 1 })
         .eq('id', shareLinkId)
-        .single()
-      
-      if (data) {
-        await supabase
-          .from('funnel_share_links')
-          .update({ view_count: (data.view_count || 0) + 1 })
-          .eq('id', shareLinkId)
-      }
-    })
+    }
+  }
 
   // Record view details
   await supabase
