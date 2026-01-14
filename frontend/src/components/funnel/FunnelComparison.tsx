@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { X, Play, GitCompare } from 'lucide-react'
-import { funnelsAPI } from '../../services/api'
 import { FunnelChart } from './FunnelChart'
 
 interface Funnel {

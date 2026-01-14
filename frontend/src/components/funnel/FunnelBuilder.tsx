@@ -364,7 +364,7 @@ interface StepEditorProps {
   style?: any
 }
 
-function StepEditor({ step, index, isEditing, onEdit, onSave, onCancel, onDelete, isFormFunnel, dragHandleProps, style }: StepEditorProps) {
+function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, onDelete, isFormFunnel, dragHandleProps, style }: StepEditorProps) {
   const [name, setName] = useState(step.name)
   const [conditionType, setConditionType] = useState(step.condition.type)
   const [eventType, setEventType] = useState(step.condition.event_type || '')
