@@ -47,7 +47,7 @@ router.post('/:projectId/experiments', validateProject, async (req: Request, res
 router.get('/:projectId/experiments/:experimentId', validateProject, async (req: Request, res: Response) => {
   try {
     const { experimentId } = req.params
-    const experiment = await getExperimentById(experimentId)
+    const experiment = await getExperimentById(String(experimentId))
     if (!experiment) {
       return res.status(404).json({ error: 'Experiment not found' })
     }
@@ -71,7 +71,7 @@ router.post('/:projectId/experiments/:experimentId/assign', async (req: Request,
       return res.status(400).json({ error: 'user_id is required' })
     }
 
-    const variant = await assignUserToVariant(projectId, experimentId, user_id)
+    const variant = await assignUserToVariant(String(projectId), String(experimentId), user_id)
     res.json({ success: true, variant })
   } catch (error: any) {
     console.error('Error assigning user to variant:', error)
@@ -92,7 +92,7 @@ router.get('/:projectId/experiments/:experimentId/variant', async (req: Request,
       return res.status(400).json({ error: 'user_id is required' })
     }
 
-    const variant = await getUserVariant(projectId, experimentId, user_id as string)
+    const variant = await getUserVariant(String(projectId), String(experimentId), user_id as string)
     res.json({ success: true, variant })
   } catch (error: any) {
     console.error('Error getting user variant:', error)

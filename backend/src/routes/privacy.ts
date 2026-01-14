@@ -93,7 +93,7 @@ router.get('/:projectId/privacy/consent/history', validateProject, async (req: R
   try {
     const { projectId } = req.params
     const limit = parseInt(req.query.limit as string) || 100
-    const history = await getConsentHistory(projectId, limit)
+    const history = await getConsentHistory(String(projectId), limit)
     res.json({ success: true, history })
   } catch (error: any) {
     console.error('Error fetching consent history:', error)
