@@ -48,7 +48,7 @@ router.post('/:projectId/:funnelId/compare-variants', validateProject, async (re
     const endDate = end_date || new Date().toISOString()
     const startDate = start_date || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-    const comparisons = await compareFunnelVariants(funnelId, startDate, endDate, variant_filters)
+    const comparisons = await compareFunnelVariants(String(funnelId), startDate, endDate, variant_filters)
     res.json({ success: true, comparisons })
   } catch (error: any) {
     console.error('Error comparing funnel variants:', error)
@@ -72,7 +72,7 @@ router.post('/:projectId/:funnelId/compare-experiment', validateProject, async (
     const endDate = end_date || new Date().toISOString()
     const startDate = start_date || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
 
-    const comparisons = await compareFunnelByVariants(funnelId, experiment_id, startDate, endDate)
+    const comparisons = await compareFunnelByVariants(String(funnelId), experiment_id, startDate, endDate)
     res.json({ success: true, comparisons })
   } catch (error: any) {
     console.error('Error comparing funnel by experiment:', error)
