@@ -126,7 +126,7 @@ router.get('/:projectId/:funnelId', validateProject, async (req: Request, res: R
   try {
     const { projectId, funnelId } = req.params
 
-    const funnel = await getFunnelById(funnelId)
+    const funnel = await getFunnelById(String(funnelId))
 
     if (!funnel) {
       return res.status(404).json({
@@ -172,7 +172,7 @@ router.put('/:projectId/:funnelId', validateProject, async (req: Request, res: R
     } = req.body
 
     // Verify funnel exists and belongs to project
-    const existingFunnel = await getFunnelById(funnelId)
+    const existingFunnel = await getFunnelById(String(funnelId))
     if (!existingFunnel) {
       return res.status(404).json({
         error: 'Funnel not found'
@@ -252,7 +252,7 @@ router.delete('/:projectId/:funnelId', validateProject, async (req: Request, res
     const { projectId, funnelId } = req.params
 
     // Verify funnel exists and belongs to project
-    const existingFunnel = await getFunnelById(funnelId)
+    const existingFunnel = await getFunnelById(String(funnelId))
     if (!existingFunnel) {
       return res.status(404).json({
         error: 'Funnel not found'
@@ -300,6 +300,7 @@ router.delete('/:projectId/:funnelId', validateProject, async (req: Request, res
 router.post('/:projectId/:funnelId/analyze', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId, funnelId } = req.params
+    const funnelIdStr = String(funnelId)
     const { 
       start_date, 
       end_date, 
@@ -314,7 +315,7 @@ router.post('/:projectId/:funnelId/analyze', validateProject, async (req: Reques
     } = req.body
 
     // Verify funnel exists and belongs to project
-    const existingFunnel = await getFunnelById(funnelId)
+    const existingFunnel = await getFunnelById(funnelIdStr)
     if (!existingFunnel) {
       return res.status(404).json({
         error: 'Funnel not found'
@@ -337,7 +338,7 @@ router.post('/:projectId/:funnelId/analyze', validateProject, async (req: Reques
       const { data: cachedResult } = await supabase
         .from('funnel_results')
         .select('results, geographic_breakdown, field_breakdown')
-        .eq('funnel_id', funnelId)
+        .eq('funnel_id', funnelIdStr)
         .eq('date_range_start', startDate)
         .eq('date_range_end', endDate)
         .single()
@@ -355,7 +356,7 @@ router.post('/:projectId/:funnelId/analyze', validateProject, async (req: Reques
 
     // Perform analysis
     const analysisResult = await analyzeFunnel(
-      funnelId,
+      funnelIdStr,
       startDate,
       endDate,
       include_geography || false,
@@ -376,7 +377,7 @@ router.post('/:projectId/:funnelId/analyze', validateProject, async (req: Reques
     await supabase
       .from('funnel_results')
       .upsert({
-        funnel_id: funnelId,
+        funnel_id: funnelIdStr,
         project_id: projectId,
         date_range_start: startDate,
         date_range_end: endDate,
