@@ -6,7 +6,7 @@
 
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Plus, Link2, Copy, Eye, Lock, Unlock, X, Edit2, Trash2, ExternalLink, Calendar, ArrowLeft } from 'lucide-react'
+import { Plus, Link2, Copy, Eye, Lock, Unlock, X, Trash2, ExternalLink, ArrowLeft } from 'lucide-react'
 import { projectsAPI, shareLinksAPI, funnelsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 import './ShareLinks.css'
@@ -195,12 +195,12 @@ export function ShareLinks() {
     })
   }
 
-  const openEditModal = (link: ShareLink) => {
-    setEditingLink(link)
-    // Note: Editing share links might not be fully supported by backend
-    // This is a placeholder for future enhancement
-    setShowCreateModal(true)
-  }
+  // const openEditModal = (link: ShareLink) => {
+  //   setEditingLink(link)
+  //   // Note: Editing share links might not be fully supported by backend
+  //   // This is a placeholder for future enhancement
+  //   setShowCreateModal(true)
+  // }
 
   const handleBack = () => {
     if (funnelId) {
