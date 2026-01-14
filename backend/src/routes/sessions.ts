@@ -60,6 +60,44 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       throw new Error(`Failed to retrieve sessions: ${error.message}`)
     }
 
+    // Get snapshot counts for all sessions in one query
+    const sessionIds = (sessions || []).map(s => s.id)
+    const { data: snapshotCounts } = await supabase
+      .from('session_snapshots')
+      .select('session_id')
+      .in('session_id', sessionIds)
+    
+    // Count snapshots per session
+    const snapshotCountMap = new Map<string, number>()
+    if (snapshotCounts) {
+      snapshotCounts.forEach((snapshot: any) => {
+        const count = snapshotCountMap.get(snapshot.session_id) || 0
+        snapshotCountMap.set(snapshot.session_id, count + 1)
+      })
+    }
+
+    // Get video information for all sessions
+    const { data: videos } = await supabase
+      .from('session_videos')
+      .select('session_id, video_url, duration, file_size, created_at')
+      .in('session_id', sessionIds)
+      .order('created_at', { ascending: false })
+
+    // Map videos to sessions (one video per session, get the latest)
+    const videoMap = new Map<string, any>()
+    if (videos) {
+      videos.forEach((video: any) => {
+        if (!videoMap.has(video.session_id)) {
+          videoMap.set(video.session_id, {
+            video_url: video.video_url,
+            video_duration: video.duration,
+            video_file_size: video.file_size,
+            has_video: true
+          })
+        }
+      })
+    }
+
     // Calculate accurate duration for each session from actual event timestamps
     // This prevents showing 10 minutes when the actual video is only 10 seconds
     // Use Promise.allSettled to prevent one slow session from blocking all others
@@ -76,9 +114,12 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         
         if (eventBasedDuration && eventBasedDuration > 0) {
           // Use event-based duration (most accurate)
+          const videoInfo = videoMap.get(session.id) || {}
           return {
             ...session,
-            duration: eventBasedDuration
+            duration: eventBasedDuration,
+            snapshot_count: snapshotCountMap.get(session.id) || 0,
+            ...videoInfo
           }
         }
         
@@ -98,10 +139,15 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         } else if (finalDuration > maxReasonableDuration) {
           finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
         }
+
+        // Get video info for this session
+        const videoInfo = videoMap.get(session.id) || {}
         
         return {
           ...session,
-          duration: finalDuration
+          duration: finalDuration,
+          snapshot_count: snapshotCountMap.get(session.id) || 0,
+          ...videoInfo
         }
       })
     ).then(results => 
@@ -313,9 +359,25 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
 
     console.log(`✅ Total decompressed events: ${decompressedSnapshots.length}`)
 
+    // Get video information if available (for mobile sessions)
+    const { data: videos } = await supabase
+      .from('session_videos')
+      .select('video_url, duration, file_size')
+      .eq('session_id', session.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+    
+    const video = videos && videos.length > 0 ? videos[0] : null
+
     // Calculate actual duration from event timestamps (more accurate than database duration)
     let calculatedDuration = session.duration || 0
-    if (decompressedSnapshots.length > 0) {
+    
+    // For mobile sessions with video, use video duration
+    if (video && video.duration) {
+      calculatedDuration = video.duration
+      console.log(`📹 Using video duration: ${calculatedDuration}ms (${Math.round(calculatedDuration / 1000)}s)`)
+    } else if (decompressedSnapshots.length > 0) {
+      // For web sessions with snapshots, calculate from event timestamps
       const timestamps = decompressedSnapshots
         .map((e: any) => e.timestamp)
         .filter((ts: any) => ts && typeof ts === 'number')
@@ -329,6 +391,12 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       } else if (timestamps.length === 1) {
         calculatedDuration = 1000 // 1 second minimum
       }
+    } else if (!video) {
+      // No snapshots and no video - use session timestamps as fallback
+      const startTime = new Date(session.start_time).getTime()
+      const endTime = new Date(session.last_activity_time).getTime()
+      calculatedDuration = Math.max(0, endTime - startTime)
+      console.log(`📊 Using session timestamp duration: ${calculatedDuration}ms`)
     }
 
     // Return session with all events combined
@@ -338,11 +406,26 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         session_id: session.session_id,
         project_id: session.project_id,
         device_info: session.device_info,
+        // Ensure location is accessible from device_info
+        location: {
+          city: session.device_info?.city || (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) || null,
+          country: session.device_info?.country || (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) || null,
+          region: session.device_info?.region || (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).region : null) || null,
+        },
         start_time: session.start_time,
         last_activity_time: session.last_activity_time,
         duration: calculatedDuration, // Use calculated duration from events
         event_count: session.event_count,
-        created_at: session.created_at
+        created_at: session.created_at,
+        // Include video information if available
+        ...(video ? {
+          video_url: video.video_url,
+          video_duration: video.duration,
+          video_file_size: video.file_size,
+          has_video: true
+        } : {
+          has_video: false
+        })
       },
       snapshots: decompressedSnapshots,
       total_snapshots: decompressedSnapshots.length,

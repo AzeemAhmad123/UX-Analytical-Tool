@@ -3,6 +3,45 @@ import { ChevronDown, ChevronUp, Copy, Check } from 'lucide-react'
 import { projectsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 
+// Get API URL - use environment variable or auto-detect
+const getApiUrl = (): string => {
+  const isLocalhost = typeof window !== 'undefined' && 
+                     (window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1')
+  
+  if (isLocalhost) {
+    const backendTunnelUrl = import.meta.env.VITE_BACKEND_TUNNEL_URL
+    return backendTunnelUrl || 'http://localhost:3001'
+  }
+  
+  return import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+}
+
+// Get SDK file URL
+const getSdkFileUrl = (): string => {
+  const isLocalhost = typeof window !== 'undefined' && 
+                     (window.location.hostname === 'localhost' || 
+                      window.location.hostname === '127.0.0.1')
+  
+  if (isLocalhost) {
+    const cloudflareUrl = import.meta.env.VITE_CLOUDFLARE_TUNNEL_URL || ''
+    const ngrokUrl = import.meta.env.VITE_NGROK_URL || ''
+    
+    if (cloudflareUrl) {
+      return `${cloudflareUrl}/uxcam-sdk-rrweb.js`
+    } else if (ngrokUrl) {
+      return `${ngrokUrl}/uxcam-sdk-rrweb.js`
+    } else {
+      return 'http://localhost:5173/uxcam-sdk-rrweb.js'
+    }
+  }
+  
+  // Production: SDK is served from same origin
+  return typeof window !== 'undefined' 
+    ? `${window.location.origin}/uxcam-sdk-rrweb.js`
+    : '/uxcam-sdk-rrweb.js'
+}
+
 export function OnboardingContent() {
   const [expandedStep, setExpandedStep] = useState<number | null>(1)
   const [copiedCode, setCopiedCode] = useState(false)
@@ -29,6 +68,8 @@ export function OnboardingContent() {
   const [sdkVersion, setSdkVersion] = useState<'basic' | 'rrweb'>('rrweb')
 
   const handleCopyCode = () => {
+    const apiUrl = getApiUrl()
+    const sdkFileUrl = getSdkFileUrl()
     let code = ''
     
     if (sdkVersion === 'rrweb') {
@@ -39,21 +80,21 @@ export function OnboardingContent() {
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
-    apiUrl: 'http://localhost:3001'
+    apiUrl: '${apiUrl}'
   };
 </script>
 
 <!-- Load UXCam SDK with DOM recording -->
-<script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>`
+<script src="${sdkFileUrl}" async></script>`
     } else {
       code = `<script>
   (function() {
     window.UXCamSDK = {
       key: '${sdkKey}',
-      apiUrl: 'http://localhost:3001'
+      apiUrl: '${apiUrl}'
     };
     var script = document.createElement('script');
-    script.src = '/uxcam-sdk.js';
+    script.src = '${sdkFileUrl.replace('rrweb', '')}';
     script.async = true;
     document.head.appendChild(script);
   })();
@@ -200,30 +241,34 @@ export function OnboardingContent() {
                         wordBreak: 'break-word',
                         margin: 0
                       }}>
-                        {sdkVersion === 'rrweb' ? `<!-- Load rrweb for visual session replay -->
+                        {(() => {
+                          const apiUrl = getApiUrl()
+                          const sdkFileUrl = getSdkFileUrl()
+                          return sdkVersion === 'rrweb' ? `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
 <!-- UXCam SDK Configuration -->
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
-    apiUrl: 'http://localhost:3001'
+    apiUrl: '${apiUrl}'
   };
 </script>
 
 <!-- Load UXCam SDK with DOM recording -->
-<script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>` : `<script>
+<script src="${sdkFileUrl}" async></script>` : `<script>
   (function() {
     window.UXCamSDK = {
       key: '${sdkKey}',
-      apiUrl: 'http://localhost:3001'
+      apiUrl: '${apiUrl}'
     };
     var script = document.createElement('script');
-    script.src = '/uxcam-sdk.js';
+    script.src = '${sdkFileUrl.replace('rrweb', '')}';
     script.async = true;
     document.head.appendChild(script);
   })();
-</script>`}
+</script>`
+                        })()}}
                       </pre>
                       <button
                         onClick={handleCopyCode}

@@ -1,24 +1,35 @@
 import { supabase } from '../config/supabase'
+import {
+  calculateAverageTimeBetweenSteps,
+  trackUserTypes,
+  applyAdditionalFilters,
+  calculateTrendOverTime,
+  applyTimeWindow
+} from './funnelEnhancements'
 
 /**
- * Detect platform from session device_info
+ * Detect platform from session device_info or user_properties
+ * IMPORTANT: Only use explicit platform field. Do NOT use heuristics like user agent or viewport
+ * because web browsers on mobile devices will be misclassified as native apps.
  */
-function detectPlatform(deviceInfo: any): 'mobile' | 'web' {
-  if (!deviceInfo) return 'web'
-  
-  const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
-  const userAgent = deviceInfo.userAgent || ''
-  
-  // Check viewport width first
-  if (viewportWidth > 0 && viewportWidth < 768) {
-    return 'mobile'
+function detectPlatform(deviceInfo: any, userProperties?: any): 'web' | 'android' | 'ios' {
+  // First check user_properties (most accurate - set by SDK)
+  if (userProperties?.platform) {
+    if (userProperties.platform === 'android' || userProperties.platform === 'ios' || userProperties.platform === 'web') {
+      return userProperties.platform
+    }
   }
   
-  // Check user agent as fallback
-  if (/Mobile|Android|iPhone|iPad/i.test(userAgent)) {
-    return 'mobile'
+  // Second check device_info.platform (explicitly set by SDK)
+  if (deviceInfo?.platform) {
+    if (deviceInfo.platform === 'web' || deviceInfo.platform === 'android' || deviceInfo.platform === 'ios') {
+      return deviceInfo.platform
+    }
   }
   
+  // If no explicit platform is set, default to 'web'
+  // Do NOT use user agent or viewport heuristics as they will misclassify
+  // web browsers on mobile devices as native apps
   return 'web'
 }
 
@@ -42,6 +53,8 @@ export interface FunnelDefinition {
   steps: FunnelStep[]
   is_form_funnel: boolean
   form_url?: string
+  time_window_hours?: number // Time window for funnel completion (e.g., 24 hours)
+  track_first_time_users?: boolean // Track first-time vs returning users
   created_at: string
   updated_at: string
 }
@@ -53,7 +66,9 @@ export interface StepResult {
   sessions: number
   conversion_rate: number // % of step 1
   drop_off_rate: number // % dropped from previous step
-  avg_time_to_complete?: number // milliseconds
+  avg_time_to_complete?: number // milliseconds - average time from previous step
+  first_time_users?: number // Count of first-time users
+  returning_users?: number // Count of returning users
   platform_breakdown?: {
     mobile: {
       users: number
@@ -64,7 +79,7 @@ export interface StepResult {
       sessions: number
     }
   }
-  dropped_sessions?: string[]
+  dropped_sessions?: string[] // Session IDs that dropped off
 }
 
 export interface FunnelAnalysisResult {
@@ -73,10 +88,13 @@ export interface FunnelAnalysisResult {
   steps: StepResult[]
   total_users: number
   overall_conversion: number // % who completed all steps
+  first_time_users?: number
+  returning_users?: number
   date_range: {
     start: string
     end: string
   }
+  time_window_hours?: number // Time window applied to this analysis
   platform_breakdown?: {
     mobile: {
       steps: StepResult[]
@@ -110,6 +128,20 @@ export interface FunnelAnalysisResult {
       completion_rate: number
       drop_off_by_location: Record<string, number>
     }
+  }
+  trend_over_time?: {
+    daily?: Array<{
+      date: string
+      total_users: number
+      conversions: number
+      conversion_rate: number
+    }>
+    weekly?: Array<{
+      week: string
+      total_users: number
+      conversions: number
+      conversion_rate: number
+    }>
   }
 }
 
@@ -194,7 +226,16 @@ export async function analyzeFunnel(
   startDate: string,
   endDate: string,
   includeGeography: boolean = false,
-  platformFilter: 'all' | 'mobile' | 'web' = 'all'
+  platformFilter: 'all' | 'web' | 'android' | 'ios' = 'all',
+  countryFilter?: string,
+  deviceFilter?: string,
+  appVersionFilter?: string,
+  includeTrendOverTime: boolean = false,
+  cohortFilter?: {
+    is_new_user?: boolean
+    acquisition_source?: string
+    custom_properties?: Record<string, any>
+  }
 ): Promise<FunnelAnalysisResult | null> {
   try {
     const funnel = await getFunnelById(funnelId)
@@ -209,6 +250,10 @@ export async function analyzeFunnel(
 
     const stepResults: StepResult[] = []
     let previousStepSessions: Set<string> | null = null
+    const timeWindowMs = funnel.time_window_hours ? funnel.time_window_hours * 60 * 60 * 1000 : null
+    
+    // Store event data for time calculations and user tracking
+    const stepEvents: Array<Array<{ session_id: string; timestamp: string }>> = []
 
     // Analyze each step in order
     for (let i = 0; i < steps.length; i++) {
@@ -262,16 +307,146 @@ export async function analyzeFunnel(
           throw formError
         }
 
+        // Store events for time calculations
+        const formEventList = formEvents?.map(e => ({ session_id: e.session_id, timestamp: e.timestamp })) || []
+        stepEvents.push(formEventList)
+
         // Get unique sessions for this step
         const currentStepSessions = new Set(formEvents?.map(e => e.session_id) || [])
         const count = currentStepSessions.size
 
+        // Apply additional filters if needed
+        let filteredSessionIds = Array.from(currentStepSessions)
+        if (filteredSessionIds.length > 0 && (countryFilter || deviceFilter || appVersionFilter)) {
+          filteredSessionIds = await applyAdditionalFilters(
+            funnel.project_id,
+            filteredSessionIds,
+            countryFilter,
+            deviceFilter,
+            appVersionFilter
+          )
+          const filteredSet = new Set(filteredSessionIds)
+          // Update count after filtering
+          const filteredCount = filteredSet.size
+          
+          // Track dropped sessions
+          const droppedSessions: string[] = []
+          if (!isFirstStep && previousStepSessions && previousStepSessions.size > 0) {
+            const dropped = Array.from(previousStepSessions).filter(id => !filteredSet.has(id))
+            droppedSessions.push(...dropped)
+          }
+
+        // Calculate conversion and drop-off rates
+        const firstStepCount = stepResults[0]?.sessions || filteredCount
+        const conversionRate = firstStepCount > 0 ? (filteredCount / firstStepCount) * 100 : 0
+        
+        // Calculate drop-off rate: % of users from previous step who didn't complete this step
+        let dropOffRate = 0
+        if (!isFirstStep && previousStepSessions && previousStepSessions.size > 0) {
+          const previousCount = previousStepSessions.size
+          const currentCount = filteredCount
+          const droppedCount = previousCount - currentCount
+          dropOffRate = (droppedCount / previousCount) * 100
+          
+          // Log for debugging
+          console.log(`[Funnel] Step ${step.order} (${step.name}):`, {
+            previousStepSessions: previousCount,
+            currentStepSessions: currentCount,
+            dropped: droppedCount,
+            dropOffRate: dropOffRate.toFixed(2) + '%'
+          })
+        } else if (isFirstStep) {
+          console.log(`[Funnel] Step ${step.order} (${step.name}): First step - no drop-off calculation`)
+        } else {
+          console.log(`[Funnel] Step ${step.order} (${step.name}): No previous step sessions`)
+        }
+
+          // Calculate average time to complete from previous step
+          let avgTimeToComplete: number | undefined = undefined
+          if (!isFirstStep && stepEvents[i - 1] && stepEvents[i]) {
+            avgTimeToComplete = await calculateAverageTimeBetweenSteps(
+              funnel.project_id,
+              stepEvents[i - 1],
+              stepEvents[i]
+            )
+          }
+
+          // Track first-time vs returning users if enabled
+          let firstTimeUsers: number | undefined = undefined
+          let returningUsers: number | undefined = undefined
+          if (funnel.track_first_time_users && filteredSessionIds.length > 0) {
+            const userTypes = await trackUserTypes(funnel.project_id, filteredSessionIds)
+            firstTimeUsers = userTypes.firstTime
+            returningUsers = userTypes.returning
+          }
+
+          stepResults.push({
+            order: step.order,
+            name: step.name,
+            users: filteredCount,
+            sessions: filteredCount,
+            conversion_rate: conversionRate,
+            drop_off_rate: dropOffRate,
+            avg_time_to_complete: avgTimeToComplete,
+            first_time_users: firstTimeUsers,
+            returning_users: returningUsers,
+            dropped_sessions: droppedSessions.length > 0 ? droppedSessions : undefined
+          })
+
+          previousStepSessions = filteredSet
+          continue
+        }
+
+        // Track dropped sessions
+        const droppedSessions: string[] = []
+        if (!isFirstStep && previousStepSessions && previousStepSessions.size > 0) {
+          const dropped = Array.from(previousStepSessions).filter(id => !currentStepSessions.has(id))
+          droppedSessions.push(...dropped)
+        }
+
         // Calculate conversion and drop-off rates
         const firstStepCount = stepResults[0]?.sessions || count
         const conversionRate = firstStepCount > 0 ? (count / firstStepCount) * 100 : 0
-        const dropOffRate = previousStepSessions && previousStepSessions.size > 0
-          ? ((previousStepSessions.size - count) / previousStepSessions.size) * 100
-          : 0
+        
+        // Calculate drop-off rate: % of users from previous step who didn't complete this step
+        let dropOffRate = 0
+        if (!isFirstStep && previousStepSessions && previousStepSessions.size > 0) {
+          const previousCount = previousStepSessions.size
+          const currentCount = count
+          const droppedCount = previousCount - currentCount
+          dropOffRate = (droppedCount / previousCount) * 100
+          
+          // Log for debugging
+          console.log(`[Funnel] Step ${step.order} (${step.name}):`, {
+            previousStepSessions: previousCount,
+            currentStepSessions: currentCount,
+            dropped: droppedCount,
+            dropOffRate: dropOffRate.toFixed(2) + '%'
+          })
+        } else if (isFirstStep) {
+          console.log(`[Funnel] Step ${step.order} (${step.name}): First step - no drop-off calculation`)
+        } else {
+          console.log(`[Funnel] Step ${step.order} (${step.name}): No previous step sessions`)
+        }
+
+        // Calculate average time to complete from previous step
+        let avgTimeToComplete: number | undefined = undefined
+        if (!isFirstStep && stepEvents[i - 1] && stepEvents[i]) {
+          avgTimeToComplete = await calculateAverageTimeBetweenSteps(
+            funnel.project_id,
+            stepEvents[i - 1],
+            stepEvents[i]
+          )
+        }
+
+        // Track first-time vs returning users if enabled
+        let firstTimeUsers: number | undefined = undefined
+        let returningUsers: number | undefined = undefined
+        if (funnel.track_first_time_users && Array.from(currentStepSessions).length > 0) {
+          const userTypes = await trackUserTypes(funnel.project_id, Array.from(currentStepSessions))
+          firstTimeUsers = userTypes.firstTime
+          returningUsers = userTypes.returning
+        }
 
         stepResults.push({
           order: step.order,
@@ -279,7 +454,11 @@ export async function analyzeFunnel(
           users: count,
           sessions: count,
           conversion_rate: conversionRate,
-          drop_off_rate: dropOffRate
+          drop_off_rate: dropOffRate,
+          avg_time_to_complete: avgTimeToComplete,
+          first_time_users: firstTimeUsers,
+          returning_users: returningUsers,
+          dropped_sessions: droppedSessions.length > 0 ? droppedSessions : undefined
         })
 
         previousStepSessions = currentStepSessions
@@ -306,27 +485,147 @@ export async function analyzeFunnel(
         throw error
       }
 
-      // Get unique sessions for this step
-      let sessionIds = events?.map(e => e.session_id) || []
+      // Apply time window filter if set
+      let filteredEvents = events || []
+      if (timeWindowMs && !isFirstStep && previousStepSessions) {
+        // For non-first steps, check if events occur within time window from previous step
+        const previousStepEventList = stepEvents[i - 1] || []
+        const currentStepEventList = events || []
+        
+        // Group by session and check time window
+        const sessionStepTimes = new Map<string, { prev: number; curr: number }>()
+        
+        for (const event of previousStepEventList) {
+          const sessionId = event.session_id
+          const timestamp = new Date(event.timestamp).getTime()
+          const existing = sessionStepTimes.get(sessionId)
+          if (!existing || timestamp < existing.prev) {
+            sessionStepTimes.set(sessionId, { prev: timestamp, curr: existing?.curr || Infinity })
+          }
+        }
+        
+        for (const event of currentStepEventList) {
+          const sessionId = event.session_id
+          const timestamp = new Date(event.timestamp).getTime()
+          const existing = sessionStepTimes.get(sessionId)
+          if (existing) {
+            sessionStepTimes.set(sessionId, { prev: existing.prev, curr: Math.min(existing.curr, timestamp) })
+          }
+        }
+        
+        // Filter events where time between steps is within window
+        filteredEvents = currentStepEventList.filter(event => {
+          const sessionId = event.session_id
+          const times = sessionStepTimes.get(sessionId)
+          if (!times) return false
+          const timeDiff = times.curr - times.prev
+          return timeDiff >= 0 && timeDiff <= timeWindowMs
+        })
+      }
       
-      // Filter by platform if needed
-      if (platformFilter !== 'all' && sessionIds.length > 0) {
-        // Fetch sessions to check their platform
-        const { data: sessions, error: sessionsError } = await supabase
+      // Store events for time calculations
+      stepEvents.push(filteredEvents.map(e => ({ session_id: e.session_id, timestamp: e.timestamp })))
+
+      // Get unique sessions for this step
+      let sessionIds = filteredEvents.map(e => e.session_id) || []
+      
+      // Apply additional filters (country, device, app version)
+      if (sessionIds.length > 0 && (countryFilter || deviceFilter || appVersionFilter)) {
+        sessionIds = await applyAdditionalFilters(
+          funnel.project_id,
+          sessionIds,
+          countryFilter,
+          deviceFilter,
+          appVersionFilter
+        )
+      }
+      
+      // Filter by platform and cohort if needed
+      if ((platformFilter !== 'all' || cohortFilter) && sessionIds.length > 0) {
+        // Get user_ids from events for these sessions
+        const { data: eventsWithUsers } = await supabase
+          .from('events')
+          .select('session_id, user_id')
+          .in('session_id', sessionIds)
+          .eq('project_id', funnel.project_id)
+          .not('user_id', 'is', null)
+          .limit(5000) // Limit for performance
+        
+        // Get sessions for device_info fallback
+        const { data: sessions } = await supabase
           .from('sessions')
           .select('id, device_info')
           .in('id', sessionIds)
           .eq('project_id', funnel.project_id)
         
-        if (sessionsError) {
-          console.error('Error fetching sessions for platform filter:', sessionsError)
-        } else {
-          // Filter sessions by platform
-          const filteredSessionIds = sessions
-            ?.filter(s => detectPlatform(s.device_info) === platformFilter)
-            .map(s => s.id) || []
-          sessionIds = filteredSessionIds
+        // Group by session_id and get unique user_ids
+        const sessionToUserMap = new Map<string, string>()
+        eventsWithUsers?.forEach(e => {
+          if (e.user_id && !sessionToUserMap.has(e.session_id)) {
+            sessionToUserMap.set(e.session_id, e.user_id)
+          }
+        })
+        
+        // Get user properties for cohort filtering
+        const userIds = Array.from(new Set(sessionToUserMap.values()))
+        let userPropertiesMap = new Map<string, any>()
+        
+        if (userIds.length > 0) {
+          const { data: userProps } = await supabase
+            .from('user_properties')
+            .select('user_id, platform, country, app_version, device_type, is_new_user, acquisition_source, properties')
+            .eq('project_id', funnel.project_id)
+            .in('user_id', userIds)
+          
+          userProps?.forEach(up => {
+            userPropertiesMap.set(up.user_id, up)
+          })
         }
+        
+        // Filter sessions based on platform and cohort
+        const filteredSessionIds = sessionIds.filter(sessionId => {
+          const userId = sessionToUserMap.get(sessionId)
+          const userProps = userId ? userPropertiesMap.get(userId) : null
+          const session = sessions?.find(s => s.id === sessionId)
+          
+          // Platform filter - prefer user_properties, fallback to device_info
+          if (platformFilter !== 'all') {
+            let detectedPlatform: 'web' | 'android' | 'ios' = 'web'
+            if (userProps?.platform) {
+              detectedPlatform = userProps.platform as any
+            } else if (session) {
+              detectedPlatform = detectPlatform(session.device_info)
+            }
+            if (detectedPlatform !== platformFilter) {
+              return false
+            }
+          }
+          
+          // Cohort filters
+          if (cohortFilter) {
+            if (cohortFilter.is_new_user !== undefined && userProps) {
+              if (userProps.is_new_user !== cohortFilter.is_new_user) {
+                return false
+              }
+            }
+            if (cohortFilter.acquisition_source && userProps) {
+              if (userProps.acquisition_source !== cohortFilter.acquisition_source) {
+                return false
+              }
+            }
+            if (cohortFilter.custom_properties && userProps) {
+              for (const [key, value] of Object.entries(cohortFilter.custom_properties)) {
+                if (userProps.properties?.[key] !== value) {
+                  return false
+                }
+              }
+            }
+          }
+          
+          return true
+        })
+        
+        sessionIds = filteredSessionIds
       }
       
       const currentStepSessions = new Set(sessionIds)
@@ -342,6 +641,55 @@ export async function analyzeFunnel(
       // Calculate platform breakdown if showing all platforms
       let platformBreakdown: { mobile: { users: number; sessions: number }; web: { users: number; sessions: number } } | undefined
       if (platformFilter === 'all' && sessionIds.length > 0) {
+        // Get user properties for platform breakdown
+        const { data: eventsWithUsers } = await supabase
+          .from('events')
+          .select('session_id, user_id')
+          .in('session_id', sessionIds)
+          .eq('project_id', funnel.project_id)
+          .not('user_id', 'is', null)
+          .limit(1000) // Limit for performance
+        
+        const userIds = Array.from(new Set(eventsWithUsers?.map(e => e.user_id).filter(Boolean) || []))
+        
+        if (userIds.length > 0) {
+          const { data: userProps } = await supabase
+            .from('user_properties')
+            .select('user_id, platform')
+            .eq('project_id', funnel.project_id)
+            .in('user_id', userIds)
+          
+          const platformCounts = {
+            web: new Set<string>(),
+            android: new Set<string>(),
+            ios: new Set<string>()
+          }
+          
+          eventsWithUsers?.forEach(e => {
+            if (e.user_id) {
+              const userProp = userProps?.find(up => up.user_id === e.user_id)
+              const platform = userProp?.platform || 'web'
+              if (platform === 'web') platformCounts.web.add(e.session_id)
+              else if (platform === 'android') platformCounts.android.add(e.session_id)
+              else if (platform === 'ios') platformCounts.ios.add(e.session_id)
+            }
+          })
+          
+          platformBreakdown = {
+            mobile: {
+              users: platformCounts.android.size + platformCounts.ios.size,
+              sessions: platformCounts.android.size + platformCounts.ios.size
+            },
+            web: {
+              users: platformCounts.web.size,
+              sessions: platformCounts.web.size
+            }
+          }
+        }
+      }
+      
+      // Legacy platform breakdown (for backward compatibility)
+      if (platformFilter === 'all' && sessionIds.length > 0 && !platformBreakdown) {
         const { data: sessions, error: sessionsError } = await supabase
           .from('sessions')
           .select('id, device_info')
@@ -349,11 +697,12 @@ export async function analyzeFunnel(
           .eq('project_id', funnel.project_id)
         
         if (!sessionsError && sessions) {
-          const mobileSessions = sessions.filter(s => detectPlatform(s.device_info) === 'mobile')
+          const androidSessions = sessions.filter(s => detectPlatform(s.device_info) === 'android')
+          const iosSessions = sessions.filter(s => detectPlatform(s.device_info) === 'ios')
           const webSessions = sessions.filter(s => detectPlatform(s.device_info) === 'web')
           
           platformBreakdown = {
-            mobile: { users: mobileSessions.length, sessions: mobileSessions.length },
+            mobile: { users: androidSessions.length + iosSessions.length, sessions: androidSessions.length + iosSessions.length },
             web: { users: webSessions.length, sessions: webSessions.length }
           }
         }
@@ -362,9 +711,45 @@ export async function analyzeFunnel(
       // Calculate conversion and drop-off rates
       const firstStepCount = stepResults[0]?.sessions || count
       const conversionRate = firstStepCount > 0 ? (count / firstStepCount) * 100 : 0
-      const dropOffRate = previousStepSessions && previousStepSessions.size > 0
-        ? ((previousStepSessions.size - count) / previousStepSessions.size) * 100
-        : 0
+      // Calculate drop-off rate: % of users from previous step who didn't complete this step
+      let dropOffRate = 0
+      if (!isFirstStep && previousStepSessions && previousStepSessions.size > 0) {
+        const previousCount = previousStepSessions.size
+        const currentCount = count
+        const droppedCount = previousCount - currentCount
+        dropOffRate = (droppedCount / previousCount) * 100
+        
+        // Log for debugging
+        console.log(`[Funnel] Step ${step.order} (${step.name}):`, {
+          previousStepSessions: previousCount,
+          currentStepSessions: currentCount,
+          dropped: droppedCount,
+          dropOffRate: dropOffRate.toFixed(2) + '%'
+        })
+      } else if (isFirstStep) {
+        console.log(`[Funnel] Step ${step.order} (${step.name}): First step - no drop-off calculation`)
+      } else {
+        console.log(`[Funnel] Step ${step.order} (${step.name}): No previous step sessions`)
+      }
+
+      // Calculate average time to complete from previous step
+      let avgTimeToComplete: number | undefined = undefined
+      if (!isFirstStep && stepEvents[i - 1] && stepEvents[i]) {
+        avgTimeToComplete = await calculateAverageTimeBetweenSteps(
+          funnel.project_id,
+          stepEvents[i - 1],
+          stepEvents[i]
+        )
+      }
+
+      // Track first-time vs returning users if enabled
+      let firstTimeUsers: number | undefined = undefined
+      let returningUsers: number | undefined = undefined
+      if (funnel.track_first_time_users && sessionIds.length > 0) {
+        const userTypes = await trackUserTypes(funnel.project_id, Array.from(currentStepSessions))
+        firstTimeUsers = userTypes.firstTime
+        returningUsers = userTypes.returning
+      }
 
       stepResults.push({
         order: step.order,
@@ -373,6 +758,9 @@ export async function analyzeFunnel(
         sessions: count,
         conversion_rate: conversionRate,
         drop_off_rate: dropOffRate,
+        avg_time_to_complete: avgTimeToComplete,
+        first_time_users: firstTimeUsers,
+        returning_users: returningUsers,
         platform_breakdown: platformBreakdown,
         dropped_sessions: droppedSessions.length > 0 ? droppedSessions : undefined
       })
@@ -385,12 +773,27 @@ export async function analyzeFunnel(
     const finalStepUsers = stepResults[stepResults.length - 1]?.users || 0
     const overallConversion = totalUsers > 0 ? (finalStepUsers / totalUsers) * 100 : 0
 
+    // Calculate first-time vs returning users overall
+    let firstTimeUsersOverall: number | undefined = undefined
+    let returningUsersOverall: number | undefined = undefined
+    if (funnel.track_first_time_users && stepResults.length > 0 && stepEvents.length > 0) {
+      const allSessionIds = Array.from(new Set(stepEvents[0]?.map(e => e.session_id) || []))
+      if (allSessionIds.length > 0) {
+        const userTypes = await trackUserTypes(funnel.project_id, allSessionIds)
+        firstTimeUsersOverall = userTypes.firstTime
+        returningUsersOverall = userTypes.returning
+      }
+    }
+
     const result: FunnelAnalysisResult = {
       funnel_id: funnelId,
       funnel_name: funnel.name,
       steps: stepResults,
       total_users: totalUsers,
       overall_conversion: overallConversion,
+      first_time_users: firstTimeUsersOverall,
+      returning_users: returningUsersOverall,
+      time_window_hours: funnel.time_window_hours || undefined,
       date_range: {
         start: startDate,
         end: endDate
@@ -464,6 +867,17 @@ export async function analyzeFunnel(
         funnel.form_url,
         startDate,
         endDate
+      )
+    }
+
+    // Add trend over time if requested
+    if (includeTrendOverTime) {
+      result.trend_over_time = await calculateTrendOverTime(
+        funnel.project_id,
+        steps,
+        startDate,
+        endDate,
+        'daily'
       )
     }
 
@@ -564,9 +978,15 @@ async function analyzeFunnelByGeography(
 
         const firstStepCount = countrySteps[0]?.sessions || count
         const conversionRate = firstStepCount > 0 ? (count / firstStepCount) * 100 : 0
-        const dropOffRate = previousStepSessions && previousStepSessions.size > 0
-          ? ((previousStepSessions.size - count) / previousStepSessions.size) * 100
-          : 0
+        
+        // Calculate drop-off rate: % of users from previous step who didn't complete this step
+        let dropOffRate = 0
+        if (i > 0 && previousStepSessions && previousStepSessions.size > 0) {
+          const previousCount = previousStepSessions.size
+          const currentCount = count
+          const droppedCount = previousCount - currentCount
+          dropOffRate = (droppedCount / previousCount) * 100
+        }
 
         countrySteps.push({
           order: step.order,

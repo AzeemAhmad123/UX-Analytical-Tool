@@ -1,203 +1,443 @@
-import { useState } from 'react'
-import { Search, Star, Users, UserPlus, RefreshCw } from 'lucide-react'
+/**
+ * User Segmentation Builder
+ * 
+ * Create and manage user segments with visual condition builder
+ */
+
+import { useState, useEffect } from 'react'
+import { Plus, Search, Star, Users, X, Save, Trash2, RefreshCw, Edit2, Check } from 'lucide-react'
+import { projectsAPI, advancedAnalyticsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
+import './Segments.css'
+
+interface SegmentCondition {
+  field: string
+  operator: 'equals' | 'not_equals' | 'contains' | 'greater_than' | 'less_than' | 'in' | 'not_in'
+  value: any
+}
+
+interface Segment {
+  id: string
+  name: string
+  description?: string
+  conditions: SegmentCondition[]
+  user_count?: number
+  last_refreshed?: string
+  created_at: string
+  updated_at: string
+}
 
 export function Segments() {
-  const [activeTab, setActiveTab] = useState<'segments' | 'data-connect'>('segments')
+  const [projects, setProjects] = useState<any[]>([])
+  const [selectedProject, setSelectedProject] = useState<string | null>(null)
+  const [segments, setSegments] = useState<Segment[]>([])
+  const [loading, setLoading] = useState(false)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editingSegment, setEditingSegment] = useState<Segment | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'my' | 'favorites'>('all')
 
-  const segments = [
-    {
-      id: 'all-users',
-      name: 'All users',
-      lastUpdate: '4/20/2022',
-      traffic: '0.00%',
-      conversion: '0.00%',
-      bounce: '0.00%',
-      isDefault: true
-    },
-    {
-      id: 'new-users',
-      name: 'New users',
-      lastUpdate: '10/27/2025',
-      traffic: '0.00%',
-      conversion: '0.00%',
-      bounce: '0.00%'
-    },
-    {
-      id: 'returning-users',
-      name: 'Returning users',
-      lastUpdate: '10/27/2025',
-      traffic: '0.00%',
-      conversion: '0.00%',
-      bounce: '0.00%'
+  const [segmentForm, setSegmentForm] = useState({
+    name: '',
+    description: '',
+    conditions: [] as SegmentCondition[]
+  })
+
+  useEffect(() => {
+    loadProjects()
+  }, [])
+
+  useEffect(() => {
+    if (selectedProject) {
+      loadSegments()
     }
+  }, [selectedProject])
+
+  const loadProjects = async () => {
+    try {
+      const response = await projectsAPI.getAll()
+      const projectsList = response.projects || []
+      setProjects(projectsList)
+      if (projectsList.length > 0) {
+        setSelectedProject(projectsList[0].id)
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error)
+    }
+  }
+
+  const loadSegments = async () => {
+    if (!selectedProject) return
+
+    setLoading(true)
+    try {
+      const response = await advancedAnalyticsAPI.getSegments(selectedProject)
+      setSegments(response.segments || [])
+    } catch (error) {
+      console.error('Error loading segments:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCreateSegment = async () => {
+    if (!selectedProject || !segmentForm.name || segmentForm.conditions.length === 0) {
+      alert('Please provide a name and at least one condition')
+      return
+    }
+
+    setLoading(true)
+    try {
+      if (editingSegment) {
+        await advancedAnalyticsAPI.updateSegment(selectedProject, editingSegment.id, segmentForm)
+      } else {
+        await advancedAnalyticsAPI.createSegment(selectedProject, segmentForm)
+      }
+      await loadSegments()
+      setShowCreateModal(false)
+      setEditingSegment(null)
+      resetForm()
+    } catch (error: any) {
+      alert('Error saving segment: ' + (error.message || 'Unknown error'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleDeleteSegment = async (segmentId: string) => {
+    if (!selectedProject || !confirm('Are you sure you want to delete this segment?')) return
+
+    setLoading(true)
+    try {
+      await advancedAnalyticsAPI.deleteSegment(selectedProject, segmentId)
+      await loadSegments()
+    } catch (error: any) {
+      alert('Error deleting segment: ' + (error.message || 'Unknown error'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRefreshSegment = async (segmentId: string) => {
+    if (!selectedProject) return
+
+    setLoading(true)
+    try {
+      await advancedAnalyticsAPI.refreshSegment(selectedProject, segmentId)
+      await loadSegments()
+    } catch (error: any) {
+      alert('Error refreshing segment: ' + (error.message || 'Unknown error'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const resetForm = () => {
+    setSegmentForm({
+      name: '',
+      description: '',
+      conditions: []
+    })
+  }
+
+  const addCondition = () => {
+    setSegmentForm({
+      ...segmentForm,
+      conditions: [
+        ...segmentForm.conditions,
+        { field: 'platform', operator: 'equals', value: '' }
+      ]
+    })
+  }
+
+  const removeCondition = (index: number) => {
+    setSegmentForm({
+      ...segmentForm,
+      conditions: segmentForm.conditions.filter((_, i) => i !== index)
+    })
+  }
+
+  const updateCondition = (index: number, updates: Partial<SegmentCondition>) => {
+    const newConditions = [...segmentForm.conditions]
+    newConditions[index] = { ...newConditions[index], ...updates }
+    setSegmentForm({
+      ...segmentForm,
+      conditions: newConditions
+    })
+  }
+
+  const openEditModal = (segment: Segment) => {
+    setEditingSegment(segment)
+    setSegmentForm({
+      name: segment.name,
+      description: segment.description || '',
+      conditions: segment.conditions
+    })
+    setShowCreateModal(true)
+  }
+
+  const filteredSegments = segments.filter(segment => {
+    if (searchQuery && !segment.name.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false
+    }
+    // Filter logic can be extended here
+    return true
+  })
+
+  const availableFields = [
+    { value: 'platform', label: 'Platform' },
+    { value: 'country', label: 'Country' },
+    { value: 'device', label: 'Device' },
+    { value: 'app_version', label: 'App Version' },
+    { value: 'custom_properties.total_spent', label: 'Total Spent' },
+    { value: 'custom_properties.subscription_tier', label: 'Subscription Tier' }
+  ]
+
+  const availableOperators = [
+    { value: 'equals', label: 'Equals' },
+    { value: 'not_equals', label: 'Not Equals' },
+    { value: 'contains', label: 'Contains' },
+    { value: 'greater_than', label: 'Greater Than' },
+    { value: 'less_than', label: 'Less Than' },
+    { value: 'in', label: 'In' },
+    { value: 'not_in', label: 'Not In' }
   ]
 
   return (
-    <div style={{ display: 'flex', height: '100%' }}>
-      {/* Left Sidebar - Filters */}
-      <div style={{ width: '320px', backgroundColor: 'white', borderRight: '1px solid #e5e7eb', padding: '1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-          <h2 style={{ fontWeight: '600', color: '#111827' }}>Filters</h2>
-          <button style={{ fontSize: '0.875rem', color: '#4b5563' }} onMouseEnter={(e) => e.currentTarget.style.color = '#111827'} onMouseLeave={(e) => e.currentTarget.style.color = '#4b5563'}>Reset</button>
-        </div>
-
-        {/* Show results for */}
-        <div style={{ marginBottom: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827', marginBottom: '0.75rem' }}>Show results for</h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="filter"
-                checked={filter === 'all'}
-                onChange={() => setFilter('all')}
-                style={{ width: '16px', height: '16px', accentColor: '#9333ea' }}
-              />
-              <span style={{ fontSize: '0.875rem', color: '#374151' }}>All segments (3)</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="filter"
-                checked={filter === 'my'}
-                onChange={() => setFilter('my')}
-                style={{ width: '16px', height: '16px', accentColor: '#9333ea' }}
-              />
-              <span style={{ fontSize: '0.875rem', color: '#374151' }}>My segments (0)</span>
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-              <input
-                type="radio"
-                name="filter"
-                checked={filter === 'favorites'}
-                onChange={() => setFilter('favorites')}
-                style={{ width: '16px', height: '16px', accentColor: '#9333ea' }}
-              />
-              <span style={{ fontSize: '0.875rem', color: '#374151' }}>Favorites (0)</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Search */}
+    <div className="segments-page">
+      {/* Header */}
+      <div className="page-header">
         <div>
-          <h3 style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827', marginBottom: '0.75rem' }}>Search by segment name</h3>
-          <div className="search-input">
-            <Search className="search-icon" />
-            <input type="text" placeholder="Filter by segment name..." />
-          </div>
+          <h1 className="page-title">User Segments</h1>
+          <p style={{ color: '#6b7280', marginTop: '0.5rem', fontSize: '0.875rem' }}>
+            Create dynamic user segments based on properties and behaviors
+          </p>
         </div>
-
-        {/* Sessions Progress */}
-        <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid #e5e7eb' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-            <span style={{ fontSize: '0.75rem', color: '#4b5563' }}>Sessions</span>
-            <span style={{ fontSize: '0.75rem', fontWeight: '500', color: '#111827' }}>0 / 200K</span>
-          </div>
-          <div style={{ width: '100%', backgroundColor: '#e5e7eb', borderRadius: '9999px', height: '8px', marginBottom: '0.5rem' }}>
-            <div style={{ backgroundColor: '#9333ea', height: '8px', borderRadius: '9999px', width: '0%' }}></div>
-          </div>
-          <p style={{ fontSize: '0.75rem', color: '#4b5563' }}>Resets Feb 2</p>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+          {projects.length > 0 && (
+            <select
+              className="time-filter-select"
+              value={selectedProject || ''}
+              onChange={(e) => setSelectedProject(e.target.value)}
+            >
+              {projects.map(project => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          )}
+          <button className="btn-primary" onClick={() => { resetForm(); setEditingSegment(null); setShowCreateModal(true) }}>
+            <Plus className="icon-small" />
+            <span>New Segment</span>
+          </button>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
-        {/* Tabs */}
-        <div className="tabs-container" style={{ marginBottom: '1.5rem' }}>
+      {/* Search and Filters */}
+      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem', alignItems: 'center' }}>
+        <div className="search-input" style={{ flex: 1, maxWidth: '400px' }}>
+          <Search className="search-icon" />
+          <input
+            type="text"
+            placeholder="Search segments..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <div className="tabs-container" style={{ margin: 0 }}>
           <div className="tabs">
             <button
-              onClick={() => setActiveTab('segments')}
-              className={`tab ${activeTab === 'segments' ? 'tab-active' : ''}`}
-              style={{ color: activeTab === 'segments' ? '#9333ea' : undefined }}
+              onClick={() => setFilter('all')}
+              className={`tab ${filter === 'all' ? 'tab-active' : ''}`}
             >
-              <Users className="icon-small" />
-              Segments
+              All
             </button>
             <button
-              onClick={() => setActiveTab('data-connect')}
-              className={`tab ${activeTab === 'data-connect' ? 'tab-active' : ''}`}
-              style={{ color: activeTab === 'data-connect' ? '#9333ea' : undefined }}
+              onClick={() => setFilter('my')}
+              className={`tab ${filter === 'my' ? 'tab-active' : ''}`}
             >
-              <svg className="icon-small" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-              </svg>
-              Data Connect
+              My Segments
+            </button>
+            <button
+              onClick={() => setFilter('favorites')}
+              className={`tab ${filter === 'favorites' ? 'tab-active' : ''}`}
+            >
+              Favorites
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-          <h1 className="page-title" style={{ fontSize: '1.875rem' }}>Segments</h1>
-          <button className="btn-primary">
-            <span>New segment</span>
+      {/* Segments List */}
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: '3rem' }}>
+          <div className="spinner"></div>
+          <p style={{ marginTop: '1rem', color: '#6b7280' }}>Loading segments...</p>
+        </div>
+      ) : filteredSegments.length > 0 ? (
+        <div className="segments-grid">
+          {filteredSegments.map((segment) => (
+            <div key={segment.id} className="segment-card">
+              <div className="segment-card-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <Users className="icon-small" style={{ color: '#8b5cf6' }} />
+                  <h3 className="segment-name">{segment.name}</h3>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    className="icon-button"
+                    onClick={() => handleRefreshSegment(segment.id)}
+                    title="Refresh segment"
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    onClick={() => openEditModal(segment)}
+                    title="Edit segment"
+                  >
+                    <Edit2 size={16} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    onClick={() => handleDeleteSegment(segment.id)}
+                    title="Delete segment"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+              {segment.description && (
+                <p className="segment-description">{segment.description}</p>
+              )}
+              <div className="segment-conditions">
+                <div className="conditions-label">Conditions:</div>
+                {segment.conditions.map((condition, idx) => (
+                  <div key={idx} className="condition-badge">
+                    <strong>{condition.field}</strong> {condition.operator} <code>{String(condition.value)}</code>
+                  </div>
+                ))}
+              </div>
+              <div className="segment-footer">
+                <div className="segment-meta">
+                  {segment.user_count !== undefined && (
+                    <span>{segment.user_count.toLocaleString()} users</span>
+                  )}
+                  {segment.last_refreshed && (
+                    <span>• Last refreshed: {new Date(segment.last_refreshed).toLocaleDateString()}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          <div className="empty-state-icon">👥</div>
+          <h3>No segments yet</h3>
+          <p>Create your first segment to start grouping users based on properties and behaviors.</p>
+          <button className="btn-primary" onClick={() => { resetForm(); setEditingSegment(null); setShowCreateModal(true) }}>
+            <Plus className="icon-small" />
+            <span>Create Segment</span>
           </button>
         </div>
+      )}
 
-        {/* Segments List */}
-        <div className="data-table">
-          <div style={{ borderBottom: '1px solid #e5e7eb', padding: '0.75rem 1rem' }}>
-            <h3 style={{ fontWeight: '600', color: '#111827' }}>Segments List</h3>
-          </div>
-
-          <table style={{ width: '100%' }}>
-            <thead className="table-header">
-              <tr>
-                <th className="table-header-cell">
-                  <input type="checkbox" style={{ borderRadius: '4px', borderColor: '#d1d5db' }} />
-                </th>
-                <th className="table-header-cell">Name</th>
-                <th className="table-header-cell">Last Update</th>
-                <th className="table-header-cell">Traffic</th>
-                <th className="table-header-cell">Conversion</th>
-                <th className="table-header-cell">Bounce</th>
-              </tr>
-            </thead>
-            <tbody>
-              {segments.map((segment) => (
-                <tr key={segment.id} className="table-row">
-                  <td className="table-cell">
-                    <input type="checkbox" style={{ borderRadius: '4px', borderColor: '#d1d5db' }} />
-                  </td>
-                  <td className="table-cell">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <Star className="icon-small" style={{ color: '#9ca3af' }} />
-                      {segment.isDefault ? (
-                        <Users className="icon-small" style={{ color: '#4b5563' }} />
-                      ) : segment.id === 'new-users' ? (
-                        <UserPlus className="icon-small" style={{ color: '#4b5563' }} />
-                      ) : (
-                        <RefreshCw className="icon-small" style={{ color: '#4b5563' }} />
-                      )}
-                      <span style={{ fontSize: '0.875rem', color: '#111827' }}>{segment.name}</span>
-                    </div>
-                  </td>
-                  <td className="table-cell" style={{ fontSize: '0.875rem', color: '#4b5563' }}>{segment.lastUpdate}</td>
-                  <td className="table-cell" style={{ fontSize: '0.875rem', color: '#4b5563' }}>{segment.traffic}</td>
-                  <td className="table-cell" style={{ fontSize: '0.875rem', color: '#4b5563' }}>{segment.conversion}</td>
-                  <td className="table-cell" style={{ fontSize: '0.875rem', color: '#4b5563' }}>{segment.bounce}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {/* Footer */}
-          <div style={{ borderTop: '1px solid #e5e7eb', padding: '0.75rem 1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: '0.875rem', color: '#4b5563' }}>3 items</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <span style={{ fontSize: '0.875rem', color: '#4b5563' }}>10, 20 results per page</span>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <button style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', color: '#4b5563', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>← prev</button>
-                <button style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', backgroundColor: '#9333ea', color: 'white', border: 'none', borderRadius: '4px' }}>1</button>
-                <button style={{ padding: '0.25rem 0.75rem', fontSize: '0.875rem', color: '#4b5563', backgroundColor: 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}>Next →</button>
+      {/* Create/Edit Modal */}
+      {showCreateModal && (
+        <div className="modal-overlay" onClick={() => { setShowCreateModal(false); setEditingSegment(null); resetForm() }}>
+          <div className="modal-content large" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>{editingSegment ? 'Edit Segment' : 'Create New Segment'}</h2>
+              <button className="modal-close" onClick={() => { setShowCreateModal(false); setEditingSegment(null); resetForm() }}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Segment Name *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g., High Value Users"
+                  value={segmentForm.name}
+                  onChange={(e) => setSegmentForm({ ...segmentForm, name: e.target.value })}
+                />
               </div>
+              <div className="form-group">
+                <label className="form-label">Description</label>
+                <textarea
+                  className="form-input"
+                  placeholder="Describe this segment..."
+                  rows={3}
+                  value={segmentForm.description}
+                  onChange={(e) => setSegmentForm({ ...segmentForm, description: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+                  <label className="form-label">Conditions *</label>
+                  <button className="btn-secondary" onClick={addCondition}>
+                    <Plus className="icon-small" />
+                    <span>Add Condition</span>
+                  </button>
+                </div>
+                {segmentForm.conditions.length === 0 ? (
+                  <div className="empty-conditions">
+                    <p>No conditions added. Add at least one condition to create a segment.</p>
+                  </div>
+                ) : (
+                  <div className="conditions-list">
+                    {segmentForm.conditions.map((condition, index) => (
+                      <div key={index} className="condition-row">
+                        <select
+                          className="form-select"
+                          value={condition.field}
+                          onChange={(e) => updateCondition(index, { field: e.target.value })}
+                        >
+                          {availableFields.map(field => (
+                            <option key={field.value} value={field.value}>{field.label}</option>
+                          ))}
+                        </select>
+                        <select
+                          className="form-select"
+                          value={condition.operator}
+                          onChange={(e) => updateCondition(index, { operator: e.target.value as any })}
+                        >
+                          {availableOperators.map(op => (
+                            <option key={op.value} value={op.value}>{op.label}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          className="form-input"
+                          placeholder="Value"
+                          value={condition.value}
+                          onChange={(e) => updateCondition(index, { value: e.target.value })}
+                        />
+                        <button
+                          className="icon-button"
+                          onClick={() => removeCondition(index)}
+                          title="Remove condition"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={() => { setShowCreateModal(false); setEditingSegment(null); resetForm() }}>
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleCreateSegment} disabled={loading}>
+                {loading ? 'Saving...' : editingSegment ? 'Update Segment' : 'Create Segment'}
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
-

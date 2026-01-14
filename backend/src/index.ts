@@ -22,7 +22,7 @@ app.use(cors({
     const isDevelopment = process.env.NODE_ENV !== 'production'
     
     if (isDevelopment) {
-      // Development: Allow localhost and file://
+      // Development: Allow localhost, local network IPs (for mobile testing), and file://
       const allowedOrigins = [
         FRONTEND_URL,
         'http://localhost:5173',
@@ -31,7 +31,16 @@ app.use(cors({
         'null' // file:// protocol sends null origin
       ]
       
-      if (allowedOrigins.includes(origin) || origin.startsWith('file://')) {
+      // Check if origin is localhost or local network IP (for mobile testing)
+      const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
+      const isLocalNetwork = /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin) || 
+                            /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/.test(origin) ||
+                            /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/.test(origin)
+      
+      if (allowedOrigins.includes(origin) || 
+          origin.startsWith('file://') || 
+          isLocalhost || 
+          isLocalNetwork) {
         return callback(null, true)
       }
     } else {
@@ -45,7 +54,9 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86400 // 24 hours - cache preflight requests
 }))
 
 app.use(express.json({ limit: '10mb' }))
@@ -79,15 +90,36 @@ import eventsRouter from './routes/events'
 import projectsRouter from './routes/projects'
 import analyticsRouter from './routes/analytics'
 import funnelsRouter from './routes/funnels'
+import funnelsExportRouter from './routes/funnels-export'
+import funnelAlertsRouter from './routes/funnel-alerts'
+import funnelComparisonRouter from './routes/funnel-comparison'
+import funnelAnomaliesRouter from './routes/funnel-anomalies'
+import shareLinksRouter from './routes/share-links'
+import scheduledReportsRouter from './routes/scheduled-reports'
+import advancedAnalyticsRouter from './routes/advanced-analytics'
+import privacyRouter from './routes/privacy'
+import experimentsRouter from './routes/experiments'
 import sdkRouter from './routes/sdk'
+import videosRouter from './routes/videos'
 
 app.use('/api/snapshots', snapshotsRouter)
 app.use('/api/sessions', sessionsRouter)
 app.use('/api/events', eventsRouter)
 app.use('/api/projects', projectsRouter)
+app.use('/api/projects', privacyRouter)
+app.use('/api/projects', experimentsRouter)
 app.use('/api/analytics', analyticsRouter)
 app.use('/api/funnels', funnelsRouter)
+app.use('/api/funnels', funnelsExportRouter)
+app.use('/api/funnels', funnelAlertsRouter)
+app.use('/api/funnels', funnelComparisonRouter)
+app.use('/api/funnels', scheduledReportsRouter)
+app.use('/api/funnel-anomalies', funnelAnomaliesRouter)
+app.use('/api/funnel-share', shareLinksRouter)
+app.use('/api/scheduled-reports', scheduledReportsRouter)
+app.use('/api/advanced-analytics', advancedAnalyticsRouter)
 app.use('/api/sdk', sdkRouter)
+app.use('/api/videos', videosRouter)
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

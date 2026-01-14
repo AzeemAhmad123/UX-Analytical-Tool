@@ -1,10 +1,15 @@
-import { Home, LayoutDashboard, TrendingUp, PlayCircle, Users, List, Monitor, AlertCircle, BookOpen, HelpCircle, ChevronDown, Moon, MessageSquare, Gauge } from 'lucide-react'
+import { Home, LayoutDashboard, TrendingUp, PlayCircle, Users, List, Monitor, AlertCircle, BookOpen, HelpCircle, ChevronDown, ChevronLeft, ChevronRight, Moon, MessageSquare, Gauge } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { auth } from '../../config/supabase'
 import './Dashboard.css'
 
-export function DashboardSidebar() {
+interface DashboardSidebarProps {
+  collapsed?: boolean
+  onToggleCollapse?: () => void
+}
+
+export function DashboardSidebar({ collapsed = false, onToggleCollapse }: DashboardSidebarProps) {
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -112,27 +117,38 @@ export function DashboardSidebar() {
   }
 
   return (
-    <aside className="dashboard-sidebar">
+    <aside className={`dashboard-sidebar ${collapsed ? 'collapsed' : ''}`}>
+      {/* Collapse Toggle Button */}
+      <button
+        onClick={onToggleCollapse}
+        className="sidebar-collapse-btn"
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      >
+        {collapsed ? <ChevronRight className="nav-icon" /> : <ChevronLeft className="nav-icon" />}
+      </button>
+
       {/* Logo */}
       <div className="sidebar-logo">
         <Link to="/dashboard" className="sidebar-logo-link">
           <div className="logo-icon">UX</div>
-          <span className="logo-text">UXCam</span>
+          {!collapsed && <span className="logo-text">UXCam</span>}
         </Link>
       </div>
 
       {/* App Selector */}
-      <div className="app-selector">
-        <div className="app-selector-item">
-          <div className="app-selector-content">
-            <div className="app-icon">
-              <Moon className="nav-icon" />
+      {!collapsed && (
+        <div className="app-selector">
+          <div className="app-selector-item">
+            <div className="app-selector-content">
+              <div className="app-icon">
+                <Moon className="nav-icon" />
+              </div>
+              <span className="app-name">Relaxed Sleep</span>
             </div>
-            <span className="app-name">Relaxed Sleep</span>
+            <ChevronDown className="nav-dropdown" />
           </div>
-          <ChevronDown className="nav-dropdown" />
         </div>
-      </div>
+      )}
 
       {/* Navigation */}
       <nav className="sidebar-nav">
@@ -144,15 +160,16 @@ export function DashboardSidebar() {
               key={index}
               to={item.path}
               className={`nav-item ${active ? 'active' : ''}`}
+              title={collapsed ? item.label : ''}
             >
               <div className="nav-item-content">
                 <Icon className="nav-icon" />
-                <span className="nav-label">{item.label}</span>
+                {!collapsed && <span className="nav-label">{item.label}</span>}
               </div>
-              {item.hasDropdown && (
+              {!collapsed && item.hasDropdown && (
                 <ChevronDown className="nav-dropdown" />
               )}
-              {item.progress && (
+              {!collapsed && item.progress && (
                 <span className="nav-progress">{item.progress}</span>
               )}
             </Link>
@@ -162,28 +179,32 @@ export function DashboardSidebar() {
 
       {/* Bottom Section - User Profile */}
       <div className="sidebar-footer">
-        <Link to="/dashboard/profile" className={`user-profile ${location.pathname === '/dashboard/profile' ? 'active' : ''}`}>
+        <Link 
+          to="/dashboard/profile" 
+          className={`user-profile ${location.pathname === '/dashboard/profile' ? 'active' : ''}`}
+          title={collapsed ? (user ? getUserDisplayName(user) : 'User') : ''}
+        >
           <div className="user-profile-content">
             {!loading && user && (
               <>
                 <div className="user-avatar">{getUserInitials(user)}</div>
-                <span className="user-name">{getUserDisplayName(user)}</span>
+                {!collapsed && <span className="user-name">{getUserDisplayName(user)}</span>}
               </>
             )}
             {loading && (
               <>
                 <div className="user-avatar">U</div>
-                <span className="user-name">Loading...</span>
+                {!collapsed && <span className="user-name">Loading...</span>}
               </>
             )}
             {!loading && !user && (
               <>
                 <div className="user-avatar">U</div>
-                <span className="user-name">User</span>
+                {!collapsed && <span className="user-name">User</span>}
               </>
             )}
           </div>
-          <ChevronDown className="nav-dropdown" />
+          {!collapsed && <ChevronDown className="nav-dropdown" />}
         </Link>
       </div>
     </aside>

@@ -1,10 +1,83 @@
 /**
  * UXCam Analytics SDK with rrweb DOM Recording
  * Records DOM snapshots for visual session replay
+ * 
+ * PRODUCTION-SAFE: All errors are caught and won't break your website
+ * 
+ * Integration:
+ * <script>
+ *   window.UXCamSDK = {
+ *     key: 'YOUR_SDK_KEY',
+ *     apiUrl: 'https://your-api.com' // Optional
+ *   };
+ * </script>
+ * <script src="https://unpkg.com/rrweb@latest/dist/rrweb.min.js"></script>
+ * <script src="uxcam-sdk-rrweb.js"></script>
  */
 
 (function() {
   'use strict';
+
+  // ============================================
+  // GLOBAL ERROR HANDLER - Prevents SDK from breaking websites
+  // ============================================
+  var SDK_ERRORS = [];
+  var MAX_ERRORS = 10; // Prevent error spam
+  
+  function safeExecute(fn, context, fallback, errorMessage) {
+    try {
+      return fn.call(context);
+    } catch (error) {
+      if (SDK_ERRORS.length < MAX_ERRORS) {
+        SDK_ERRORS.push({
+          error: error,
+          message: errorMessage || 'SDK operation failed',
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      // Only log in debug mode
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK Error:', errorMessage || error.message, error);
+      }
+      
+      return fallback !== undefined ? fallback : null;
+    }
+  }
+
+  function safeAsyncExecute(fn, context, fallback, errorMessage) {
+    try {
+      var result = fn.call(context);
+      if (result && typeof result.then === 'function') {
+        return result.catch(function(error) {
+          if (SDK_ERRORS.length < MAX_ERRORS) {
+            SDK_ERRORS.push({
+              error: error,
+              message: errorMessage || 'SDK async operation failed',
+              timestamp: new Date().toISOString()
+            });
+          }
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.warn('UXCam SDK Async Error:', errorMessage || error.message, error);
+          }
+          return fallback !== undefined ? fallback : null;
+        });
+      }
+      return result;
+    } catch (error) {
+      if (SDK_ERRORS.length < MAX_ERRORS) {
+        SDK_ERRORS.push({
+          error: error,
+          message: errorMessage || 'SDK async operation failed',
+          timestamp: new Date().toISOString()
+        });
+      }
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK Error:', errorMessage || error.message, error);
+      }
+      return fallback !== undefined ? fallback : null;
+    }
+  }
 
   // CRITICAL POLYFILL: Fix for "t.matches is not a function" and "Illegal invocation" errors
   // This prevents rrweb from crashing on elements that don't have matches()
@@ -163,9 +236,29 @@
 
   // Initialize SDK only when both DOM and rrweb are ready
   function initSDK() {
+    // Auto-detect API URL: Use provided apiUrl, or try to detect from current page
+    function getApiUrl() {
+      if (window.UXCamSDK?.apiUrl) {
+        return window.UXCamSDK.apiUrl;
+      }
+      
+      // In production, try to infer from current page origin
+      if (typeof window !== 'undefined' && window.location) {
+        const hostname = window.location.hostname;
+        // If not localhost, assume backend is on same domain or subdomain
+        if (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.startsWith('192.168.')) {
+          // Try same origin with /api prefix, or common backend patterns
+          return window.location.origin.replace(/\/$/, '');
+        }
+      }
+      
+      // Fallback to localhost for development
+      return 'http://localhost:3001';
+    }
+    
     // Configuration
     const config = {
-      apiUrl: window.UXCamSDK?.apiUrl || 'http://localhost:3001',
+      apiUrl: getApiUrl(),
       sdkKey: window.UXCamSDK?.key || '',
       batchSize: 200, // Larger batch size for bigger snapshots (depends on user activity)
       flushInterval: 15000, // 15 seconds - slower flushing to match user interaction timing
@@ -220,9 +313,63 @@
           }
         };
         
+        // Extract region from timezone for geographic data
+        let region = null;
+        let city = null;
+        let country = null;
+        try {
+          const timezone = getTimezone();
+          if (timezone) {
+            const parts = timezone.split('/');
+            if (parts.length > 0) {
+              region = parts[0];
+              // Try to extract city from timezone (e.g., "America/New_York" -> "New York")
+              if (parts.length > 1) {
+                city = parts[1].replace(/_/g, ' ');
+                // Map common regions to countries
+                var regionToCountryMap = {
+                  'America': 'US',
+                  'Europe': 'EU',
+                  'Asia': 'AS',
+                  'Africa': 'AF',
+                  'Australia': 'AU',
+                  'Pacific': 'OC',
+                  'Atlantic': 'AT',
+                  'Indian': 'IN'
+                };
+                country = regionToCountryMap[parts[0]] || parts[0] || 'Unknown';
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore
+        }
+        
+        // Try to get geolocation (with user permission)
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              // Success - update deviceInfo with coordinates
+              if (deviceInfo) {
+                deviceInfo.latitude = position.coords.latitude;
+                deviceInfo.longitude = position.coords.longitude;
+                // Reverse geocoding would be done on backend, but we can store coords
+              }
+            },
+            (error) => {
+              // User denied or error - use timezone-based location
+              if (window.UXCamSDK && window.UXCamSDK.debug) {
+                console.log('UXCam SDK: Geolocation not available, using timezone-based location');
+              }
+            },
+            { timeout: 5000, maximumAge: 60000 }
+          );
+        }
+        
         deviceInfo = {
           userAgent: (navigator && navigator.userAgent) ? navigator.userAgent : 'unknown',
-          platform: (navigator && navigator.platform) ? navigator.platform : 'unknown',
+          platform: 'web', // Explicitly set to 'web' for web SDK
+          osPlatform: (navigator && navigator.platform) ? navigator.platform : 'unknown', // Store OS platform separately
           language: (navigator && navigator.language) ? navigator.language : 'en',
           screenWidth: (window && window.screen && window.screen.width) ? window.screen.width : 0,
           screenHeight: (window && window.screen && window.screen.height) ? window.screen.height : 0,
@@ -231,13 +378,17 @@
           timezone: getTimezone(),
           cookieEnabled: getCookieEnabled(),
           online: getOnline(),
+          region: region,
+          city: city,
+          country: country,
         };
       } catch (error) {
         console.error('UXCam SDK: Error initializing device info:', error);
         // Fallback device info
         deviceInfo = {
           userAgent: 'unknown',
-          platform: 'unknown',
+          platform: 'web', // Explicitly set to 'web' for web SDK
+          osPlatform: 'unknown',
           language: 'en',
           screenWidth: 0,
           screenHeight: 0,
@@ -471,6 +622,14 @@
         const responseData = await response.json().catch(() => ({}));
         console.log('UXCam SDK: ✅ Type 2 upload successful', responseData);
         
+        // Store session DB ID and project ID from response
+        if (responseData.session_id && !sessionDbId) {
+          sessionDbId = responseData.session_id;
+        }
+        if (responseData.project_id && !projectId) {
+          projectId = responseData.project_id;
+        }
+        
         // Step 9: Enable incremental events
         type2Uploaded = true;
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
@@ -484,59 +643,70 @@
     // OLD FUNCTION REMOVED - Incremental recording is now integrated into startRecording()
     // The emit function in startRecording() handles incremental events after type2Uploaded flag is set
 
-    // Start new session
+    // Start new session - SAFE: Won't break website if it fails
     function startSession() {
-      sessionId = generateSessionId();
-      sessionStartTime = Date.now();
-      lastActivityTime = Date.now();
-      events = [];
-      
-      // Setup activity tracking
-      setupActivityTracking();
-      
-      // Start DOM recording
-      startRecording();
-      
-      // Reset inactivity timer
-      resetInactivityTimer();
-      
-      // Track session start
-      trackEvent('session_start', {
-        timestamp: new Date().toISOString()
-      });
+      return safeExecute(function() {
+        sessionId = generateSessionId();
+        sessionStartTime = Date.now();
+        lastActivityTime = Date.now();
+        events = [];
+        
+        // Setup activity tracking
+        setupActivityTracking();
+        
+        // Setup form field tracking
+        setupFormFieldTracking();
+        
+        // Start DOM recording (async, won't block)
+        safeAsyncExecute(function() {
+          startRecording();
+        }, null, null, 'startRecording failed');
+        
+        // Reset inactivity timer
+        resetInactivityTimer();
+        
+        // Track session start
+        trackEvent('session_start', {
+          timestamp: new Date().toISOString()
+        });
+      }, null, null, 'startSession failed');
     }
 
-    // Track event
+    // Track event - SAFE: Won't break website if it fails
     function trackEvent(type, data = {}) {
-      if (!config.sdkKey) {
-        console.warn('UXCam SDK: SDK key not configured');
-        return;
-      }
-
-      if (!sessionId) {
-        startSession();
-      }
-
-      const event = {
-        type,
-        timestamp: new Date().toISOString(),
-        data: {
-          ...data,
-          url: window.location.href,
-          path: window.location.pathname,
-          title: document.title,
+      return safeExecute(function() {
+        if (!config.sdkKey) {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.warn('UXCam SDK: SDK key not configured');
+          }
+          return;
         }
-      };
 
-      eventQueue.push(event);
-      lastActivityTime = Date.now();
+        if (!sessionId) {
+          startSession();
+        }
 
-      // Flush if batch size reached
-      if (eventQueue.length >= config.batchSize) {
-        flushEvents();
-      } else {
-        scheduleFlush();
-      }
+        const event = {
+          type,
+          timestamp: new Date().toISOString(),
+          data: {
+            ...data,
+            url: window.location.href,
+            path: window.location.pathname,
+            title: document.title,
+          }
+        };
+
+        eventQueue.push(event);
+        lastActivityTime = Date.now();
+
+        // Flush if batch size reached
+        if (eventQueue.length >= config.batchSize) {
+          flushEvents();
+        } else {
+          scheduleFlush();
+        }
+      }, null, null, 'trackEvent failed');
     }
 
     // Compress snapshot data
@@ -582,15 +752,18 @@
       }
     }
 
-    // Flush snapshots to server
+    // Flush snapshots to server - SAFE: Won't break website if it fails
     function flushSnapshots() {
-      if (snapshotQueue.length === 0 || !sessionId) {
-        console.warn('UXCam SDK: Cannot flush snapshots', {
-          queueLength: snapshotQueue.length,
-          sessionId: sessionId
-        });
-        return;
-      }
+      return safeAsyncExecute(function() {
+        if (snapshotQueue.length === 0 || !sessionId) {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.warn('UXCam SDK: Cannot flush snapshots', {
+              queueLength: snapshotQueue.length,
+              sessionId: sessionId
+            });
+          }
+          return;
+        }
 
       // PRIORITY CHECK: Do not send incremental events if Type 2 hasn't been uploaded yet
       // This ensures the first ingest call contains Type 2
@@ -672,43 +845,65 @@
           snapshots: compressed,
           snapshot_count: validSnapshots.length
         })
-      }).catch(error => {
-        console.error('UXCam SDK: Failed to send snapshots', error);
-        // Re-add valid snapshots to queue on failure
-        snapshotQueue.unshift(...validSnapshots);
-      });
+        }).catch(function(error) {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.error('UXCam SDK: Failed to send snapshots', error);
+          }
+          // Re-add valid snapshots to queue on failure
+          snapshotQueue.unshift(...validSnapshots);
+        });
+      }, null, null, 'flushSnapshots failed');
     }
 
-    // Flush events to server
+    // Store session DB ID and project ID from backend responses
+    let sessionDbId = null;
+    let projectId = null;
+    
+    // Flush events to server - SAFE: Won't break website if it fails
     function flushEvents() {
-      if (eventQueue.length === 0 || !sessionId) {
-        return;
-      }
+      return safeAsyncExecute(function() {
+        if (eventQueue.length === 0 || !sessionId) {
+          return;
+        }
 
-      const events = eventQueue.splice(0, config.batchSize);
-      
-      fetch(`${config.apiUrl}/api/events/ingest`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sdk_key: config.sdkKey,
-          session_id: sessionId,
-          events: events,
-          device_info: deviceInfo,
-          user_properties: {}
+        const events = eventQueue.splice(0, config.batchSize);
+        
+        fetch(`${config.apiUrl}/api/events/ingest`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sdk_key: config.sdkKey,
+            session_id: sessionId,
+            events: events,
+            device_info: deviceInfo,
+            user_properties: {}
+          })
         })
-      }).catch(error => {
-        console.error('UXCam SDK: Failed to send events', error);
-        // Re-add events to queue on failure
-        eventQueue.unshift(...events);
-      });
+        .then(response => response.json())
+        .then(data => {
+          // Store session DB ID and project ID from response
+          if (data.session_id && !sessionDbId) {
+            sessionDbId = data.session_id;
+          }
+          if (data.project_id && !projectId) {
+            projectId = data.project_id;
+          }
+        })
+        .catch(error => {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.error('UXCam SDK: Failed to send events', error);
+          }
+          // Re-add events to queue on failure
+          eventQueue.unshift(...events);
+        });
 
-      if (flushTimer) {
-        clearTimeout(flushTimer);
-        flushTimer = null;
-      }
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+      }, null, null, 'flushEvents failed');
     }
 
     // Schedule flush
@@ -740,45 +935,51 @@
       }, config.flushInterval); // Flush based on config (15 seconds - matches user interaction timing)
     }
 
-    // End session (reusable function)
+    // End session (reusable function) - SAFE: Won't break website if it fails
     function endSession() {
-      if (!sessionId) return;
-      
-      // Clear inactivity timer
-      if (inactivityTimer) {
-        clearTimeout(inactivityTimer);
-        inactivityTimer = null;
-      }
-      
-      // Stop recording first
-      if (stopRecording) {
-        try {
-          stopRecording();
-          stopRecording = null;
-        } catch (e) {
-          console.warn('Error stopping recording:', e);
+      return safeExecute(function() {
+        if (!sessionId) return;
+        
+        // Clear inactivity timer
+        if (inactivityTimer) {
+          clearTimeout(inactivityTimer);
+          inactivityTimer = null;
         }
-      }
+        
+        // Stop recording first
+        if (stopRecording) {
+          try {
+            stopRecording();
+            stopRecording = null;
+          } catch (e) {
+            if (window.UXCamSDK && window.UXCamSDK.debug) {
+              console.warn('Error stopping recording:', e);
+            }
+          }
+        }
+        
+        // Track session end
+        trackEvent('session_end', {
+          duration: Date.now() - sessionStartTime
+        });
+        
+        // Flush remaining data
+        flushEvents();
+        flushSnapshots();
       
-      // Track session end
-      trackEvent('session_end', {
-        duration: Date.now() - sessionStartTime
-      });
-      
-      // Flush remaining data
-      flushEvents();
-      flushSnapshots();
-      
-      // Clear session from localStorage when ending
-      try {
-        localStorage.removeItem('uxcam_session_id');
-        localStorage.removeItem('uxcam_session_timestamp');
-      } catch (e) {
-        // Ignore if localStorage fails
-      }
-      
-      sessionId = null;
-      console.log('UXCam: Session ended');
+        // Clear session from localStorage when ending
+        try {
+          localStorage.removeItem('uxcam_session_id');
+          localStorage.removeItem('uxcam_session_timestamp');
+        } catch (e) {
+          // Ignore if localStorage fails
+        }
+        
+        sessionId = null;
+        if (window.UXCamSDK && window.UXCamSDK.debug) {
+          console.log('UXCam: Session ended');
+        }
+      }, null, null, 'endSession failed');
     }
     
     // Start new session (can be called manually)
@@ -809,6 +1010,123 @@
           endSession();
         }
       });
+    }
+    
+    // Form field tracking
+    let formFieldTrackingEnabled = true;
+    let trackedForms = new Map(); // Map of form element to form ID
+    
+    function setupFormFieldTracking() {
+      if (!formFieldTrackingEnabled) return;
+      
+      // Track all form fields on the page
+      function trackFormField(field, action, value = null) {
+        if (!sessionId || !config.sdkKey) return;
+        
+        // Find parent form
+        let form = field.closest('form');
+        if (!form) return;
+        
+        // Get or create form ID
+        let formId = trackedForms.get(form);
+        if (!formId) {
+          formId = form.id || form.name || `form_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          trackedForms.set(form, formId);
+        }
+        
+        // Get field info
+        const fieldName = field.name || field.id || field.placeholder || 'unnamed_field';
+        const fieldType = field.type || field.tagName.toLowerCase();
+        
+        // Send form field event to backend (only if we have project ID and session DB ID)
+        const currentProjectId = getProjectId();
+        const currentSessionDbId = getSessionDbId();
+        
+        if (!currentProjectId || !currentSessionDbId) {
+          // Queue the event to send later when we have the IDs
+          return;
+        }
+        
+        fetch(`${config.apiUrl}/api/funnels/${currentProjectId}/form-field-events`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            session_id: currentSessionDbId,
+            form_id: formId,
+            field_name: fieldName,
+            field_type: fieldType,
+            action: action, // 'focus', 'blur', 'change', 'submit', 'skip', 'abandon'
+            value: action === 'change' && !field.matches('input[type="password"]') ? value : null
+          })
+        }).catch(error => {
+          console.warn('UXCam SDK: Failed to send form field event', error);
+        });
+      }
+      
+      // Track form field focus
+      document.addEventListener('focusin', (e) => {
+        if (e.target.matches('input, textarea, select')) {
+          trackFormField(e.target, 'focus');
+        }
+      }, true);
+      
+      // Track form field blur (completion or abandonment)
+      document.addEventListener('focusout', (e) => {
+        if (e.target.matches('input, textarea, select')) {
+          const field = e.target;
+          const hasValue = field.value && field.value.trim().length > 0;
+          
+          // Check if user moved to another field (not abandoned)
+          setTimeout(() => {
+            if (document.activeElement && document.activeElement.matches('input, textarea, select, button')) {
+              // User moved to another field - field was completed
+              if (hasValue) {
+                trackFormField(field, 'blur');
+              } else {
+                trackFormField(field, 'skip');
+              }
+            } else {
+              // User left the form - field was abandoned
+              trackFormField(field, 'abandon');
+            }
+          }, 100);
+        }
+      }, true);
+      
+      // Track form field changes
+      document.addEventListener('input', (e) => {
+        if (e.target.matches('input, textarea, select')) {
+          trackFormField(e.target, 'change', e.target.value);
+        }
+      }, true);
+      
+      // Track form submissions
+      document.addEventListener('submit', (e) => {
+        if (e.target.matches('form')) {
+          const form = e.target;
+          const formId = trackedForms.get(form) || form.id || form.name || 'unknown';
+          
+          // Track all fields in the form as submitted
+          const fields = form.querySelectorAll('input, textarea, select');
+          fields.forEach(field => {
+            if (field.value && field.value.trim().length > 0) {
+              trackFormField(field, 'submit', field.value);
+            }
+          });
+        }
+      }, true);
+    }
+    
+    // Helper to get project ID
+    function getProjectId() {
+      return projectId;
+    }
+    
+    // Helper to get session DB ID
+    function getSessionDbId() {
+      return sessionDbId;
     }
     
     // Inactivity detection - stop recording if user is inactive
@@ -1025,30 +1343,55 @@
       });
     }
 
-    // Public API - Set early so status checks can detect SDK
+    // Public API - Set early so status checks can detect SDK - ALL METHODS ARE SAFE
     window.UXCam = {
-      track: trackEvent,
-      trackPageView: trackPageView,
+      track: function(type, data) {
+        return safeExecute(function() {
+          trackEvent(type, data);
+        }, null, null, 'UXCam.track failed');
+      },
+      trackPageView: function() {
+        return safeExecute(function() {
+          trackPageView();
+        }, null, null, 'UXCam.trackPageView failed');
+      },
       identify: function(userId, properties) {
-        console.log('UXCam: User identified', userId, properties);
-        // Store user properties for future use
-        if (properties) {
-          // Could send to backend to update session
-        }
+        return safeExecute(function() {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam: User identified', userId, properties);
+          }
+          // Store user properties for future use
+          if (properties && deviceInfo) {
+            Object.assign(deviceInfo, properties);
+          }
+        }, null, null, 'UXCam.identify failed');
       },
       setUserProperties: function(properties) {
-        console.log('UXCam: User properties set', properties);
-        // Store user properties for future use
+        return safeExecute(function() {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam: User properties set', properties);
+          }
+          // Store user properties for future use
+          if (properties && deviceInfo) {
+            Object.assign(deviceInfo, properties);
+          }
+        }, null, null, 'UXCam.setUserProperties failed');
       },
       start: function() {
-        // Manual session start
-        startNewSession();
-        console.log('UXCam: Session started manually');
+        return safeExecute(function() {
+          startNewSession();
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam: Session started manually');
+          }
+        }, null, null, 'UXCam.start failed');
       },
       stop: function() {
-        // Manual session stop
-        endSession();
-        console.log('UXCam: Session stopped manually');
+        return safeExecute(function() {
+          endSession();
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam: Session stopped manually');
+          }
+        }, null, null, 'UXCam.stop failed');
       },
       setPrivacyMode: function(enabled) {
         // Privacy mode - stop recording if enabled
@@ -1114,22 +1457,173 @@
     });
   }
   
-  // Start initialization immediately when script loads
-  // Check if SDK config is available
-  if (window.UXCamSDK && window.UXCamSDK.key) {
-    console.log('UXCam SDK: Configuration found, starting initialization...');
-    initSDK();
-  } else {
-    console.warn('UXCam SDK: Configuration not found. Waiting for window.UXCamSDK to be set...');
-    // Wait a bit for config to be set (in case script loads before config)
-    setTimeout(() => {
-      if (window.UXCamSDK && window.UXCamSDK.key) {
-        console.log('UXCam SDK: Configuration found after delay, starting initialization...');
-        initSDK();
-      } else {
-        console.error('UXCam SDK: ❌ Configuration still not found. Please set window.UXCamSDK.key');
+  // Check if we should exclude this domain/page from recording
+  // This prevents the SDK from recording the analytics dashboard itself
+  // Users can disable recording by setting window.UXCamSDK.disabled = true
+  function shouldExcludeRecording() {
+    try {
+      var pathname = window.location.pathname;
+      
+      // Only exclude specific dashboard/admin paths (generic, works for any website)
+      // This prevents recording the analytics tool dashboard itself
+      var excludedPaths = [
+        '/dashboard',      // Analytics dashboard
+        '/admin',          // Admin panels
+        '/login',          // Login pages (usually not user-facing content)
+        '/register'        // Registration pages
+      ];
+      
+      // Check if pathname starts with excluded paths
+      // This is generic and works for ANY website
+      for (var j = 0; j < excludedPaths.length; j++) {
+        if (pathname.startsWith(excludedPaths[j])) {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam SDK: Excluded from recording (dashboard/admin path: ' + excludedPaths[j] + ')');
+          }
+          return true;
+        }
       }
-    }, 100);
+      
+      // Check if explicitly disabled by user
+      if (window.UXCamSDK && window.UXCamSDK.disabled === true) {
+        if (window.UXCamSDK.debug) {
+          console.log('UXCam SDK: Disabled by configuration (window.UXCamSDK.disabled = true)');
+        }
+        return true;
+      }
+      
+      // Check if user wants to exclude specific paths (custom exclusion)
+      if (window.UXCamSDK && window.UXCamSDK.excludePaths) {
+        var customExcludePaths = window.UXCamSDK.excludePaths;
+        if (Array.isArray(customExcludePaths)) {
+          for (var k = 0; k < customExcludePaths.length; k++) {
+            if (pathname.startsWith(customExcludePaths[k])) {
+              if (window.UXCamSDK.debug) {
+                console.log('UXCam SDK: Excluded from recording (custom exclude path: ' + customExcludePaths[k] + ')');
+              }
+              return true;
+            }
+          }
+        }
+      }
+      
+      // By default, allow recording on all other pages
+      return false;
+    } catch (e) {
+      // If check fails, allow recording (fail open - don't break user websites)
+      return false;
+    }
   }
+
+  // Validate domain to ensure SDK key is only used on authorized domains
+  function validateDomain(apiUrl, sdkKey, callback) {
+    try {
+      var currentDomain = window.location.hostname;
+      
+      // Send domain validation request to backend
+      fetch(apiUrl + '/api/sdk/validate-domain', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sdk_key: sdkKey,
+          domain: currentDomain,
+          origin: window.location.origin
+        })
+      })
+      .then(function(response) {
+        return response.json();
+      })
+      .then(function(data) {
+        if (data.valid === true) {
+          // Domain is valid, proceed with initialization
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam SDK: Domain validated successfully');
+          }
+          callback(true);
+        } else {
+          // Domain is not authorized
+          console.error('UXCam SDK: ❌ Domain not authorized for this SDK key');
+          console.error('UXCam SDK: This SDK key can only be used on: ' + (data.allowed_domains || 'authorized domains'));
+          console.error('UXCam SDK: Current domain: ' + currentDomain);
+          callback(false);
+        }
+      })
+      .catch(function(error) {
+        // If validation fails, allow initialization (fail open for first-time setup)
+        // Backend will validate on actual data submission
+        if (window.UXCamSDK && window.UXCamSDK.debug) {
+          console.warn('UXCam SDK: Domain validation request failed, proceeding with initialization');
+          console.warn('UXCam SDK: Backend will validate domain on data submission');
+        }
+        callback(true); // Allow initialization, backend will validate
+      });
+    } catch (e) {
+      // If validation fails, allow initialization (fail open)
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK: Domain validation error, proceeding with initialization');
+      }
+      callback(true);
+    }
+  }
+
+  // Start initialization immediately when script loads - SAFE: Won't break website
+  // Check if SDK config is available and if we should record
+  safeExecute(function() {
+    // First check if we should exclude this page
+    if (shouldExcludeRecording()) {
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.log('UXCam SDK: Recording disabled for this page/domain');
+      }
+      return; // Don't initialize SDK on dashboard/admin pages
+    }
+    
+    if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
+      // Validate domain before initializing
+      validateDomain(window.UXCamSDK.apiUrl, window.UXCamSDK.key, function(isValid) {
+        if (isValid) {
+          if (window.UXCamSDK.debug) {
+            console.log('UXCam SDK: Configuration found, starting initialization...');
+          }
+          initSDK();
+        } else {
+          // Domain validation failed, don't initialize
+          console.error('UXCam SDK: Initialization blocked - Domain not authorized');
+        }
+      });
+    } else {
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK: Configuration not found. Waiting for window.UXCamSDK to be set...');
+      }
+      // Wait a bit for config to be set (in case script loads before config)
+      setTimeout(function() {
+        safeExecute(function() {
+          // Check again if we should exclude
+          if (shouldExcludeRecording()) {
+            return;
+          }
+          
+          if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
+            // Validate domain before initializing
+            validateDomain(window.UXCamSDK.apiUrl, window.UXCamSDK.key, function(isValid) {
+              if (isValid) {
+                if (window.UXCamSDK.debug) {
+                  console.log('UXCam SDK: Configuration found after delay, starting initialization...');
+                }
+                initSDK();
+              } else {
+                console.error('UXCam SDK: Initialization blocked - Domain not authorized');
+              }
+            });
+          } else {
+            if (window.UXCamSDK && window.UXCamSDK.debug) {
+              console.error('UXCam SDK: ❌ Configuration still not found. Please set window.UXCamSDK.key and window.UXCamSDK.apiUrl');
+            }
+          }
+        }, null, null, 'SDK initialization check failed');
+      }, 100);
+    }
+  }, null, null, 'SDK initialization failed');
 })();
 

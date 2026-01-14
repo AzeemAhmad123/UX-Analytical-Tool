@@ -17,10 +17,25 @@
                        window.location.hostname !== 'localhost' && 
                        window.location.hostname !== '127.0.0.1';
 
-  // Configuration with environment detection
+  // Configuration - REQUIRES apiUrl to be set in window.UXCamSDK
+  const sdkConfig = window.UXCamSDK || {};
+  const apiUrl = sdkConfig.apiUrl;
+  const sdkKey = sdkConfig.key || '';
+
+  // Validate required configuration
+  if (!apiUrl) {
+    console.error('UXCam SDK: apiUrl is required. Please set window.UXCamSDK.apiUrl before loading the SDK.');
+    return; // Exit early if apiUrl is not configured
+  }
+
+  if (!sdkKey) {
+    console.error('UXCam SDK: SDK key is required. Please set window.UXCamSDK.key before loading the SDK.');
+    return; // Exit early if SDK key is not configured
+  }
+
   const config = {
-    apiUrl: window.UXCamSDK?.apiUrl || (isProduction ? 'https://your-api.vercel.app' : 'http://localhost:3001'),
-    sdkKey: window.UXCamSDK?.key || '',
+    apiUrl: apiUrl,
+    sdkKey: sdkKey,
     batchSize: 50,
     flushInterval: 10000, // 10 seconds
     sessionTimeout: 30 * 60 * 1000, // 30 minutes

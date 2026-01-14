@@ -1,13 +1,16 @@
-import { Video, User, Star, Calendar, Clock, Hand, MapPin, Smartphone, Check } from 'lucide-react'
+import { Video, User, Star, Calendar, Clock, Hand, MapPin, Smartphone, Check, Monitor } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { analyticsAPI, projectsAPI } from '../../services/api'
 import './Dashboard.css'
+
+type PlatformFilter = 'all' | 'mobile' | 'web'
 
 export function DashboardHome() {
   const [analytics, setAnalytics] = useState<any>(null)
   const [projects, setProjects] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all')
 
   useEffect(() => {
     loadProjects()
@@ -17,7 +20,7 @@ export function DashboardHome() {
     if (selectedProject) {
       loadAnalytics()
     }
-  }, [selectedProject])
+  }, [selectedProject, platformFilter])
 
   const loadProjects = async () => {
     try {
@@ -39,7 +42,8 @@ export function DashboardHome() {
       setLoading(true)
       const response = await analyticsAPI.getOverview(selectedProject, {
         start_date: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        end_date: new Date().toISOString()
+        end_date: new Date().toISOString(),
+        platform_filter: platformFilter
       })
       setAnalytics(response)
     } catch (error) {
@@ -72,7 +76,7 @@ export function DashboardHome() {
     <div className="dashboard-home">
       {/* Project Selector */}
       {projects.length > 0 && (
-        <div style={{ marginBottom: '1.5rem' }}>
+        <div style={{ marginBottom: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <select 
             className="stats-select"
             value={selectedProject || ''}
@@ -83,6 +87,76 @@ export function DashboardHome() {
               <option key={project.id} value={project.id}>{project.name}</option>
             ))}
           </select>
+          
+          {/* Platform Filter */}
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.25rem',
+            backgroundColor: '#f3f4f6',
+            borderRadius: '5px',
+            padding: '0.25rem'
+          }}>
+            <button
+              onClick={() => setPlatformFilter('all')}
+              style={{
+                padding: '0.375rem 0.625rem',
+                backgroundColor: platformFilter === 'all' ? '#9333ea' : 'transparent',
+                color: platformFilter === 'all' ? 'white' : '#6b7280',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '0.8125rem',
+                fontWeight: platformFilter === 'all' ? '500' : '400',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              All Platforms
+            </button>
+            <button
+              onClick={() => setPlatformFilter('mobile')}
+              style={{
+                padding: '0.375rem 0.625rem',
+                backgroundColor: platformFilter === 'mobile' ? '#9333ea' : 'transparent',
+                color: platformFilter === 'mobile' ? 'white' : '#6b7280',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.375rem',
+                fontSize: '0.8125rem',
+                fontWeight: platformFilter === 'mobile' ? '500' : '400',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <Smartphone style={{ width: '12px', height: '12px' }} />
+              Mobile
+            </button>
+            <button
+              onClick={() => setPlatformFilter('web')}
+              style={{
+                padding: '0.375rem 0.625rem',
+                backgroundColor: platformFilter === 'web' ? '#9333ea' : 'transparent',
+                color: platformFilter === 'web' ? 'white' : '#6b7280',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.375rem',
+                fontSize: '0.8125rem',
+                fontWeight: platformFilter === 'web' ? '500' : '400',
+                transition: 'all 0.2s',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <Monitor style={{ width: '12px', height: '12px' }} />
+              Web
+            </button>
+          </div>
         </div>
       )}
 
@@ -183,6 +257,44 @@ export function DashboardHome() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* Quick Actions */}
+          <div style={{ 
+            marginBottom: '2rem', 
+            padding: '1.5rem', 
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            borderRadius: '12px',
+            color: 'white'
+          }}>
+            <h3 style={{ marginBottom: '1rem', fontSize: '1.25rem' }}>🧪 Test Your Funnels</h3>
+            <p style={{ marginBottom: '1rem', opacity: 0.9 }}>
+              Use our test website to simulate a complete user journey and test all funnel functionality.
+            </p>
+            <a 
+              href="/funnel-test.html" 
+              target="_blank"
+              style={{
+                display: 'inline-block',
+                padding: '0.75rem 1.5rem',
+                background: 'white',
+                color: '#667eea',
+                textDecoration: 'none',
+                borderRadius: '8px',
+                fontWeight: '600',
+                transition: 'all 0.3s'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-2px)'
+                e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.2)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)'
+                e.currentTarget.style.boxShadow = 'none'
+              }}
+            >
+              Open Funnel Test Website →
+            </a>
           </div>
 
           {/* Key Metrics Cards */}

@@ -1,74 +1,113 @@
-# UX-Analytical-Tool
+# UXCam Analytics Platform
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A comprehensive user analytics platform with session replay, funnel analysis, heatmaps, and advanced analytics.
 
-## Description
+## Features
 
-This is the UX Analytical Tool project made for an Upwork client. It's a React-based analytics dashboard with modern UI components.
+- **Session Replay**: Record and replay user sessions with DOM snapshots
+- **Funnel Analysis**: Track user conversion through multi-step funnels
+- **Heatmaps**: Visualize user clicks, scrolls, and movements
+- **Advanced Analytics**: Rage clicks, dead taps, performance monitoring
+- **Multi-Platform**: Web, Android, and iOS SDK support
+- **Real-time Insights**: Live user activity tracking
 
-## Available Scripts
+## Project Structure
 
-In the project directory, you can run:
+```
+uxcamm/
+├── frontend/          # React + Vite frontend (deploy to Vercel)
+├── backend/           # Express.js backend (deploy to Railway)
+├── mobile-sdk/        # Android & iOS SDK code
+└── public/            # Static assets and SDK scripts
+```
 
-### `npm start`
+## Quick Start
 
-Runs the app in the development mode.
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### Prerequisites
 
-The page will reload when you make changes.
-You may also see any lint errors in the console.
+- Node.js 20+
+- Supabase account
+- GitHub account
+- Vercel account (for frontend)
+- Railway account (for backend)
 
-### `npm test`
+### Local Development
 
-Launches the test runner in the interactive watch mode.
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd uxcamm
+   ```
 
-### `npm run build`
+2. **Backend Setup**
+   ```bash
+   cd backend
+   npm install
+   cp env.example .env
+   # Edit .env with your Supabase credentials
+   npm run dev
+   ```
 
-Builds the app for production to the `build` folder.
-It correctly bundles React in production mode and optimizes the build for the best performance.
+3. **Frontend Setup**
+   ```bash
+   cd frontend
+   npm install
+   cp env.example .env
+   # Edit .env with your Supabase and API URLs
+   npm run dev
+   ```
 
-The build is minified and the filenames include the hashes.
-Your app is ready to be deployed!
+### Production Deployment
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
 
-### `npm run eject`
+## SDK Integration
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+### Web SDK
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Add this to your website's `<head>`:
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+```html
+<script>
+  window.UXCamSDK = {
+    key: 'ux_YOUR_SDK_KEY',
+    apiUrl: 'https://your-backend.railway.app' // Your backend URL
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+<script src="https://your-frontend.vercel.app/uxcam-sdk-rrweb.js"></script>
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+### Mobile SDK
 
-## Learn More
+See `mobile-sdk/` directory for Android (Kotlin) and iOS (Swift) SDK implementations.
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Environment Variables
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+### Backend (`backend/.env`)
 
-### Code Splitting
+```env
+SUPABASE_URL=your_supabase_url
+SUPABASE_SERVICE_KEY=your_service_role_key
+PORT=3001
+NODE_ENV=production
+CORS_ORIGINS=https://your-frontend.vercel.app
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+### Frontend (`frontend/.env`)
 
-### Analyzing the Bundle Size
+```env
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_anon_key
+VITE_API_URL=https://your-backend.railway.app
+VITE_ENV=production
+```
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+## Database Setup
 
-### Making a Progressive Web App
+1. Run `backend/database/schema.sql` in Supabase SQL Editor
+2. Run `backend/database/rls_policies.sql` for security policies
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+## License
 
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+MIT

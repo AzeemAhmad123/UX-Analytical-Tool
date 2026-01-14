@@ -12,19 +12,29 @@ const router = Router()
  * {
  *   name: string (required),
  *   description?: string,
- *   platform?: string (default: 'web'),
+ *   platform?: string (default: 'all', options: 'all', 'web', 'mobile'),
  *   user_id?: string (optional, for future auth)
  * }
  */
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { name, description, platform = 'web', user_id } = req.body
+    const { name, description, platform = 'all', user_id } = req.body
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({
         error: 'Validation error',
         message: 'Project name is required'
+      })
+    }
+
+    // Validate platform value
+    const validPlatforms = ['all', 'web', 'mobile']
+    const platformValue = platform || 'all'
+    if (!validPlatforms.includes(platformValue)) {
+      return res.status(400).json({
+        error: 'Validation error',
+        message: `Platform must be one of: ${validPlatforms.join(', ')}`
       })
     }
 
@@ -59,7 +69,7 @@ router.post('/', async (req: Request, res: Response) => {
       .insert({
         name: name.trim(),
         description: description?.trim() || null,
-        platform: platform,
+        platform: platformValue,
         sdk_key: sdkKey,
         user_id: user_id || null
       })
@@ -67,7 +77,12 @@ router.post('/', async (req: Request, res: Response) => {
       .single()
 
     if (error) {
-      throw new Error(`Failed to create project: ${error.message}`)
+      console.error('Supabase error creating project:', error)
+      throw new Error(`Database error: ${error.message || error.code || 'Unknown database error'}`)
+    }
+
+    if (!project) {
+      throw new Error('Project was not created - no data returned from database')
     }
 
     res.status(201).json({
@@ -76,9 +91,10 @@ router.post('/', async (req: Request, res: Response) => {
     })
   } catch (error: any) {
     console.error('Error in POST /api/projects:', error)
+    const errorMessage = error.message || 'Unknown error occurred'
     res.status(500).json({
       error: 'Failed to create project',
-      message: error.message
+      message: errorMessage
     })
   }
 })
@@ -146,6 +162,66 @@ router.get('/:id', async (req: Request, res: Response) => {
     console.error('Error in /api/projects/:id:', error)
     res.status(500).json({
       error: 'Failed to retrieve project',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * DELETE /api/projects/:id
+ * Delete a project and all its associated data
+ * 
+ * Note: This will cascade delete all sessions, snapshots, events, and funnels
+ * associated with this project due to foreign key constraints.
+ */
+router.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.id
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'Project ID is required'
+      })
+    }
+
+    // First, verify the project exists
+    const { data: project, error: findError } = await supabase
+      .from('projects')
+      .select('id, name')
+      .eq('id', projectId)
+      .single()
+
+    if (findError || !project) {
+      return res.status(404).json({
+        error: 'Project not found',
+        message: `Project ${projectId} not found`
+      })
+    }
+
+    // Delete the project (cascade will delete all related data)
+    // Due to foreign key constraints with ON DELETE CASCADE:
+    // - All sessions will be deleted
+    // - All session_snapshots will be deleted
+    // - All events will be deleted
+    // - All funnels will be deleted (if funnel table has project_id foreign key)
+    const { error: deleteError } = await supabase
+      .from('projects')
+      .delete()
+      .eq('id', projectId)
+
+    if (deleteError) {
+      throw new Error(`Failed to delete project: ${deleteError.message}`)
+    }
+
+    res.json({
+      success: true,
+      message: `Project "${project.name}" deleted successfully`
+    })
+  } catch (error: any) {
+    console.error('Error in DELETE /api/projects/:id:', error)
+    res.status(500).json({
+      error: 'Failed to delete project',
       message: error.message
     })
   }

@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,
     description TEXT,
     sdk_key TEXT UNIQUE NOT NULL,
-    platform TEXT DEFAULT 'web',
+    platform TEXT DEFAULT 'all', -- 'all', 'web', or 'mobile'
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

@@ -11,6 +11,9 @@ package-lock.json
 .env.development.local
 .env.test.local
 .env.production.local
+# But keep example files
+!**/env.example
+!**/.env.example
 
 # Build outputs
 dist/
@@ -53,4 +56,29 @@ coverage/
 # Misc
 *.pem
 *.key
+
+# Test and temporary files
+*.ps1
+test-*.html
+*-test.html
+MOBILE_INTEGRATION_CODE.html
+
+# Database diagnostic/test files
+backend/database/check_*.sql
+backend/database/verify_*.sql
+backend/database/insert_test_*.sql
+backend/database/create_test_*.sql
+backend/database/get_*.sql
+backend/database/see_*.sql
+
+# Build artifacts
+frontend/dist/
+backend/dist/
+
+# Keep essential database files
+!backend/database/schema.sql
+!backend/database/rls_policies.sql
+!backend/database/*_schema.sql
+!backend/database/create_*.sql
+!backend/database/add_*.sql
 

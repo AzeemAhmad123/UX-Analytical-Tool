@@ -187,10 +187,11 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       // Don't throw - snapshot was stored successfully
     }
 
-    // Return success response
+    // Return success response with project_id for SDK
     res.json({
       success: true,
       session_id: session.id,
+      project_id: projectId,
       session_created: created,
       snapshot_count: snapshotCount,
       is_initial_snapshot: isInitialSnapshot

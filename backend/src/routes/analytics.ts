@@ -24,22 +24,39 @@ async function validateProject(req: Request, res: Response, next: NextFunction) 
   }
 }
 
+/**
+ * Detect platform from device_info
+ */
+function detectPlatform(deviceInfo: any): 'mobile' | 'web' {
+  if (!deviceInfo) return 'web'
+  
+  const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
+  const userAgent = deviceInfo.userAgent || ''
+  
+  // Check viewport width first
+  if (viewportWidth > 0 && viewportWidth < 768) {
+    return 'mobile'
+  }
+  
+  // Check user agent as fallback
+  if (/Mobile|Android|iPhone|iPad/i.test(userAgent)) {
+    return 'mobile'
+  }
+  
+  return 'web'
+}
+
 // Get analytics overview for a project
 router.get('/:projectId/overview', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId } = req.params
-    const { start_date, end_date } = req.query
+    const { start_date, end_date, platform_filter } = req.query
+    const platformFilter = (platform_filter as 'all' | 'mobile' | 'web') || 'all'
 
-    // Build date filter
-    let dateFilter = ''
-    if (start_date && end_date) {
-      dateFilter = `AND created_at >= '${start_date}' AND created_at <= '${end_date}'`
-    }
-
-    // Get session count
+    // Get all sessions first (we'll filter by platform after fetching)
     let sessionQuery = supabase
       .from('sessions')
-      .select('*', { count: 'exact', head: true })
+      .select('*')
       .eq('project_id', projectId)
     
     if (start_date) {
@@ -49,68 +66,93 @@ router.get('/:projectId/overview', validateProject, async (req: Request, res: Re
       sessionQuery = sessionQuery.lte('created_at', end_date as string)
     }
     
-    const { count: sessionCount } = await sessionQuery
+    const { data: allSessions, error: sessionError } = await sessionQuery
+    
+    if (sessionError) {
+      throw new Error(`Failed to fetch sessions: ${sessionError.message}`)
+    }
 
-    // Get total events count
-    let eventQuery = supabase
-      .from('events')
-      .select('*', { count: 'exact', head: true })
-      .eq('project_id', projectId)
-    
-    if (start_date) {
-      eventQuery = eventQuery.gte('created_at', start_date as string)
-    }
-    if (end_date) {
-      eventQuery = eventQuery.lte('created_at', end_date as string)
+    // Filter sessions by platform if needed
+    let filteredSessions = allSessions || []
+    if (platformFilter !== 'all') {
+      filteredSessions = filteredSessions.filter(s => {
+        const platform = detectPlatform(s.device_info)
+        return platform === platformFilter
+      })
     }
     
-    const { count: eventCount } = await eventQuery
+    const sessionCount = filteredSessions.length
 
-    // Get sessions with replay (have snapshots)
-    let snapshotQuery = supabase
-      .from('session_snapshots')
-      .select('session_id')
-      .eq('project_id', projectId)
+    // Get session IDs for filtered sessions
+    const filteredSessionIds = filteredSessions.map(s => s.id)
     
-    if (start_date) {
-      snapshotQuery = snapshotQuery.gte('created_at', start_date as string)
+    // Get total events count (only for filtered sessions)
+    let eventCount = 0
+    if (filteredSessionIds.length > 0) {
+      let eventQuery = supabase
+        .from('events')
+        .select('*', { count: 'exact', head: true })
+        .in('session_id', filteredSessionIds)
+      
+      if (start_date) {
+        eventQuery = eventQuery.gte('created_at', start_date as string)
+      }
+      if (end_date) {
+        eventQuery = eventQuery.lte('created_at', end_date as string)
+      }
+      
+      const { count } = await eventQuery
+      eventCount = count || 0
     }
-    if (end_date) {
-      snapshotQuery = snapshotQuery.lte('created_at', end_date as string)
-    }
-    
-    const { data: snapshotData } = await snapshotQuery
-    const uniqueSessions = new Set(snapshotData?.map((s: any) => s.session_id) || [])
-    const sessionsWithReplay = uniqueSessions.size
 
-    // Calculate average session duration
-    let durationQuery = supabase
-      .from('sessions')
-      .select('duration')
-      .eq('project_id', projectId)
-    
-    if (start_date) {
-      durationQuery = durationQuery.gte('created_at', start_date as string)
+    // Get sessions with replay (have snapshots) - only for filtered sessions
+    let sessionsWithReplay = 0
+    if (filteredSessionIds.length > 0) {
+      let snapshotQuery = supabase
+        .from('session_snapshots')
+        .select('session_id')
+        .in('session_id', filteredSessionIds)
+      
+      if (start_date) {
+        snapshotQuery = snapshotQuery.gte('created_at', start_date as string)
+      }
+      if (end_date) {
+        snapshotQuery = snapshotQuery.lte('created_at', end_date as string)
+      }
+      
+      const { data: snapshotData } = await snapshotQuery
+      const uniqueSessions = new Set(snapshotData?.map((s: any) => s.session_id) || [])
+      sessionsWithReplay = uniqueSessions.size
     }
-    if (end_date) {
-      durationQuery = durationQuery.lte('created_at', end_date as string)
-    }
-    
-    const { data: sessions } = await durationQuery
 
-    const avgDuration = sessions && sessions.length > 0
-      ? sessions.reduce((sum: number, s: any) => sum + (s.duration || 0), 0) / sessions.length
+    // Calculate average session duration from filtered sessions
+    const avgDuration = filteredSessions.length > 0
+      ? filteredSessions.reduce((sum: number, s: any) => sum + (s.duration || 0), 0) / filteredSessions.length
       : 0
 
+    // Calculate unique users (cross-platform: same user on mobile+web = one user)
+    const uniqueUsers = new Set(
+      filteredSessions.map(s => {
+        const deviceInfo = s.device_info || {}
+        if (deviceInfo.userId) {
+          return `user_${deviceInfo.userId}`
+        }
+        if (deviceInfo.anonymousId) {
+          return `anon_${deviceInfo.anonymousId}`
+        }
+        const sessionId = s.session_id || s.id
+        return `session_${sessionId.split('_')[0] || sessionId}`
+      })
+    )
+    const activeUsers = uniqueUsers.size
+
     res.json({
-      sessions: {
-        total: sessionCount || 0,
-        with_replay: sessionsWithReplay || 0,
-        average_duration: Math.round(avgDuration)
-      },
-      events: {
-        total: eventCount || 0
-      },
+      sessions: sessionCount || 0,
+      active_users: activeUsers,
+      total_events: eventCount || 0,
+      avg_session_duration: Math.round(avgDuration / 1000) || 0, // Convert to seconds
+      sessions_with_replay: sessionsWithReplay || 0,
+      platform_filter: platformFilter,
       period: {
         start_date: start_date || null,
         end_date: end_date || null

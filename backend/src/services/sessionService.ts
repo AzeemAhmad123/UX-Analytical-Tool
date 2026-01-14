@@ -51,10 +51,21 @@ export async function findOrCreateSession(
 
     // Session doesn't exist, create new one
     const now = new Date().toISOString()
+    
+    // Ensure device_info contains location data
+    // Location should be stored in device_info JSONB, not separate columns
+    const enhancedDeviceInfo = {
+      ...deviceInfo,
+      // Ensure city and country are in device_info
+      city: deviceInfo?.city || null,
+      country: deviceInfo?.country || null,
+      region: deviceInfo?.region || null,
+    }
+    
     const newSession = {
       project_id: projectId,
       session_id: sessionId,
-      device_info: deviceInfo,
+      device_info: enhancedDeviceInfo, // Store location in device_info JSONB
       start_time: now,
       last_activity_time: now,
       event_count: 0,

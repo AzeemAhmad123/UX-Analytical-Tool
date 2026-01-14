@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, ChevronDown, Clock } from 'lucide-react'
+import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, ChevronDown, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye } from 'lucide-react'
 import { sessionsAPI, snapshotsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import type { eventWithTime } from 'rrweb/typings/types'
 import '../../components/dashboard/Dashboard.css'
+
+type Platform = 'web' | 'mobile'
 
 export function SessionReplayPlayer() {
   const { projectId, sessionId } = useParams()
@@ -21,8 +23,12 @@ export function SessionReplayPlayer() {
   const [duration, setDuration] = useState(0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
   const playerRef = useRef<Replayer | null>(null)
+  const videoPlayerRef = useRef<HTMLVideoElement | null>(null)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [hasVideo, setHasVideo] = useState(false)
   const [activeTab, setActiveTab] = useState<'activity' | 'info' | 'notes' | 'logs'>('activity')
   const [activeFilter, setActiveFilter] = useState<'events' | 'gestures' | 'screens'>('events')
+  const [selectedPlatform, setSelectedPlatform] = useState<Platform>('web')
 
   useEffect(() => {
     if (projectId) {
@@ -41,7 +47,8 @@ export function SessionReplayPlayer() {
         snapshotsCount: snapshots.length,
         hasContainer: !!replayContainerRef.current,
         isLoading: loading,
-        containerReady: replayContainerRef.current.offsetWidth > 0
+        containerReady: replayContainerRef.current.offsetWidth > 0,
+        platform: selectedPlatform
       })
       // Small delay to ensure DOM is ready
       const timer = setTimeout(() => {
@@ -60,6 +67,21 @@ export function SessionReplayPlayer() {
             if ((playerRef.current as any)._sandboxCheckInterval) {
               clearInterval((playerRef.current as any)._sandboxCheckInterval)
             }
+            // Clean up time update interval
+            if ((playerRef.current as any)._timeUpdateInterval) {
+              clearInterval((playerRef.current as any)._timeUpdateInterval)
+            }
+            // Clean up cursor overlay
+            if ((playerRef.current as any)._cursorOverlay) {
+              const overlay = (playerRef.current as any)._cursorOverlay
+              if (overlay.parentNode) {
+                overlay.parentNode.removeChild(overlay)
+              }
+            }
+            // Clean up mouse move interval
+            if ((playerRef.current as any)._mouseMoveInterval) {
+              clearInterval((playerRef.current as any)._mouseMoveInterval)
+            }
             // No need to restore - we're not overriding anything globally anymore
             playerRef.current.pause()
             playerRef.current = null
@@ -72,7 +94,7 @@ export function SessionReplayPlayer() {
         }
       }
     }
-  }, [snapshots.length, loading]) // Use snapshots.length to avoid re-initializing on every snapshot change
+  }, [snapshots.length, loading, selectedPlatform]) // Re-initialize when platform changes
 
   const loadAllSessions = async () => {
     if (!projectId) return
@@ -95,6 +117,23 @@ export function SessionReplayPlayer() {
       const response = await sessionsAPI.getById(projectId, sessionId)
       setSession(response.session)
       
+      // Detect platform from device_info
+      if (response.session?.device_info) {
+        const deviceInfo = response.session.device_info
+        const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
+        // If viewport width is less than 768px, it's likely mobile
+        const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
+        setSelectedPlatform(detectedPlatform)
+      }
+      
+      // Debug: Log location data
+      console.log('📍 Session location data:', {
+        device_info: response.session?.device_info,
+        location: response.session?.location,
+        city: response.session?.device_info?.city || response.session?.location?.city,
+        country: response.session?.device_info?.country || response.session?.location?.country,
+      })
+      
       // Calculate duration from session timestamps
       if (response.session) {
         const startTime = new Date(response.session.start_time).getTime()
@@ -104,6 +143,17 @@ export function SessionReplayPlayer() {
           setDuration(calculatedDuration)
         } else if (response.session.duration) {
           setDuration(response.session.duration)
+        }
+        
+        // Check for video (mobile sessions)
+        if (response.session.has_video && response.session.video_url) {
+          setHasVideo(true)
+          setVideoUrl(response.session.video_url)
+          // Use video duration if available
+          if (response.session.video_duration) {
+            setDuration(response.session.video_duration)
+          }
+          console.log('📹 Mobile session with video:', response.session.video_url)
         }
       }
       
@@ -167,6 +217,19 @@ export function SessionReplayPlayer() {
       
       let events: eventWithTime[] = []
       
+      // Check for video first (mobile sessions)
+      if (data.session?.has_video && data.session?.video_url) {
+        console.log('📹 Mobile session with video detected')
+        setHasVideo(true)
+        setVideoUrl(data.session.video_url)
+        if (data.session.video_duration) {
+          setDuration(data.session.video_duration)
+        }
+        setSnapshots([]) // No snapshots for mobile
+        setLoading(false)
+        return // Don't try to load snapshots
+      }
+      
       // Backend returns snapshots array directly
       if (data.snapshots && Array.isArray(data.snapshots)) {
         events = data.snapshots
@@ -193,10 +256,25 @@ export function SessionReplayPlayer() {
       }
       
       if (events.length === 0) {
+        // Check if this is a mobile session with video instead of snapshots
+        if (data.session?.has_video && data.session?.video_url) {
+          console.log('📹 Mobile session detected - using video instead of snapshots')
+          setHasVideo(true)
+          setVideoUrl(data.session.video_url)
+          if (data.session.video_duration) {
+            setDuration(data.session.video_duration)
+          }
+          setSnapshots([]) // No snapshots for mobile
+          setLoading(false)
+          return // Don't show error, video will be displayed
+        }
+        
         console.error('❌ No snapshots found in response!', {
           dataKeys: Object.keys(data),
           hasSnapshots: !!data.snapshots,
           snapshotsValue: data.snapshots,
+          hasVideo: data.session?.has_video,
+          videoUrl: data.session?.video_url,
           responseStructure: JSON.stringify(data).substring(0, 500)
         })
         setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
@@ -383,22 +461,266 @@ export function SessionReplayPlayer() {
       // We'll use MutationObserver to watch and remove sandbox after it's set
 
       // Create Replayer instance with validated events
+      // Enhanced cursor visualization like Hotjar/UXCam
       const replayer = new Replayer(validSnapshots, {
         root: wrapper,
         liveMode: false,
         speed: playbackSpeed,
         skipInactive: false,
-        showWarning: true, // Show warnings to help debug
+        showWarning: true,
+        // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
           strokeStyle: '#9333ea',
-          lineWidth: 2,
+          lineWidth: 3,
+          duration: 1500, // Show cursor trail for 1.5 seconds
         },
-        // Fix sandbox iframe issue - allow scripts to run
+        // Show cursor sprite (visual cursor icon) - CRITICAL for visible cursor
+        showCursor: true,
+        // Cursor configuration for better visibility
+        plugins: [
+          // Add custom cursor plugin if available
+        ],
+        // Unpack function
         unpackFn: (data: any) => {
-          // Default unpack function
           return data
         },
       })
+
+      // Add custom cursor overlay for better visibility
+      // This creates a visible cursor element that follows mouse movements
+      const cursorOverlay = document.createElement('div')
+      cursorOverlay.id = 'rrweb-cursor-overlay'
+      cursorOverlay.innerHTML = '👆' // Add emoji for better visibility
+      cursorOverlay.style.cssText = `
+        position: absolute;
+        width: 32px;
+        height: 32px;
+        border: 3px solid #9333ea;
+        border-radius: 50%;
+        background: rgba(147, 51, 234, 0.6);
+        pointer-events: none;
+        z-index: 999999;
+        transform: translate(-50%, -50%);
+        display: none;
+        transition: all 0.1s ease;
+        box-shadow: 0 0 15px rgba(147, 51, 234, 0.8);
+        font-size: 16px;
+        text-align: center;
+        line-height: 26px;
+        color: white;
+        font-weight: bold;
+      `
+      wrapper.style.position = 'relative'
+      wrapper.appendChild(cursorOverlay)
+      
+      // Make cursor overlay globally accessible for debugging
+      ;(window as any).cursorOverlay = cursorOverlay
+      ;(window as any).cursorWrapper = wrapper
+      
+      console.log('✅ Cursor overlay created and added to wrapper', {
+        wrapper: wrapper,
+        overlay: cursorOverlay,
+        wrapperChildren: wrapper.children.length,
+        overlayId: cursorOverlay.id,
+        overlayStyles: {
+          display: cursorOverlay.style.display,
+          position: cursorOverlay.style.position,
+          zIndex: cursorOverlay.style.zIndex
+        }
+      })
+      
+      // Test cursor visibility immediately
+      setTimeout(() => {
+        cursorOverlay.style.display = 'block'
+        cursorOverlay.style.left = '100px'
+        cursorOverlay.style.top = '100px'
+        cursorOverlay.style.opacity = '1'
+        console.log('🧪 Test: Cursor overlay should be visible at (100, 100) for 2 seconds')
+        setTimeout(() => {
+          cursorOverlay.style.display = 'none'
+          console.log('🧪 Test: Cursor overlay hidden')
+        }, 2000)
+      }, 1000)
+
+      // Track mouse movements from events and show cursor
+      let lastMouseX = 0
+      let lastMouseY = 0
+      
+      // Track mouse movements and clicks from replay events
+      // Use a more direct approach - iterate through events and track mouse positions
+      let mouseMoveInterval: NodeJS.Timeout | null = null
+      let lastKnownMouseX = 0
+      let lastKnownMouseY = 0
+      
+      // Function to find latest mouse position from events
+      const findLatestMousePosition = () => {
+        try {
+          const service = (replayer as any).service
+          if (!service || !service.state) {
+            return { x: lastKnownMouseX, y: lastKnownMouseY, found: false }
+          }
+          
+          const currentIndex = service.state.currentIndex || 0
+          const events = service.state.events || validSnapshots
+          
+          // Search backwards from current position to find most recent mouse event
+          for (let i = Math.min(currentIndex, events.length - 1); i >= Math.max(0, currentIndex - 100); i--) {
+            const event = events[i]
+            if (!event || event.type !== 3 || !event.data) continue
+            
+            const data = event.data
+            
+            // Mouse move events (source: 1)
+            if (data.source === 1 && data.positions) {
+              const positions = Array.isArray(data.positions) ? data.positions : [data.positions]
+              if (positions.length > 0) {
+                const lastPos = positions[positions.length - 1]
+                if (lastPos && typeof lastPos.x === 'number' && typeof lastPos.y === 'number' && !isNaN(lastPos.x) && !isNaN(lastPos.y)) {
+                  lastKnownMouseX = lastPos.x
+                  lastKnownMouseY = lastPos.y
+                  return { x: lastPos.x, y: lastPos.y, found: true }
+                }
+              }
+            }
+            
+            // Click events (source: 2) - also have mouse position
+            if (data.source === 2 && typeof data.x === 'number' && typeof data.y === 'number' && !isNaN(data.x) && !isNaN(data.y)) {
+              lastKnownMouseX = data.x
+              lastKnownMouseY = data.y
+              return { x: data.x, y: data.y, found: true }
+            }
+          }
+          
+          return { x: lastKnownMouseX, y: lastKnownMouseY, found: lastKnownMouseX > 0 || lastKnownMouseY > 0 }
+        } catch (error) {
+          console.warn('Error finding mouse position:', error)
+          return { x: lastKnownMouseX, y: lastKnownMouseY, found: false }
+        }
+      }
+      
+      // Function to update cursor overlay position
+      const updateCursorPosition = () => {
+        try {
+          const pos = findLatestMousePosition()
+          if (!pos.found || (pos.x === 0 && pos.y === 0 && lastKnownMouseX === 0 && lastKnownMouseY === 0)) {
+            return // No valid position found
+          }
+          
+          // Get iframe for positioning
+          const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+          let cursorX = pos.x
+          let cursorY = pos.y
+          
+          if (iframe) {
+            try {
+              const iframeRect = iframe.getBoundingClientRect()
+              const wrapperRect = wrapper.getBoundingClientRect()
+              
+              // Calculate position relative to wrapper
+              // Mouse positions in events are relative to the iframe content
+              cursorX = pos.x + iframeRect.left - wrapperRect.left
+              cursorY = pos.y + iframeRect.top - wrapperRect.top
+              
+              // Debug logging (only first few times)
+              if (!(cursorOverlay as any)._debugLogged) {
+                console.log('🖱️ Cursor position found:', { 
+                  eventX: pos.x, 
+                  eventY: pos.y, 
+                  cursorX, 
+                  cursorY,
+                  iframeRect: { left: iframeRect.left, top: iframeRect.top },
+                  wrapperRect: { left: wrapperRect.left, top: wrapperRect.top }
+                })
+                ;(cursorOverlay as any)._debugLogged = true
+              }
+            } catch (e) {
+              // Use relative positioning if iframe access fails
+              console.warn('Iframe access failed, using relative positioning')
+            }
+          } else {
+            // No iframe yet, use event coordinates directly
+            cursorX = pos.x
+            cursorY = pos.y
+          }
+          
+          // Update cursor overlay - make it very visible
+          cursorOverlay.style.display = 'block'
+          cursorOverlay.style.left = cursorX + 'px'
+          cursorOverlay.style.top = cursorY + 'px'
+          cursorOverlay.style.opacity = '1'
+          cursorOverlay.style.zIndex = '999999'
+          cursorOverlay.style.visibility = 'visible'
+          
+          // Keep cursor visible
+          clearTimeout((cursorOverlay as any)._hideTimeout)
+          ;(cursorOverlay as any)._hideTimeout = setTimeout(() => {
+            if (cursorOverlay.style.opacity === '1') {
+              cursorOverlay.style.opacity = '0.7'
+            }
+          }, 2000) // Keep visible for 2 seconds
+        } catch (error) {
+          console.warn('Error updating cursor position:', error)
+        }
+      }
+      
+      // Update cursor on state changes
+      replayer.on('state-change', () => {
+        updateCursorPosition()
+      })
+      
+      // Also update cursor continuously while playing (more reliable)
+      if (mouseMoveInterval) {
+        clearInterval(mouseMoveInterval)
+      }
+      mouseMoveInterval = setInterval(() => {
+        if (isPlaying && playerRef.current) {
+          updateCursorPosition()
+        }
+      }, 50) // Update every 50ms for smooth cursor movement
+      
+      // Store interval for cleanup
+      ;(replayer as any)._mouseMoveInterval = mouseMoveInterval
+      
+      // Reset cursor on snapshot rebuild
+      replayer.on('fullsnapshot-rebuilded', () => {
+        cursorOverlay.style.display = 'none'
+        lastKnownMouseX = 0
+        lastKnownMouseY = 0
+      })
+      
+      // Initial cursor position - try multiple times to ensure it shows
+      setTimeout(() => {
+        updateCursorPosition()
+        console.log('🖱️ Initial cursor update attempted')
+      }, 500)
+      
+      setTimeout(() => {
+        updateCursorPosition()
+        console.log('🖱️ Second cursor update attempted')
+      }, 1000)
+      
+      setTimeout(() => {
+        updateCursorPosition()
+        console.log('🖱️ Third cursor update attempted')
+      }, 2000)
+      
+      // Log event structure for debugging
+      console.log('📊 Events structure:', {
+        totalEvents: validSnapshots.length,
+        eventTypes: validSnapshots.slice(0, 20).map((e: any) => ({
+          type: e.type,
+          hasData: !!e.data,
+          source: e.data?.source,
+          hasPositions: !!e.data?.positions,
+          hasXY: typeof e.data?.x === 'number' && typeof e.data?.y === 'number'
+        })),
+        mouseEvents: validSnapshots.filter((e: any) => 
+          e.type === 3 && e.data && (e.data.source === 1 || e.data.source === 2)
+        ).length
+      })
+      
+      // Store cursor overlay for cleanup
+      ;(replayer as any)._cursorOverlay = cursorOverlay
 
       // Fix iframe sandbox permissions using MutationObserver
       // This watches for when rrweb creates the iframe and fixes it immediately
@@ -526,12 +848,30 @@ export function SessionReplayPlayer() {
         console.log('Replay finished')
       })
 
-      // Update current time from replayer
+      // Update current time from replayer - continuously update progress
       replayer.on('state-change', (state: any) => {
         if (state.timeOffset !== undefined) {
           setCurrentTime(state.timeOffset)
         }
       })
+      
+      // Also update time periodically for smooth progress bar
+      const timeUpdateInterval = setInterval(() => {
+        if (playerRef.current) {
+          try {
+            // Get current time from replayer
+            const timer = (playerRef.current as any).timer
+            if (timer && timer.timeOffset !== undefined) {
+              setCurrentTime(timer.timeOffset)
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+      }, 100) // Update every 100ms for smooth progress
+      
+      // Store interval for cleanup
+      ;(replayer as any)._timeUpdateInterval = timeUpdateInterval
 
       // Auto-play to show the replay immediately
       // Small delay to ensure container is ready
@@ -598,6 +938,18 @@ export function SessionReplayPlayer() {
   }
 
   const togglePlay = () => {
+    // Handle video player for mobile sessions
+    if (hasVideo && videoPlayerRef.current) {
+      if (isPlaying) {
+        videoPlayerRef.current.pause()
+      } else {
+        videoPlayerRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
+      return
+    }
+    
+    // Handle rrweb replayer for web sessions
     if (playerRef.current) {
       if (isPlaying) {
         playerRef.current.pause()
@@ -610,6 +962,14 @@ export function SessionReplayPlayer() {
 
   const handleSpeedChange = (speed: number) => {
     setPlaybackSpeed(speed)
+    
+    // Handle video player
+    if (hasVideo && videoPlayerRef.current) {
+      videoPlayerRef.current.playbackRate = speed
+      return
+    }
+    
+    // Handle rrweb replayer
     if (playerRef.current) {
       playerRef.current.setConfig({ speed })
     }
@@ -624,6 +984,156 @@ export function SessionReplayPlayer() {
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp)
     return date.toLocaleTimeString()
+  }
+
+  // Convert raw events into user-friendly descriptions
+  const parseEventDescription = (event: any): { icon: any, title: string, description: string, category: 'events' | 'gestures' | 'screens' } => {
+    // rrweb event types: 0=DomContentLoaded, 2=FullSnapshot, 3=IncrementalSnapshot, 4=Meta, 5=Custom
+    if (event.type === 2) {
+      return {
+        icon: <Eye className="icon-small" style={{ color: '#9333ea' }} />,
+        title: 'Page Loaded',
+        description: 'Initial page snapshot captured',
+        category: 'screens'
+      }
+    }
+
+    if (event.type === 3 && event.data) {
+      const data = event.data
+      const source = data.source
+
+      // Mouse/Touch movements (source: 1)
+      if (source === 1 && data.positions) {
+        const positions = Array.isArray(data.positions) ? data.positions : [data.positions]
+        const lastPos = positions[positions.length - 1]
+        return {
+          icon: <MousePointer className="icon-small" style={{ color: '#3b82f6' }} />,
+          title: 'Mouse Moved',
+          description: `Cursor moved to (${lastPos?.x || 0}, ${lastPos?.y || 0})`,
+          category: 'gestures'
+        }
+      }
+
+      // Mouse interactions (source: 2)
+      if (source === 2) {
+        if (data.type === 1) {
+          return {
+            icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
+            title: 'Click',
+            description: `Clicked at (${data.x || 0}, ${data.y || 0})`,
+            category: 'gestures'
+          }
+        }
+        if (data.type === 2) {
+          return {
+            icon: <MousePointerClick className="icon-small" style={{ color: '#f59e0b' }} />,
+            title: 'Double Click',
+            description: `Double clicked at (${data.x || 0}, ${data.y || 0})`,
+            category: 'gestures'
+          }
+        }
+        if (data.type === 3) {
+          return {
+            icon: <MousePointerClick className="icon-small" style={{ color: '#ef4444' }} />,
+            title: 'Right Click',
+            description: `Right clicked at (${data.x || 0}, ${data.y || 0})`,
+            category: 'gestures'
+          }
+        }
+      }
+
+      // Scroll events (source: 3)
+      if (source === 3) {
+        return {
+          icon: <Scroll className="icon-small" style={{ color: '#8b5cf6' }} />,
+          title: 'Scrolled',
+          description: `Scrolled to position (${data.x || 0}, ${data.y || 0})`,
+          category: 'gestures'
+        }
+      }
+
+      // Input events (source: 5)
+      if (source === 5) {
+        if (data.type === 0) {
+          return {
+            icon: <Type className="icon-small" style={{ color: '#06b6d4' }} />,
+            title: 'Input Changed',
+            description: `Typed in field`,
+            category: 'events'
+          }
+        }
+      }
+
+      // DOM mutations (source: 0)
+      if (source === 0) {
+        return {
+          icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
+          title: 'Page Changed',
+          description: 'DOM updated',
+          category: 'events'
+        }
+      }
+    }
+
+    // Custom events (type: 5)
+    if (event.type === 5 && event.data) {
+      const eventData = event.data
+      if (eventData.tag === 'page_view') {
+        return {
+          icon: <Eye className="icon-small" style={{ color: '#9333ea' }} />,
+          title: 'Page View',
+          description: eventData.payload?.page || 'Viewed page',
+          category: 'events'
+        }
+      }
+      if (eventData.tag === 'button_click') {
+        return {
+          icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
+          title: 'Button Clicked',
+          description: eventData.payload?.button_id || eventData.payload?.button_text || 'Clicked button',
+          category: 'events'
+        }
+      }
+      if (eventData.tag === 'form_submit') {
+        return {
+          icon: <Type className="icon-small" style={{ color: '#f59e0b' }} />,
+          title: 'Form Submitted',
+          description: eventData.payload?.form_id || 'Submitted form',
+          category: 'events'
+        }
+      }
+    }
+
+    // Default fallback
+    return {
+      icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
+      title: `Event Type ${event.type || 'Unknown'}`,
+      description: event.data ? JSON.stringify(event.data).substring(0, 50) : 'No data',
+      category: 'events'
+    }
+  }
+
+  // Filter events by category
+  const getFilteredEvents = () => {
+    if (activeFilter === 'events') {
+      return events.filter(e => {
+        const parsed = parseEventDescription(e)
+        return parsed.category === 'events'
+      })
+    }
+    if (activeFilter === 'gestures') {
+      return events.filter(e => {
+        const parsed = parseEventDescription(e)
+        return parsed.category === 'gestures'
+      })
+    }
+    if (activeFilter === 'screens') {
+      return events.filter(e => {
+        const parsed = parseEventDescription(e)
+        return parsed.category === 'screens'
+      })
+    }
+    return events
   }
 
   if (loading) {
@@ -776,7 +1286,29 @@ export function SessionReplayPlayer() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
                   <MapPin className="icon-small" />
-                  <span>{session.user_properties?.city || 'N/A'}, {session.user_properties?.country || 'N/A'}</span>
+                  <span>
+                    {(() => {
+                      // Try multiple sources for location (check all possible locations)
+                      const city = (session as any).location?.city ||
+                                   session.device_info?.city || 
+                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                                   session.user_properties?.city || 
+                                   null
+                      const country = (session as any).location?.country ||
+                                     session.device_info?.country || 
+                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                                     session.user_properties?.country || 
+                                     null
+                      if (city && country) {
+                        return `${city}, ${country}`
+                      } else if (city) {
+                        return city
+                      } else if (country) {
+                        return country
+                      }
+                      return 'N/A, N/A'
+                    })()}
+                  </span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
                   <Calendar className="icon-small" />
@@ -822,13 +1354,77 @@ export function SessionReplayPlayer() {
           </div>
         </div>
 
+        {/* Progress/Timeline Bar */}
+        {duration > 0 && (
+          <div style={{
+            padding: '0.75rem 1.5rem',
+            backgroundColor: 'white',
+            borderBottom: '1px solid #e5e7eb',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '1rem'
+          }}>
+            <div style={{
+              flex: 1,
+              height: '4px',
+              backgroundColor: '#e5e7eb',
+              borderRadius: '2px',
+              position: 'relative',
+              cursor: 'pointer',
+              overflow: 'hidden'
+            }}
+            onClick={(e) => {
+              if (duration > 0) {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const clickX = e.clientX - rect.left
+                const percentage = clickX / rect.width
+                const newTime = percentage * duration
+                
+                // Handle video player
+                if (hasVideo && videoPlayerRef.current) {
+                  videoPlayerRef.current.currentTime = newTime / 1000 // Convert to seconds
+                  setCurrentTime(newTime)
+                  return
+                }
+                
+                // Handle rrweb replayer
+                if (playerRef.current) {
+                  playerRef.current.play(newTime)
+                  setCurrentTime(newTime)
+                }
+              }
+            }}
+            >
+              <div style={{
+                height: '100%',
+                width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                backgroundColor: '#9333ea',
+                borderRadius: '2px',
+                transition: 'width 0.1s linear'
+              }} />
+            </div>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              fontSize: '0.875rem',
+              color: '#6b7280',
+              minWidth: '120px',
+              justifyContent: 'flex-end'
+            }}>
+              <Clock className="icon-small" style={{ width: '14px', height: '14px' }} />
+              <span>{formatDuration(currentTime)} / {formatDuration(duration)}</span>
+            </div>
+          </div>
+        )}
+
         {/* Replay Container */}
         <div style={{ 
           flex: 1, 
           padding: '0.5rem',
           display: 'flex',
-          alignItems: 'stretch',
-          justifyContent: 'stretch',
+          alignItems: selectedPlatform === 'mobile' ? 'center' : 'stretch',
+          justifyContent: selectedPlatform === 'mobile' ? 'center' : 'stretch',
           overflow: 'hidden',
           backgroundColor: '#f9fafb',
           minHeight: 0
@@ -836,17 +1432,19 @@ export function SessionReplayPlayer() {
           <div 
             ref={replayContainerRef}
             style={{ 
-              width: '100%',
-              height: '100%',
+              width: selectedPlatform === 'mobile' ? '375px' : '100%',
+              height: selectedPlatform === 'mobile' ? '667px' : '100%',
+              maxWidth: selectedPlatform === 'mobile' ? '375px' : '100%',
+              maxHeight: selectedPlatform === 'mobile' ? '667px' : '100%',
               backgroundColor: 'white',
               border: '1px solid #e5e7eb',
               borderRadius: '8px',
               overflow: 'hidden',
-              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+              boxShadow: selectedPlatform === 'mobile' ? '0 8px 16px rgba(0, 0, 0, 0.15)' : '0 4px 6px rgba(0, 0, 0, 0.1)',
               position: 'relative',
               display: 'flex',
               flexDirection: 'column',
-              flex: 1
+              flex: selectedPlatform === 'mobile' ? '0 0 auto' : 1
             }}
           >
             {/* Show loading state - only when no snapshots loaded yet */}
@@ -902,8 +1500,51 @@ export function SessionReplayPlayer() {
                 </p>
               </div>
             )}
-            {/* Show "no data" message only when not loading, no error, and no snapshots */}
-            {snapshots.length === 0 && !loading && !error && (
+            {/* Show video player for mobile sessions */}
+            {hasVideo && videoUrl && snapshots.length === 0 && !loading && (
+              <div style={{
+                width: '100%',
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: '#000',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 10
+              }}>
+                <video
+                  ref={videoPlayerRef}
+                  src={videoUrl}
+                  controls
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain'
+                  }}
+                  onTimeUpdate={(e) => {
+                    const video = e.currentTarget
+                    if (video) {
+                      setCurrentTime(video.currentTime * 1000) // Convert to milliseconds
+                    }
+                  }}
+                  onLoadedMetadata={(e) => {
+                    const video = e.currentTarget
+                    if (video && video.duration) {
+                      setDuration(video.duration * 1000) // Convert to milliseconds
+                    }
+                  }}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                />
+              </div>
+            )}
+            
+            {/* Show "no data" message only when not loading, no error, no snapshots, and no video */}
+            {snapshots.length === 0 && !loading && !error && !hasVideo && (
               <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -1009,36 +1650,58 @@ export function SessionReplayPlayer() {
                         <span>{formatDuration(duration)}</span>
                       )}
                     </div>
-                    {events.slice(0, 20).map((event, index) => (
-                      <div
-                        key={index}
-                        style={{
-                          padding: '0.75rem',
-                          borderLeft: '2px solid #e5e7eb',
-                          marginLeft: '0.5rem',
-                          marginBottom: '0.5rem',
-                          fontSize: '0.875rem',
-                          color: '#111827'
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>
-                            {event.timestamp ? formatTime(event.timestamp) : `${index * 100}ms`} {event.type || 'Event'}
-                          </span>
-                          <ChevronDown className="icon-small" style={{ color: '#9ca3af' }} />
-                        </div>
-                        {event.data && (
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
-                            {JSON.stringify(event.data).substring(0, 50)}...
+                    {getFilteredEvents().slice(0, 50).map((event, index) => {
+                      const parsed = parseEventDescription(event)
+                      const eventTime = event.timestamp ? formatTime(event.timestamp) : `${Math.round((index * 100) / 1000)}s`
+                      
+                      return (
+                        <div
+                          key={index}
+                          style={{
+                            padding: '0.75rem',
+                            borderLeft: '2px solid #e5e7eb',
+                            marginLeft: '0.5rem',
+                            marginBottom: '0.5rem',
+                            fontSize: '0.875rem',
+                            color: '#111827',
+                            backgroundColor: '#f9fafb',
+                            borderRadius: '6px',
+                            transition: 'all 0.2s'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = '#f3f4f6'
+                            e.currentTarget.style.borderLeftColor = '#9333ea'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = '#f9fafb'
+                            e.currentTarget.style.borderLeftColor = '#e5e7eb'
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                            {parsed.icon}
+                            <span style={{ fontWeight: '500', color: '#111827' }}>{parsed.title}</span>
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', marginLeft: 'auto' }}>
+                              {eventTime}
+                            </span>
                           </div>
-                        )}
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginLeft: '1.5rem' }}>
+                            {parsed.description}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {getFilteredEvents().length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '2rem', color: '#6b7280' }}>
+                        <p>No {activeFilter} found in this session.</p>
+                        <p style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>Try switching to another filter tab.</p>
                       </div>
-                    ))}
+                    )}
                     <div style={{ 
                       fontSize: '0.75rem', 
                       color: '#6b7280', 
                       padding: '0.75rem',
-                      fontStyle: 'italic'
+                      fontStyle: 'italic',
+                      textAlign: 'center'
                     }}>
                       Session ended
                     </div>
@@ -1077,7 +1740,25 @@ export function SessionReplayPlayer() {
                 <div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280', marginBottom: '0.25rem' }}>Location</div>
                   <div style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
-                    {session.user_properties?.city || 'N/A'}, {session.user_properties?.country || 'N/A'}
+                    {(() => {
+                      // Try multiple sources for location
+                      const city = session.device_info?.city || 
+                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                                   session.user_properties?.city || 
+                                   null
+                      const country = session.device_info?.country || 
+                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                                     session.user_properties?.country || 
+                                     null
+                      if (city && country) {
+                        return `${city}, ${country}`
+                      } else if (city) {
+                        return city
+                      } else if (country) {
+                        return country
+                      }
+                      return 'N/A, N/A'
+                    })()}
                   </div>
                 </div>
               </div>

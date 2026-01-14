@@ -58,32 +58,60 @@
     }
   </style>
   
-  <!-- Load rrweb FIRST and SYNCHRONOUSLY (before page loads) -->
-  <!-- Using unpkg instead of jsdelivr for better compatibility -->
-  <script src="https://unpkg.com/rrweb@latest/dist/rrweb.min.js"></script>
-  <!-- Also load snapshot module if available -->
-  <script src="https://unpkg.com/rrweb@latest/dist/rrweb-snapshot.min.js"></script>
+  <!-- Load rrweb for visual session replay -->
+  <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
   
   <!-- UXCam SDK Configuration -->
   <script>
     // ============================================
-    // CONFIGURATION - UPDATE THESE VALUES
+    // CONFIGURATION - Local Testing (localhost)
     // ============================================
     window.UXCamSDK = {
-      key: 'ux_efdb678cd37b48ab9108a227234ebdf4',  // Your SDK Key (update if you have a different one)
-      apiUrl: 'http://localhost:3001'  // Your backend URL (change to production URL for live testing)
+      key: 'ux_cc05168f2d650d0e7eaa78d25bfb6a0c',
+      apiUrl: 'http://localhost:3001', // Local backend
+      debug: true // Enable debug mode for local testing
     };
+    
+    // Display configuration in console
+    console.log('🎯 UXCam SDK Test Page (Local Testing)');
+    console.log('SDK Key:', window.UXCamSDK.key);
+    console.log('API URL:', window.UXCamSDK.apiUrl);
+    console.log('SDK File URL: http://localhost:5173/uxcam-sdk-rrweb.js');
+    console.log('Full Config:', window.UXCamSDK);
+    console.log('📱 Mobile/Web: Auto-detected from device');
     // ============================================
   </script>
   
-  <!-- Load UXCam SDK SYNCHRONOUSLY (not async!) to ensure it starts before page renders -->
-  <script src="/uxcam-sdk-rrweb.js"></script>
+  <!-- Load UXCam SDK from local server -->
+  <script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>
 </head>
 <body>
   <h1>🎯 UXCam SDK Test Page</h1>
   
   <div class="status" id="status">
     <strong>Status:</strong> <span id="statusText">Initializing SDK...</span>
+  </div>
+  
+  <div class="test-section" style="background-color: #eff6ff; border-color: #3b82f6;">
+    <h2>📋 Local Testing Instructions</h2>
+    <p style="margin-bottom: 1rem; font-weight: 600; color: #1e40af;">
+      ✅ This page is configured for LOCAL testing (localhost:5173 and localhost:3001)
+    </p>
+    <ol style="margin: 0; padding-left: 1.5rem; line-height: 1.8;">
+      <li><strong>Make sure backend is running:</strong> <code style="background: #dbeafe; padding: 0.25rem 0.5rem; border-radius: 4px;">cd backend && npm start</code> (runs on http://localhost:3001)</li>
+      <li><strong>Make sure frontend is running:</strong> <code style="background: #dbeafe; padding: 0.25rem 0.5rem; border-radius: 4px;">cd frontend && npm run dev</code> (runs on http://localhost:5173)</li>
+      <li><strong>Open this test page:</strong> <a href="http://localhost:5173/test-sdk.html" target="_blank" style="color: #3b82f6; font-weight: 600;">http://localhost:5173/test-sdk.html</a></li>
+      <li><strong>Open Browser Console</strong> (F12) to see SDK logs</li>
+      <li><strong>Interact with the page</strong> - Click buttons, type in fields, scroll</li>
+      <li><strong>For Mobile Testing:</strong> Open this page on your phone (use your computer's IP: <code id="localIP" style="background: #dbeafe; padding: 0.25rem 0.5rem; border-radius: 4px;">http://YOUR_IP:5173/test-sdk.html</code>)</li>
+      <li><strong>Check Console</strong> - Look for "UXCam SDK: ✅ Initialized" and session ID</li>
+      <li><strong>Wait 10-15 seconds</strong> for events to be sent to the backend</li>
+      <li><strong>Go to Dashboard</strong> → <a href="http://localhost:5173/dashboard/sessions" target="_blank" style="color: #3b82f6; font-weight: 600;">View Sessions</a> to see your recorded session</li>
+      <li><strong>Click on a session</strong> to view the visual replay (like Hotjar!)</li>
+    </ol>
+    <div style="margin-top: 1rem; padding: 0.75rem; background: #fef3c7; border: 1px solid #fbbf24; border-radius: 6px;">
+      <strong>📱 Mobile Testing:</strong> To test on your phone, replace <code>localhost</code> with your computer's IP address (e.g., <code>http://192.168.1.100:5173/test-sdk.html</code>). Make sure your phone and computer are on the same WiFi network.
+    </div>
   </div>
   
   <div class="test-section">
@@ -148,18 +176,18 @@
       const statusDiv = document.getElementById('status');
       const statusText = document.getElementById('statusText');
       
-      if (!window.UXCamSDK || !window.UXCamSDK.key || window.UXCamSDK.key === 'PASTE_YOUR_SDK_KEY_HERE') {
+      if (!window.UXCamSDK || !window.UXCamSDK.key) {
         statusDiv.className = 'status error';
-        statusText.textContent = '❌ SDK key not configured! Please update the SDK key in the script tag.';
+        statusText.textContent = '❌ SDK key not configured! Please add ?key=YOUR_SDK_KEY to the URL.';
         return;
       }
       
       if (window.UXCam) {
         statusDiv.className = 'status';
-        statusText.textContent = '✅ SDK loaded and ready! Check console for recording status.';
+        statusText.innerHTML = '✅ SDK loaded and ready! <br><small style="color: #059669;">Recording session... Check console for details.</small>';
       } else {
         statusDiv.className = 'status error';
-        statusText.textContent = '⏳ SDK loading...';
+        statusText.textContent = '⏳ SDK loading... (This may take a few seconds)';
       }
     }
     
@@ -181,16 +209,48 @@
       setTimeout(checkSDKStatus, 2000);
     });
     
+    // Get local IP for mobile testing instructions
+    function updateLocalIP() {
+      // Try to get local IP from network interfaces (if available)
+      // For now, show instructions
+      const ipElement = document.getElementById('localIP');
+      if (ipElement) {
+        // Get hostname/IP from current location
+        const hostname = window.location.hostname;
+        if (hostname === 'localhost' || hostname === '127.0.0.1') {
+          ipElement.textContent = 'http://YOUR_COMPUTER_IP:5173/test-sdk.html';
+          ipElement.title = 'Replace YOUR_COMPUTER_IP with your computer\'s local IP (e.g., 192.168.1.100). Find it by running: ipconfig (Windows) or ifconfig (Mac/Linux)';
+        } else {
+          ipElement.textContent = `http://${hostname}:5173/test-sdk.html`;
+        }
+      }
+    }
+    
     // Log SDK info
-    console.log('=== UXCam SDK Test Page ===');
+    console.log('=== UXCam SDK Test Page (Local Testing) ===');
     console.log('SDK Config:', window.UXCamSDK);
+    console.log('Device Info:', {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      isMobile: window.innerWidth < 768
+    });
     console.log('Waiting for SDK to initialize...');
+    
+    // Update local IP display
+    updateLocalIP();
     
     // Monitor SDK initialization
     const checkInterval = setInterval(() => {
       if (window.UXCam) {
         console.log('✅ UXCam SDK is ready!');
         console.log('SDK Methods:', Object.keys(window.UXCam));
+        console.log('📱 Platform Detection:', {
+          isMobile: window.innerWidth < 768,
+          viewport: `${window.innerWidth}x${window.innerHeight}`,
+          userAgent: navigator.userAgent.includes('Mobile') ? 'Mobile' : 'Desktop'
+        });
         clearInterval(checkInterval);
         checkSDKStatus();
       }

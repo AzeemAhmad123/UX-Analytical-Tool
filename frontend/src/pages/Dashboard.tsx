@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, Routes, Route } from 'react-router-dom'
 import { auth } from '../config/supabase'
-import { DashboardHeader } from '../components/dashboard/DashboardHeader'
 import { DashboardSidebar } from '../components/dashboard/DashboardSidebar'
 import { DashboardHome } from '../components/dashboard/DashboardHome'
+import { AnalyticsDashboard } from './dashboard/AnalyticsDashboard'
 import { SessionReplay } from './dashboard/SessionReplay'
 import { SessionsList } from './dashboard/SessionsList'
 import { SessionReplayPlayer } from './dashboard/SessionReplayPlayer'
@@ -14,12 +14,18 @@ import { Dashboards } from './dashboard/Dashboards'
 import { VoiceOfCustomer } from './dashboard/VoiceOfCustomer'
 import { Segments } from './dashboard/Segments'
 import { WebPerformance } from './dashboard/WebPerformance'
+import { RageClicks } from './dashboard/RageClicks'
+import { Alerts } from './dashboard/Alerts'
+import { ScheduledReports } from './dashboard/ScheduledReports'
+import { ShareLinks } from './dashboard/ShareLinks'
+import { PrivacySettings } from './dashboard/PrivacySettings'
 import { OnboardingContent } from './dashboard/OnboardingContent'
 import { Profile } from './dashboard/Profile'
 import '../components/dashboard/Dashboard.css'
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -61,12 +67,12 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <DashboardSidebar />
-      <div className="dashboard-main">
-        <DashboardHeader />
+      <DashboardSidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      <div className={`dashboard-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <main className="dashboard-content">
           <Routes>
-            <Route index element={<DashboardHome />} />
+            <Route index element={<AnalyticsDashboard />} />
+            <Route path="home" element={<DashboardHome />} />
             <Route path="sessions" element={<SessionsList />} />
             <Route path="sessions/list" element={<SessionsList />} />
             <Route path="sessions/:projectId/:sessionId" element={<SessionReplayPlayer />} />
@@ -82,6 +88,11 @@ const Dashboard = () => {
             <Route path="events" element={<div className="dashboard-page-content"><h1 className="page-title">Events</h1><p>Coming soon...</p></div>} />
             <Route path="screens" element={<div className="dashboard-page-content"><h1 className="page-title">Screens</h1><p>Coming soon...</p></div>} />
             <Route path="issues" element={<div className="dashboard-page-content"><h1 className="page-title">Issues</h1><p>Coming soon...</p></div>} />
+            <Route path="alerts" element={<Alerts />} />
+            <Route path="scheduled-reports" element={<ScheduledReports />} />
+            <Route path="share-links" element={<ShareLinks />} />
+            <Route path="rage-clicks" element={<RageClicks />} />
+            <Route path="privacy" element={<PrivacySettings />} />
             <Route path="guide" element={<OnboardingContent />} />
             <Route path="support" element={<div className="dashboard-page-content"><h1 className="page-title">Support</h1><p>Coming soon...</p></div>} />
                 <Route path="voice" element={<VoiceOfCustomer />} />
