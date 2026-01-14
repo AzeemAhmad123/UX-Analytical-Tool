@@ -23,7 +23,7 @@ router.get('/:token', async (req: Request, res: Response) => {
     const { token } = req.params
     const { password } = req.query
 
-    const shareLink = await getShareLinkByToken(token)
+    const shareLink = await getShareLinkByToken(String(token))
 
     if (!shareLink) {
       return res.status(404).json({ error: 'Share link not found or expired' })
@@ -38,7 +38,7 @@ router.get('/:token', async (req: Request, res: Response) => {
         })
       }
 
-      const isValid = await verifyShareLinkPassword(token, password as string)
+      const isValid = await verifyShareLinkPassword(String(token), password as string)
       if (!isValid) {
         return res.status(401).json({ error: 'Invalid password' })
       }
