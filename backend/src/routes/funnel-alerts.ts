@@ -18,7 +18,7 @@ const router = Router()
 router.get('/:projectId/:funnelId/alerts', validateProject, async (req: Request, res: Response) => {
   try {
     const { funnelId } = req.params
-    const alerts = await getFunnelAlerts(funnelId)
+    const alerts = await getFunnelAlerts(String(funnelId))
     res.json({ success: true, alerts })
   } catch (error: any) {
     console.error('Error fetching alerts:', error)
@@ -35,8 +35,8 @@ router.post('/:projectId/:funnelId/alerts', validateProject, async (req: Request
     const { projectId, funnelId } = req.params
     const alertData = {
       ...req.body,
-      funnel_id: funnelId,
-      project_id: projectId
+      funnel_id: String(funnelId),
+      project_id: String(projectId)
     }
     const alert = await createAlert(alertData)
     res.json({ success: true, alert })
@@ -53,7 +53,7 @@ router.post('/:projectId/:funnelId/alerts', validateProject, async (req: Request
 router.put('/:projectId/:funnelId/alerts/:alertId', validateProject, async (req: Request, res: Response) => {
   try {
     const { alertId } = req.params
-    const alert = await updateAlert(alertId, req.body)
+    const alert = await updateAlert(String(alertId), req.body)
     res.json({ success: true, alert })
   } catch (error: any) {
     console.error('Error updating alert:', error)
@@ -68,7 +68,7 @@ router.put('/:projectId/:funnelId/alerts/:alertId', validateProject, async (req:
 router.delete('/:projectId/:funnelId/alerts/:alertId', validateProject, async (req: Request, res: Response) => {
   try {
     const { alertId } = req.params
-    await deleteAlert(alertId)
+    await deleteAlert(String(alertId))
     res.json({ success: true })
   } catch (error: any) {
     console.error('Error deleting alert:', error)
@@ -84,7 +84,7 @@ router.get('/:projectId/:funnelId/alerts/history', validateProject, async (req: 
   try {
     const { funnelId } = req.params
     const limit = parseInt(req.query.limit as string) || 50
-    const history = await getAlertHistory(funnelId, limit)
+    const history = await getAlertHistory(String(funnelId), limit)
     res.json({ success: true, history })
   } catch (error: any) {
     console.error('Error fetching alert history:', error)
@@ -99,7 +99,7 @@ router.get('/:projectId/:funnelId/alerts/history', validateProject, async (req: 
 router.post('/:projectId/:funnelId/alerts/check', validateProject, async (req: Request, res: Response) => {
   try {
     const { funnelId } = req.params
-    const results = await checkFunnelAlerts(funnelId)
+    const results = await checkFunnelAlerts(String(funnelId))
     res.json({ success: true, results })
   } catch (error: any) {
     console.error('Error checking alerts:', error)
