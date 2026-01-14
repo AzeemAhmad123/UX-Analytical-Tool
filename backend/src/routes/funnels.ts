@@ -125,7 +125,7 @@ router.get('/:projectId', validateProject, async (req: Request, res: Response) =
 router.get('/:projectId/:funnelId', validateProject, async (req: Request, res: Response) => {
   try {
     const { projectId, funnelId } = req.params
-
+    // Ensure funnelId is a string (req.params can be string | string[])
     const funnel = await getFunnelById(String(funnelId))
 
     if (!funnel) {
