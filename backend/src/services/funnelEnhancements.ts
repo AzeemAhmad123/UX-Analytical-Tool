@@ -281,7 +281,14 @@ export async function calculateTrendOverTime(
     if (firstStep.condition.data) {
       for (const [key, value] of Object.entries(firstStep.condition.data)) {
         const cleanKey = key.trim()
-        firstStepQuery = firstStepQuery.eq(`data->>${cleanKey}`, value)
+        // Skip empty keys, empty values, or whitespace-only values
+        if (cleanKey && value && typeof value === 'string' && value.trim() !== '') {
+          firstStepQuery = firstStepQuery.eq(`data->>${cleanKey}`, value.trim())
+        } else if (cleanKey && value && typeof value !== 'string') {
+          // Non-string values (numbers, booleans) are valid
+          firstStepQuery = firstStepQuery.eq(`data->>${cleanKey}`, value)
+        }
+        // If key or value is empty/whitespace, skip this filter
       }
     }
 
@@ -303,7 +310,14 @@ export async function calculateTrendOverTime(
       if (lastStep.condition.data) {
         for (const [key, value] of Object.entries(lastStep.condition.data)) {
           const cleanKey = key.trim()
-          lastStepQuery = lastStepQuery.eq(`data->>${cleanKey}`, value)
+          // Skip empty keys, empty values, or whitespace-only values
+          if (cleanKey && value && typeof value === 'string' && value.trim() !== '') {
+            lastStepQuery = lastStepQuery.eq(`data->>${cleanKey}`, value.trim())
+          } else if (cleanKey && value && typeof value !== 'string') {
+            // Non-string values (numbers, booleans) are valid
+            lastStepQuery = lastStepQuery.eq(`data->>${cleanKey}`, value)
+          }
+          // If key or value is empty/whitespace, skip this filter
         }
       }
     }

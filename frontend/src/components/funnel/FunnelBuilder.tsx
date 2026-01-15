@@ -412,6 +412,11 @@ function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, 
   }
 
   const handleSave = () => {
+    // Validate additional data fields - trim whitespace and check if both are provided
+    const trimmedKey = dataKey?.trim()
+    const trimmedValue = dataValue?.trim()
+    const hasValidData = trimmedKey && trimmedValue && trimmedKey !== '' && trimmedValue !== ''
+    
     const condition: FunnelStep['condition'] = {
       type: conditionType as any,
       ...(conditionType === 'event' && { event_type: eventType }),
@@ -419,8 +424,8 @@ function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, 
         field_name: fieldName,
         form_id: formId
       }),
-      ...(dataKey && dataValue && {
-        data: { [dataKey]: dataValue }
+      ...(hasValidData && {
+        data: { [trimmedKey]: trimmedValue }
       })
     }
     onSave({ name, condition })

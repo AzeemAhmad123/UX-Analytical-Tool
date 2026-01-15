@@ -465,10 +465,17 @@ export async function analyzeFunnel(
         continue
       }
 
-      // Apply data filters
+      // Apply data filters (only if key and value are non-empty)
       if (step.condition.data) {
         for (const [key, value] of Object.entries(step.condition.data)) {
-          query = query.eq(`data->>${key}`, value)
+          // Skip empty keys, empty values, or whitespace-only values
+          if (key && value && typeof value === 'string' && value.trim() !== '') {
+            query = query.eq(`data->>${key}`, value.trim())
+          } else if (key && value && typeof value !== 'string') {
+            // Non-string values (numbers, booleans) are valid
+            query = query.eq(`data->>${key}`, value)
+          }
+          // If key or value is empty/whitespace, skip this filter
         }
       }
 
@@ -964,7 +971,14 @@ async function analyzeFunnelByGeography(
 
         if (step.condition.data) {
           for (const [key, value] of Object.entries(step.condition.data)) {
-            query = query.eq(`data->>${key}`, value)
+            // Skip empty keys, empty values, or whitespace-only values
+            if (key && value && typeof value === 'string' && value.trim() !== '') {
+              query = query.eq(`data->>${key}`, value.trim())
+            } else if (key && value && typeof value !== 'string') {
+              // Non-string values (numbers, booleans) are valid
+              query = query.eq(`data->>${key}`, value)
+            }
+            // If key or value is empty/whitespace, skip this filter
           }
         }
 
