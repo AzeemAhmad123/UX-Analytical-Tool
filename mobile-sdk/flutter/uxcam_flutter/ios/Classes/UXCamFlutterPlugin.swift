@@ -25,6 +25,7 @@ public class UXCamFlutterPlugin: NSObject, FlutterPlugin {
       let config = UXCamConfig(
         sdkKey: sdkKey,
         apiUrl: apiUrl,
+        enableVideoRecording: enableVideoRecording,
         enableEventTracking: enableEventTracking,
         enableAutomaticTracking: enableAutomaticTracking
       )

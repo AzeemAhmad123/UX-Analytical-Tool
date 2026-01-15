@@ -28,13 +28,14 @@ class UXCamFlutterPlugin: FlutterPlugin, MethodChannel.MethodCallHandler {
         val apiUrl = call.argument<String>("apiUrl") ?: "https://uxcam-backend.vercel.app"
         val enableVideoRecording = call.argument<Boolean>("enableVideoRecording") ?: true
         val enableEventTracking = call.argument<Boolean>("enableEventTracking") ?: true
+        val enableAutomaticTracking = call.argument<Boolean>("enableAutomaticTracking") ?: true
         
         val config = UXCamConfig(
           sdkKey = sdkKey,
           apiUrl = apiUrl,
           enableVideoRecording = enableVideoRecording,
           enableEventTracking = enableEventTracking,
-          enableAutomaticTracking = call.argument<Boolean>("enableAutomaticTracking") ?: true
+          enableAutomaticTracking = enableAutomaticTracking
         )
         
         val ctx = context
