@@ -9,6 +9,13 @@
 import Foundation
 import UIKit
 import ReplayKit
+import ObjectiveC.runtime
+
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 // MARK: - Configuration
 public struct UXCamConfig {
@@ -79,6 +86,12 @@ public class UXCamSDK {
     private let batchSize = 10
     private var batchTimer: Timer?
     
+    // Automatic tracking components
+    private var isAutomaticTrackingEnabled = false
+    private var originalUncaughtExceptionHandler: NSUncaughtExceptionHandler?
+    private var networkSessionDelegate: UXCamURLSessionDelegate?
+    private static var hasSwizzledViewControllers = false
+    
     private init() {}
     
     // MARK: - Initialization
@@ -96,6 +109,140 @@ public class UXCamSDK {
         
         // Start batch timer
         startBatchTimer()
+        
+        // Setup automatic tracking
+        setupAutomaticTracking()
+    }
+    
+    // MARK: - Automatic Tracking Setup
+    private func setupAutomaticTracking() {
+        guard let config = config, config.enableEventTracking else { return }
+        
+        // 1. Automatic Screen Transition Tracking
+        setupScreenTracking()
+        
+        // 2. Automatic Network Call Interception
+        setupNetworkTracking()
+        
+        // 3. Automatic Crash Detection
+        setupCrashTracking()
+        
+        isAutomaticTrackingEnabled = true
+    }
+    
+    // MARK: - Automatic Screen Transition Tracking
+    private func setupScreenTracking() {
+        // Use method swizzling to automatically track view controller appearances
+        guard !UXCamSDK.hasSwizzledViewControllers else { return }
+        
+        let originalSelector = #selector(UIViewController.viewDidAppear(_:))
+        let swizzledSelector = #selector(UIViewController.uxcam_viewDidAppear(_:))
+        
+        guard let originalMethod = class_getInstanceMethod(UIViewController.self, originalSelector),
+              let swizzledMethod = class_getInstanceMethod(UIViewController.self, swizzledSelector) else {
+            print("⚠️ UXCam: Failed to swizzle viewDidAppear")
+            return
+        }
+        
+        let didAddMethod = class_addMethod(
+            UIViewController.self,
+            originalSelector,
+            method_getImplementation(swizzledMethod),
+            method_getTypeEncoding(swizzledMethod)
+        )
+        
+        if didAddMethod {
+            class_replaceMethod(
+                UIViewController.self,
+                swizzledSelector,
+                method_getImplementation(originalMethod),
+                method_getTypeEncoding(originalMethod)
+            )
+        } else {
+            method_exchangeImplementations(originalMethod, swizzledMethod)
+        }
+        
+        UXCamSDK.hasSwizzledViewControllers = true
+        print("✅ UXCam: Automatic screen tracking enabled")
+    }
+    
+    // MARK: - Automatic Network Call Interception
+    private func setupNetworkTracking() {
+        // Create a custom URLSession with delegate for network tracking
+        networkSessionDelegate = UXCamURLSessionDelegate(sdk: self)
+        print("✅ UXCam: Network tracking delegate created")
+        print("   Note: Use UXCamSDK.shared.getNetworkSession() to get tracked URLSession")
+    }
+    
+    /**
+     * Get a URLSession with automatic network tracking
+     * Use this instead of URLSession.shared for automatic network call tracking
+     */
+    public func getNetworkSession() -> URLSession {
+        let config = URLSessionConfiguration.default
+        let delegate = UXCamURLSessionDelegate(sdk: self)
+        networkSessionDelegate = delegate
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+    }
+    
+    // MARK: - Automatic Crash Detection
+    private func setupCrashTracking() {
+        originalUncaughtExceptionHandler = NSGetUncaughtExceptionHandler()
+        
+        NSSetUncaughtExceptionHandler { exception in
+            // Track crash event
+            UXCamSDK.shared.trackEvent("crash", properties: [
+                "error": exception.name.rawValue,
+                "reason": exception.reason ?? "Unknown",
+                "stack_trace": exception.callStackSymbols.joined(separator: "\n"),
+                "auto_tracked": true
+            ])
+            
+            // Flush events immediately before crash
+            UXCamSDK.shared.flush()
+            
+            print("💥 UXCam: Crash detected and tracked")
+            
+            // Call original handler
+            if let originalHandler = UXCamSDK.shared.originalUncaughtExceptionHandler {
+                originalHandler(exception)
+            }
+        }
+        
+        // Also set up signal handlers for crashes (SIGABRT, SIGSEGV, etc.)
+        signal(SIGABRT, signalHandler)
+        signal(SIGILL, signalHandler)
+        signal(SIGSEGV, signalHandler)
+        signal(SIGFPE, signalHandler)
+        signal(SIGBUS, signalHandler)
+        signal(SIGPIPE, signalHandler)
+        
+        print("✅ UXCam: Automatic crash detection enabled")
+    }
+    
+    private func signalHandler(signal: Int32) {
+        let signalName: String
+        switch signal {
+        case SIGABRT: signalName = "SIGABRT"
+        case SIGILL: signalName = "SIGILL"
+        case SIGSEGV: signalName = "SIGSEGV"
+        case SIGFPE: signalName = "SIGFPE"
+        case SIGBUS: signalName = "SIGBUS"
+        case SIGPIPE: signalName = "SIGPIPE"
+        default: signalName = "UNKNOWN"
+        }
+        
+        trackEvent("crash", properties: [
+            "error": "Signal \(signalName)",
+            "signal": signal,
+            "auto_tracked": true
+        ])
+        
+        flush()
+        
+        // Restore default handler and re-raise signal
+        signal(signal, SIG_DFL)
+        raise(signal)
     }
     
     // MARK: - Session Management
@@ -105,6 +252,10 @@ public class UXCamSDK {
         return "sess_\(timestamp)_\(random)"
     }
     
+    public func getSessionId() -> String? {
+        return sessionId
+    }
+    
     private func startSession() {
         guard let config = config, let sessionId = sessionId else { return }
         
@@ -112,6 +263,29 @@ public class UXCamSDK {
         trackEvent("session_start", properties: [
             "session_id": sessionId,
             "sdk_version": "1.0.0"
+        ])
+    }
+    
+    public func endSession() {
+        sessionId = nil
+        isRecording = false
+        stopVideoRecording { _ in }
+        trackEvent("session_end", properties: [
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+        ])
+    }
+    
+    public func restartSession() {
+        endSession()
+        sessionId = generateSessionId()
+        startSession()
+    }
+    
+    public func setUserProperties(userId: String?, properties: [String: Any]) {
+        // Store user properties for future events
+        trackEvent("user_properties_updated", properties: [
+            "user_id": userId ?? "",
+            "properties": properties
         ])
     }
     
@@ -399,6 +573,91 @@ public class UXCamSDK {
             stopVideoRecording()
         }
         flushEvents()
+        
+        // Restore original crash handler
+        if let originalHandler = originalUncaughtExceptionHandler {
+            NSSetUncaughtExceptionHandler(originalHandler)
+        }
+    }
+}
+
+// MARK: - UIViewController Extension for Automatic Screen Tracking
+extension UIViewController {
+    @objc func uxcam_viewDidAppear(_ animated: Bool) {
+        // Call original implementation
+        uxcam_viewDidAppear(animated)
+        
+        // Auto-track screen view
+        let screenName = String(describing: type(of: self))
+        UXCamSDK.shared.trackPageView(page: screenName, properties: [
+            "view_controller": screenName,
+            "title": title ?? "",
+            "auto_tracked": true
+        ])
+        
+        print("📱 UXCam: Auto-tracked screen: \(screenName)")
+    }
+}
+
+// MARK: - URLSessionDelegate for Automatic Network Tracking
+class UXCamURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+    weak var sdk: UXCamSDK?
+    
+    init(sdk: UXCamSDK) {
+        self.sdk = sdk
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let request = task.originalRequest,
+              let url = request.url else { return }
+        
+        let startTime = task.originalRequest?.value(forHTTPHeaderField: "X-UXCam-Start-Time")
+            .flatMap { Double($0) }
+            ?? Date().timeIntervalSince1970 * 1000
+        
+        let duration = Date().timeIntervalSince1970 * 1000 - startTime
+        
+        if let error = error {
+            // Track network error
+            sdk?.trackEvent("network_error", properties: [
+                "url": url.absoluteString,
+                "method": request.httpMethod ?? "GET",
+                "error": error.localizedDescription,
+                "duration": Int(duration),
+                "auto_tracked": true
+            ])
+        } else if let response = task.response as? HTTPURLResponse {
+            // Track successful response
+            sdk?.trackEvent("network_response", properties: [
+                "url": url.absoluteString,
+                "method": request.httpMethod ?? "GET",
+                "status_code": response.statusCode,
+                "status_text": HTTPURLResponse.localizedString(forStatusCode: response.statusCode),
+                "duration": Int(duration),
+                "success": (200...299).contains(response.statusCode),
+                "auto_tracked": true
+            ])
+        }
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        // Track request start
+        if let url = request.url {
+            var modifiedRequest = request
+            modifiedRequest.setValue("\(Date().timeIntervalSince1970 * 1000)", forHTTPHeaderField: "X-UXCam-Start-Time")
+            
+            sdk?.trackEvent("network_request", properties: [
+                "url": url.absoluteString,
+                "method": request.httpMethod ?? "GET",
+                "host": url.host ?? "",
+                "path": url.path,
+                "auto_tracked": true
+            ])
+            
+            completionHandler(modifiedRequest)
+        } else {
+            completionHandler(request)
+        }
     }
 }
 

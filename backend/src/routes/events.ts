@@ -188,5 +188,77 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
   }
 })
 
+/**
+ * GET /api/events/:projectId
+ * Get events for a project with optional filtering
+ * 
+ * Query params:
+ * - limit: number (default: 100)
+ * - offset: number (default: 0)
+ * - type: string (filter by event type)
+ * - start_date: ISO string
+ * - end_date: ISO string
+ * 
+ * Returns:
+ * {
+ *   events: [ ... ],
+ *   count: number
+ * }
+ */
+router.get('/:projectId', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.projectId
+    const limit = parseInt(req.query.limit as string) || 100
+    const offset = parseInt(req.query.offset as string) || 0
+    const eventType = req.query.type as string
+    const startDate = req.query.start_date as string
+    const endDate = req.query.end_date as string
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'projectId is required'
+      })
+    }
+
+    // Build query
+    let query = supabase
+      .from('events')
+      .select('*', { count: 'exact' })
+      .eq('project_id', projectId)
+      .order('timestamp', { ascending: false })
+      .range(offset, offset + limit - 1)
+
+    // Apply filters
+    if (eventType) {
+      query = query.eq('type', eventType)
+    }
+    if (startDate) {
+      query = query.gte('timestamp', startDate)
+    }
+    if (endDate) {
+      query = query.lte('timestamp', endDate)
+    }
+
+    const { data: events, error, count } = await query
+
+    if (error) {
+      throw new Error(`Failed to retrieve events: ${error.message}`)
+    }
+
+    res.json({
+      success: true,
+      events: events || [],
+      count: count || 0
+    })
+  } catch (error: any) {
+    console.error('Error in GET /api/events/:projectId:', error)
+    res.status(500).json({
+      error: 'Failed to retrieve events',
+      message: error.message
+    })
+  }
+})
+
 export default router
 

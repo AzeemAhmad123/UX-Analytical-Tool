@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
 import * as LZString from 'lz-string'
-import { getSessionByProjectAndSessionId, getSessionsByProject } from '../services/sessionService'
+import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById } from '../services/sessionService'
 import { getSessionSnapshots, getSessionDurationFromSnapshots } from '../services/snapshotService'
 import { supabase } from '../config/supabase'
 
@@ -555,6 +555,72 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
     console.error('Error in DELETE /api/sessions/:projectId:', error)
     res.status(500).json({
       error: 'Failed to delete sessions',
+      message: error.message
+    })
+  }
+})
+
+/**
+ * POST /api/sessions/:sessionId/end
+ * Update session with end time and calculated duration
+ */
+router.post('/:sessionId/end', async (req: Request, res: Response) => {
+  try {
+    const sessionId = String(req.params.sessionId)
+    const { duration, end_time } = req.body
+
+    if (!sessionId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'sessionId is required'
+      })
+    }
+
+    // Get session to calculate duration if not provided
+    const session = await getSessionById(sessionId)
+    if (!session) {
+      return res.status(404).json({
+        error: 'Session not found',
+        message: `Session ${sessionId} not found`
+      })
+    }
+
+    // Calculate duration if not provided
+    let calculatedDuration = duration
+    if (!calculatedDuration && session.start_time) {
+      const startTime = new Date(session.start_time).getTime()
+      const endTime = end_time ? new Date(end_time).getTime() : Date.now()
+      calculatedDuration = endTime - startTime
+    }
+
+    // Update session
+    const updateData: any = {
+      last_activity_time: end_time || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+
+    if (calculatedDuration) {
+      updateData.duration = calculatedDuration
+    }
+
+    const { error } = await supabase
+      .from('sessions')
+      .update(updateData)
+      .eq('id', sessionId)
+
+    if (error) {
+      throw new Error(`Failed to update session: ${error.message}`)
+    }
+
+    res.json({
+      success: true,
+      session_id: sessionId,
+      duration: calculatedDuration
+    })
+  } catch (error: any) {
+    console.error('Error in POST /api/sessions/:sessionId/end:', error)
+    res.status(500).json({
+      error: 'Failed to end session',
       message: error.message
     })
   }

@@ -17,4 +17,32 @@ export default defineConfig({
   optimizeDeps: {
     include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Split React and React DOM into separate chunk
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          // Split large charting library
+          'charts': ['recharts'],
+          // Split rrweb (session replay) into separate chunk
+          'rrweb': ['rrweb', 'rrweb-player'],
+          // Split Supabase client
+          'supabase': ['@supabase/supabase-js'],
+          // Split animation library
+          'animation': ['gsap'],
+          // Split UI libraries
+          'ui': ['lucide-react', 'clsx', 'tailwind-merge'],
+          // Split drag and drop libraries
+          'dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+        },
+      },
+    },
+    // Increase chunk size warning limit (optional, but helps with large apps)
+    chunkSizeWarningLimit: 1000,
+    // Enable source maps for production debugging (optional)
+    sourcemap: false,
+    // Minify options
+    minify: 'esbuild',
+  },
 })

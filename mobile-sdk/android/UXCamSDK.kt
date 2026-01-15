@@ -8,6 +8,8 @@
 
 package com.uxcam.sdk
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.media.MediaRecorder
@@ -91,6 +93,7 @@ class UXCamSDK private constructor() {
     private var config: UXCamConfig? = null
     private var sessionId: String? = null
     private var context: Context? = null
+    private var application: Application? = null
     private var isRecording = false
     private var mediaRecorder: MediaRecorder? = null
     private var mediaProjection: MediaProjection? = null
@@ -102,6 +105,12 @@ class UXCamSDK private constructor() {
     private val pendingEvents = mutableListOf<UXCamEvent>()
     private val batchSize = 10
     private var batchJob: Job? = null
+    
+    // Automatic tracking components
+    private var activityLifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
+    private var originalUncaughtExceptionHandler: Thread.UncaughtExceptionHandler? = null
+    private var networkInterceptor: UXCamNetworkInterceptor? = null
+    private var currentActivity: Activity? = null
     
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -115,6 +124,13 @@ class UXCamSDK private constructor() {
         this.context = context.applicationContext
         this.sessionId = generateSessionId()
         
+        // Get Application instance for lifecycle callbacks
+        if (context is Application) {
+            this.application = context as Application
+        } else if (context is Activity) {
+            this.application = (context as Activity).application
+        }
+        
         Log.d(TAG, "🎬 UXCam SDK initialized")
         Log.d(TAG, "   SDK Key: ${config.sdkKey.take(10)}...")
         Log.d(TAG, "   API URL: ${config.apiUrl}")
@@ -125,6 +141,119 @@ class UXCamSDK private constructor() {
         
         // Start batch timer
         startBatchTimer()
+        
+        // Setup automatic tracking
+        setupAutomaticTracking()
+    }
+    
+    // MARK: - Automatic Tracking Setup
+    private fun setupAutomaticTracking() {
+        val config = config ?: return
+        
+        if (!config.enableEventTracking) return
+        
+        // 1. Automatic Screen Transition Tracking
+        setupScreenTracking()
+        
+        // 2. Automatic Network Call Interception
+        setupNetworkTracking()
+        
+        // 3. Automatic Crash Detection
+        setupCrashTracking()
+    }
+    
+    // MARK: - Automatic Screen Transition Tracking
+    private fun setupScreenTracking() {
+        val app = application ?: return
+        
+        activityLifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                currentActivity = activity
+            }
+            
+            override fun onActivityStarted(activity: Activity) {
+                currentActivity = activity
+            }
+            
+            override fun onActivityResumed(activity: Activity) {
+                currentActivity = activity
+                // Auto-track screen view when activity resumes
+                val screenName = activity.javaClass.simpleName
+                trackPageView(screenName, mapOf(
+                    "activity" to screenName,
+                    "title" to (activity.title?.toString() ?: ""),
+                    "auto_tracked" to true
+                ))
+                Log.d(TAG, "📱 Auto-tracked screen: $screenName")
+            }
+            
+            override fun onActivityPaused(activity: Activity) {
+                trackEvent("screen_paused", mapOf(
+                    "activity" to activity.javaClass.simpleName,
+                    "auto_tracked" to true
+                ))
+            }
+            
+            override fun onActivityStopped(activity: Activity) {
+                if (currentActivity == activity) {
+                    currentActivity = null
+                }
+            }
+            
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            
+            override fun onActivityDestroyed(activity: Activity) {
+                if (currentActivity == activity) {
+                    currentActivity = null
+                }
+            }
+        }
+        
+        app.registerActivityLifecycleCallbacks(activityLifecycleCallbacks)
+        Log.d(TAG, "✅ Automatic screen tracking enabled")
+    }
+    
+    // MARK: - Automatic Network Call Interception
+    private fun setupNetworkTracking() {
+        networkInterceptor = UXCamNetworkInterceptor(this)
+        Log.d(TAG, "✅ Network interceptor created (add to OkHttpClient in your app)")
+    }
+    
+    /**
+     * Get the network interceptor to add to your OkHttpClient
+     * Usage:
+     * val client = OkHttpClient.Builder()
+     *     .addInterceptor(UXCamSDK.getInstance().getNetworkInterceptor())
+     *     .build()
+     */
+    fun getNetworkInterceptor(): Interceptor? {
+        return networkInterceptor
+    }
+    
+    // MARK: - Automatic Crash Detection
+    private fun setupCrashTracking() {
+        originalUncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        
+        Thread.setDefaultUncaughtExceptionHandler { thread, exception ->
+            // Track crash event
+            trackEvent("crash", mapOf(
+                "error" to (exception.message ?: "Unknown error"),
+                "stack_trace" to exception.stackTraceToString(),
+                "thread" to thread.name,
+                "thread_id" to thread.id,
+                "auto_tracked" to true
+            ))
+            
+            // Flush events immediately before crash
+            flushEvents()
+            
+            Log.e(TAG, "💥 Crash detected and tracked", exception)
+            
+            // Call original handler
+            originalUncaughtExceptionHandler?.uncaughtException(thread, exception)
+        }
+        
+        Log.d(TAG, "✅ Automatic crash detection enabled")
     }
     
     // MARK: - Session Management
@@ -132,6 +261,10 @@ class UXCamSDK private constructor() {
         val timestamp = System.currentTimeMillis()
         val random = UUID.randomUUID().toString().take(8)
         return "sess_${timestamp}_$random"
+    }
+    
+    fun getSessionId(): String? {
+        return sessionId
     }
     
     private fun startSession() {
@@ -142,6 +275,30 @@ class UXCamSDK private constructor() {
         trackEvent("session_start", mapOf(
             "session_id" to sessionId,
             "sdk_version" to "1.0.0"
+        ))
+    }
+    
+    fun endSession() {
+        sessionId = null
+        isRecording = false
+        stopVideoRecording()
+        trackEvent("session_end", mapOf(
+            "timestamp" to System.currentTimeMillis()
+        ))
+    }
+    
+    fun restartSession() {
+        endSession()
+        sessionId = generateSessionId()
+        startSession()
+    }
+    
+    fun setUserProperties(userId: String?, properties: Map<String, Any>) {
+        // Store user properties for future events
+        // This would be sent with each event batch
+        trackEvent("user_properties_updated", mapOf(
+            "user_id" to (userId ?: ""),
+            "properties" to properties
         ))
     }
     
@@ -462,11 +619,82 @@ class UXCamSDK private constructor() {
             stopVideoRecording()
         }
         flushEvents()
+        
+        // Unregister automatic tracking
+        application?.let { app ->
+            activityLifecycleCallbacks?.let { app.unregisterActivityLifecycleCallbacks(it) }
+        }
+        activityLifecycleCallbacks = null
+        
+        // Restore original crash handler
+        originalUncaughtExceptionHandler?.let {
+            Thread.setDefaultUncaughtExceptionHandler(it)
+        }
+        originalUncaughtExceptionHandler = null
+        
+        networkInterceptor = null
+        currentActivity = null
+        
         eventScope.cancel()
     }
     
     companion object {
         private const val TAG = "UXCamSDK"
+    }
+}
+
+// MARK: - Network Interceptor for Automatic Network Tracking
+class UXCamNetworkInterceptor(private val sdk: UXCamSDK) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val startTime = System.currentTimeMillis()
+        
+        // Track request
+        sdk.trackEvent("network_request", mapOf(
+            "url" to request.url.toString(),
+            "method" to request.method,
+            "host" to request.url.host,
+            "path" to request.url.encodedPath,
+            "timestamp" to startTime,
+            "auto_tracked" to true
+        ))
+        
+        var response: Response? = null
+        var error: Throwable? = null
+        
+        try {
+            response = chain.proceed(request)
+            val duration = System.currentTimeMillis() - startTime
+            
+            // Track successful response
+            sdk.trackEvent("network_response", mapOf(
+                "url" to request.url.toString(),
+                "method" to request.method,
+                "status_code" to response.code,
+                "status_text" to response.message,
+                "duration" to duration,
+                "response_size" to (response.body?.contentLength() ?: 0),
+                "success" to response.isSuccessful,
+                "auto_tracked" to true
+            ))
+            
+            return response
+        } catch (e: Exception) {
+            error = e
+            val duration = System.currentTimeMillis() - startTime
+            
+            // Track network error
+            sdk.trackEvent("network_error", mapOf(
+                "url" to request.url.toString(),
+                "method" to request.method,
+                "error" to (e.message ?: "Unknown error"),
+                "error_type" to e.javaClass.simpleName,
+                "duration" to duration,
+                "auto_tracked" to true
+            ))
+            
+            throw e
+        }
     }
 }
 

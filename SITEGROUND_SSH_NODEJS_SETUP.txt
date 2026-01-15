@@ -1,0 +1,263 @@
+================================================================================
+SITEGROUND SSH + NODE.JS SETUP (WORKAROUND METHOD)
+================================================================================
+
+⚠️ WARNING: This is a workaround. Not officially supported by SiteGround.
+May be unstable. Use at your own risk.
+
+================================================================================
+PREREQUISITES
+================================================================================
+
+1. SSH access enabled in SiteGround
+2. Your backend files uploaded to: api.enalyze.123fixit.com/public_html
+3. package.json file in public_html
+4. .env file in public_html
+
+================================================================================
+STEP 1: ENABLE SSH ACCESS
+================================================================================
+
+1. Go to SiteGround → Devs → SSH Keys Manager
+2. Generate new SSH key:
+   - Click "Generate New Key"
+   - Choose algorithm: RSA or Ed25519
+   - Enter passphrase (optional but recommended)
+   - Click "Generate"
+3. Download private key (save it securely!)
+4. Note your SSH details:
+   - Host: Your server hostname
+   - Port: 18765 (SiteGround uses non-standard port)
+   - User: Your SiteGround username
+
+================================================================================
+STEP 2: CONNECT VIA SSH
+================================================================================
+
+WINDOWS (Using PuTTY):
+-----------------------
+1. Download PuTTY: https://www.putty.org/
+2. Open PuTTY
+3. Enter:
+   Host: your-server.siteground.com
+   Port: 18765
+4. Go to: Connection → SSH → Auth
+5. Browse and select your private key (.ppk file)
+6. Click "Open"
+7. Enter username when prompted
+8. Enter passphrase if you set one
+
+MAC/LINUX:
+----------
+ssh -p 18765 -i /path/to/private_key username@your-server.siteground.com
+
+================================================================================
+STEP 3: INSTALL NODE.JS IN USER DIRECTORY
+================================================================================
+
+Once connected via SSH:
+
+1. Check current directory:
+   pwd
+   (Should be in your home directory: ~)
+
+2. Download Node.js:
+   cd ~
+   wget https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz
+
+3. Extract:
+   tar -xvf node-v20.11.0-linux-x64.tar.xz
+
+4. Rename for easier use:
+   mv node-v20.11.0-linux-x64 nodejs
+
+5. Create bin directory:
+   mkdir -p ~/bin
+
+6. Copy Node.js binaries:
+   cp nodejs/bin/node ~/bin/
+   cp nodejs/bin/npm ~/bin/
+   cp -r nodejs/lib/node_modules ~/lib/
+
+7. Add to PATH:
+   echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc
+   source ~/.bashrc
+
+8. Verify installation:
+   node --version
+   npm --version
+
+================================================================================
+STEP 4: INSTALL BACKEND DEPENDENCIES
+================================================================================
+
+1. Navigate to backend directory:
+   cd ~/api.enalyze.123fixit.com/public_html
+
+2. Install dependencies:
+   npm install
+
+   (This may take a few minutes)
+
+3. Verify package.json is there:
+   ls -la package.json
+
+================================================================================
+STEP 5: RUN BACKEND (TEST)
+================================================================================
+
+1. Make sure .env file exists:
+   ls -la .env
+
+2. Test run:
+   node index.js
+
+3. You should see:
+   🚀 Backend server running on http://0.0.0.0:3001
+
+4. Test in another terminal:
+   curl http://localhost:3001/health
+
+5. If it works, stop it (Ctrl+C)
+
+================================================================================
+STEP 6: KEEP BACKEND RUNNING (CHALLENGING PART)
+================================================================================
+
+OPTION A: Using screen (Recommended for testing)
+--------------------------------------------------
+1. Start screen session:
+   screen -S backend
+
+2. Run backend:
+   node index.js
+
+3. Detach from screen:
+   Press: Ctrl+A then D
+
+4. Reattach later:
+   screen -r backend
+
+5. Kill screen session:
+   screen -X -S backend quit
+
+OPTION B: Using nohup
+----------------------
+1. Run with nohup:
+   nohup node index.js > backend.log 2>&1 &
+
+2. Check if running:
+   ps aux | grep node
+
+3. View logs:
+   tail -f backend.log
+
+4. Stop process:
+   pkill -f "node index.js"
+
+OPTION C: Using PM2 (If you can install it)
+--------------------------------------------
+1. Install PM2 globally:
+   npm install -g pm2
+
+2. Start backend:
+   pm2 start index.js --name backend
+
+3. Save PM2 configuration:
+   pm2 save
+
+4. Check status:
+   pm2 status
+
+5. View logs:
+   pm2 logs backend
+
+⚠️ PROBLEM: PM2 may not survive server reboots without systemd access
+
+================================================================================
+STEP 7: HANDLE PORT RESTRICTIONS
+================================================================================
+
+SiteGround may not allow listening on port 3001 directly.
+
+SOLUTION: Use .htaccess reverse proxy
+--------------------------------------
+
+1. Create/Edit .htaccess in public_html:
+   (This requires mod_proxy to be enabled)
+
+   <IfModule mod_proxy.c>
+     ProxyPreserveHost On
+     ProxyPass /api http://localhost:3001/api
+     ProxyPassReverse /api http://localhost:3001/api
+   </IfModule>
+
+2. Backend should listen on localhost:3001
+3. External requests go to: https://api.enalyze.123fixit.com/api
+4. .htaccess proxies to localhost:3001
+
+⚠️ NOTE: mod_proxy might not be enabled on shared hosting
+
+================================================================================
+MAJOR LIMITATIONS & RISKS
+================================================================================
+
+❌ PROCESS MAY DIE:
+- When you disconnect SSH
+- When server restarts
+- When SiteGround kills it (resource limits)
+- No automatic restart
+
+❌ PORT RESTRICTIONS:
+- May not be able to use port 3001
+- Need reverse proxy (may not work)
+- Limited port access
+
+❌ RESOURCE LIMITS:
+- Shared hosting has memory/CPU limits
+- Node.js apps may exceed limits
+- Process may be killed automatically
+
+❌ NO OFFICIAL SUPPORT:
+- SiteGround won't help if it breaks
+- You're on your own
+- May violate terms of service
+
+❌ NOT PRODUCTION READY:
+- Unstable
+- Requires constant monitoring
+- May break at any time
+
+================================================================================
+BETTER ALTERNATIVE
+================================================================================
+
+Instead of fighting with SiteGround limitations:
+
+✅ Use Railway.app (5 minutes, free, reliable):
+1. Sign up: railway.app
+2. Deploy backend
+3. Get URL
+4. Update frontend
+5. Done!
+
+This is MUCH easier and more reliable than SSH workarounds.
+
+================================================================================
+FINAL VERDICT
+================================================================================
+
+SSH Workaround:
+- ⚠️ Possible but unstable
+- ⚠️ Requires constant maintenance
+- ⚠️ May break at any time
+- ⚠️ Not recommended for production
+
+Railway.app:
+- ✅ 5 minutes setup
+- ✅ Free forever
+- ✅ Professional hosting
+- ✅ Reliable and stable
+- ✅ Recommended!
+
+================================================================================

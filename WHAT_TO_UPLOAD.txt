@@ -1,0 +1,122 @@
+================================================================================
+WHAT TO UPLOAD TO SITEGROUND - CLEAR INSTRUCTIONS
+================================================================================
+
+✅ UPLOAD: ONLY the CONTENTS of frontend/dist/ folder
+❌ DO NOT UPLOAD: The entire frontend folder
+
+================================================================================
+STEP-BY-STEP UPLOAD INSTRUCTIONS
+================================================================================
+
+1. Open File Manager in SiteGround
+2. Navigate to: enalyze.123fixit.com/public_html
+3. Delete any existing files (if any)
+
+4. Go to your computer:
+   Location: C:\Users\AZEEM AHMAD\Downloads\uxcamm\frontend\dist\
+
+5. Upload ALL files and folders from inside the "dist" folder:
+
+   ✅ UPLOAD THESE:
+   
+   📁 assets/ (folder)
+      - animation-DDlvirwQ.js
+      - charts-YiBoL5_E.js
+      - dnd-i4cH8F_M.js
+      - index-BgeeE5aS.js
+      - index-C3PzCRnl.css
+      - react-vendor-Cv12zEeq.js
+      - rrweb-D6ahshZv.js
+      - supabase-BUiByx9r.js
+      - ui-DVZrIM1w.js
+   
+   📁 images/ (folder with all image files)
+   
+   📄 index.html (main HTML file - REQUIRED!)
+   📄 uxcam-sdk-rrweb.js (SDK file)
+   📄 uxcam-sdk-rrweb-production.js
+   📄 uxcam-sdk.js
+   📄 uxcam-sdk-production.js
+   📄 vite.svg
+   📄 funnel-test.html (if exists)
+
+================================================================================
+IMPORTANT: Folder Structure After Upload
+================================================================================
+
+Your public_html should look like this:
+
+enalyze.123fixit.com/
+  └── public_html/
+      ├── index.html          ← Main file
+      ├── assets/             ← JavaScript & CSS files
+      │   ├── index-BgeeE5aS.js
+      │   ├── index-C3PzCRnl.css
+      │   └── ... (other JS files)
+      ├── images/             ← All images
+      │   └── ... (all image files)
+      ├── uxcam-sdk-rrweb.js
+      └── ... (other SDK files)
+
+================================================================================
+HOW TO UPLOAD (Two Methods)
+================================================================================
+
+METHOD 1: Upload via File Manager (Recommended)
+------------------------------------------------
+1. In SiteGround File Manager, go to: enalyze.123fixit.com/public_html
+2. Click "Upload" button
+3. Select ALL files and folders from: frontend/dist/
+4. Upload them
+5. Make sure folder structure is preserved
+
+METHOD 2: Upload via ZIP (Easier for many files)
+-------------------------------------------------
+1. On your computer, go to: frontend/dist/
+2. Select ALL files and folders
+3. Right-click → "Send to" → "Compressed (zipped) folder"
+4. Name it: frontend-dist.zip
+5. In SiteGround File Manager, upload the ZIP file
+6. Right-click the ZIP file → "Extract"
+7. Delete the ZIP file after extraction
+
+================================================================================
+AFTER UPLOAD - Create .htaccess File
+================================================================================
+
+1. In SiteGround File Manager, go to: enalyze.123fixit.com/public_html
+2. Click "Create New File"
+3. Name it: .htaccess
+4. Add this content:
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  RewriteRule ^index\.html$ - [L]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule . /index.html [L]
+</IfModule>
+
+5. Save the file
+
+================================================================================
+VERIFICATION
+================================================================================
+
+After uploading, visit: https://enalyze.123fixit.com
+
+✅ Should see: Your React app loading
+❌ If you see error: Check browser console (F12) for issues
+
+================================================================================
+SUMMARY
+================================================================================
+
+✅ UPLOAD: Everything inside frontend/dist/ folder
+❌ DO NOT: Upload the frontend folder itself
+✅ STRUCTURE: Keep the same folder structure (assets/, images/, etc.)
+✅ REQUIRED: index.html must be in public_html root
+
+================================================================================

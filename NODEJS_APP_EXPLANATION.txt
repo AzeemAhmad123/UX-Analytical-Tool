@@ -1,0 +1,115 @@
+================================================================================
+WHY CREATE A NODE.JS APP? - EXPLANATION
+================================================================================
+
+📌 WHY WE NEED TO CREATE A NODE.JS APP:
+----------------------------------------
+
+Your backend files (index.js, routes, services) are JavaScript files that need
+to RUN on the server, not just be served as static files.
+
+Think of it like this:
+- Frontend files (HTML, CSS, JS) = Static files → Just need to be served
+- Backend files (Node.js) = Application code → Needs to RUN and process requests
+
+Without creating a Node.js app:
+❌ Your files just sit there doing nothing
+❌ No server running to handle API requests
+❌ https://api.enalyze.123fixit.com won't work
+
+With a Node.js app:
+✅ Server runs your code continuously
+✅ Handles API requests (GET, POST, etc.)
+✅ Connects to database
+✅ Processes requests and returns responses
+
+================================================================================
+HOW TO CREATE NODE.JS APP IN SITEGROUND
+================================================================================
+
+METHOD 1: Using SiteGround Devs Section (Recommended)
+------------------------------------------------------
+
+1. In SiteGround Dashboard, click "Devs" in the left menu
+2. Look for "Node.js" or "Application Manager" option
+3. Click "Create Node.js App" or "Add Application"
+
+4. Fill in the form:
+   - App Name: uxcam-backend (or any name)
+   - Subdomain: api.enalyze.123fixit.com
+   - Node.js Version: 20.x (or latest available)
+   - App Root: /public_html (or leave default)
+   - Start Command: node dist/index.js
+     (OR if files are directly in public_html: node index.js)
+
+5. Click "Create" or "Save"
+
+6. The app will start automatically
+
+METHOD 2: Using Application Manager (Alternative)
+---------------------------------------------------
+
+1. Go to: Site → Application Manager
+2. Click "Create Application"
+3. Select "Node.js"
+4. Follow similar steps as Method 1
+
+================================================================================
+IMPORTANT: FILE LOCATION
+================================================================================
+
+Your files are in: api.enalyze.123fixit.com/public_html/
+
+If your files are directly in public_html:
+- Start Command: node index.js
+
+If your files are in public_html/dist/:
+- Start Command: node dist/index.js
+
+Based on your upload, your files are directly in public_html, so use:
+Start Command: node index.js
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+After creating the Node.js app, you need to set environment variables:
+
+1. In the Node.js app settings, find "Environment Variables" or ".env"
+2. Add these variables:
+
+   SUPABASE_URL=https://xrvmiyrsxwrruhdljkoz.supabase.co
+   SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1peXJzeHdycnVoZGxqa296Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NzQ1MjQyNCwiZXhwIjoyMDgzMDI4NDI0fQ.npCUwizEV1NHNwKJvv7mvEE6PGCy6jGBIOGUMZNQSKc
+   PORT=3001
+   NODE_ENV=production
+   CORS_ORIGINS=https://enalyze.123fixit.com,http://localhost:5173
+   FRONTEND_URL=https://enalyze.123fixit.com
+
+OR create a .env file in public_html with the same content.
+
+================================================================================
+VERIFICATION
+================================================================================
+
+After creating the app and setting environment variables:
+
+1. Make sure the app is "Running" or "Started"
+2. Visit: https://api.enalyze.123fixit.com/health
+3. Should see: {"status":"ok","timestamp":"..."}
+
+If you see an error, check:
+- App is started/running
+- Start command is correct (node index.js)
+- Environment variables are set
+- Files are in the correct location
+
+================================================================================
+SUMMARY
+================================================================================
+
+✅ WHY: Node.js files need a runtime to execute, not just serve as static files
+✅ HOW: Create Node.js app in SiteGround Devs section
+✅ CONFIGURE: Set start command and environment variables
+✅ TEST: Visit /health endpoint to verify it's working
+
+================================================================================

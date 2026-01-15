@@ -1,0 +1,140 @@
+================================================================================
+SITEGROUND NODE.JS SETUP - YOUR OPTIONS
+================================================================================
+
+⚠️ IMPORTANT: SiteGround's "App Installer" is for pre-built apps only.
+For custom Node.js apps, you need a different approach.
+
+================================================================================
+OPTION 1: Check for Node.js in Devs Section (First Try)
+================================================================================
+
+1. In the "Devs" section, look for:
+   - "Node.js" (direct option)
+   - "Node.js Selector"
+   - "Application Manager"
+   - "Custom Applications"
+
+2. If you see any of these, click it and create your app there.
+
+================================================================================
+OPTION 2: Use SSH (If Node.js Option Not Available)
+================================================================================
+
+If SiteGround doesn't have a Node.js app manager, you can use SSH:
+
+1. In "Devs" section, click "SSH Keys Manager"
+2. Set up SSH access
+3. Connect via SSH terminal
+4. Navigate to: cd ~/api.enalyze.123fixit.com/public_html
+5. Run: npm install
+6. Run: node index.js (or use PM2 to keep it running)
+
+But this requires the app to run continuously, which may not work on shared hosting.
+
+================================================================================
+OPTION 3: SiteGround May Not Support Node.js (Most Likely)
+================================================================================
+
+⚠️ SiteGround shared hosting typically does NOT support Node.js applications.
+
+They support:
+✅ PHP applications
+✅ WordPress, Joomla, etc.
+❌ Custom Node.js apps (usually not supported)
+
+================================================================================
+RECOMMENDED SOLUTION: Use Alternative Hosting for Backend
+================================================================================
+
+Since SiteGround may not support Node.js, use a free Node.js hosting service:
+
+OPTION A: Railway.app (Recommended - Free Tier Available)
+-----------------------------------------------------------
+1. Go to: https://railway.app
+2. Sign up (free)
+3. Click "New Project"
+4. Select "Deploy from GitHub" or "Empty Project"
+5. Upload your backend files
+6. Set environment variables
+7. Deploy - get a URL like: https://your-app.railway.app
+8. Update frontend .env: VITE_API_URL=https://your-app.railway.app
+
+OPTION B: Render.com (Free Tier Available)
+------------------------------------------
+1. Go to: https://render.com
+2. Sign up (free)
+3. Click "New +" → "Web Service"
+4. Connect GitHub or upload files
+5. Set start command: node index.js
+6. Set environment variables
+7. Deploy - get a URL like: https://your-app.onrender.com
+
+OPTION C: Vercel (Free Tier Available)
+---------------------------------------
+1. Go to: https://vercel.com
+2. Sign up (free)
+3. Import your backend project
+4. Configure build settings
+5. Deploy - get a URL like: https://your-app.vercel.app
+
+================================================================================
+QUICK DECISION GUIDE
+================================================================================
+
+1. Check SiteGround Devs section for "Node.js" option
+   → If found: Use it
+   → If NOT found: Continue below
+
+2. SiteGround doesn't support Node.js?
+   → Use Railway.app or Render.com (both free)
+
+3. Update frontend .env file:
+   VITE_API_URL=https://your-new-backend-url.com
+
+================================================================================
+WHAT TO DO RIGHT NOW
+================================================================================
+
+STEP 1: Check SiteGround
+-------------------------
+Look in "Devs" section for:
+- "Node.js" option
+- "Application Manager" with Node.js
+- Any mention of Node.js
+
+STEP 2: If No Node.js Option Found
+-----------------------------------
+Use Railway.app (easiest free option):
+
+1. Go to: https://railway.app
+2. Sign up with GitHub/Email
+3. Create new project
+4. Upload backend files OR connect GitHub
+5. Set environment variables
+6. Deploy
+7. Get your backend URL
+8. Update frontend .env with new URL
+
+STEP 3: Update Frontend
+------------------------
+After getting backend URL, update:
+frontend/.env:
+VITE_API_URL=https://your-backend-url.railway.app
+
+Then rebuild frontend:
+cd frontend
+npm run build
+
+Re-upload to SiteGround.
+
+================================================================================
+SUMMARY
+================================================================================
+
+✅ Frontend: Deploy to SiteGround (enalyze.123fixit.com) - DONE
+❌ Backend: SiteGround may not support Node.js
+✅ Solution: Use Railway.app or Render.com for backend (FREE)
+✅ Then: Update frontend to point to new backend URL
+
+================================================================================

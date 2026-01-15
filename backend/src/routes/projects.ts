@@ -63,7 +63,7 @@ router.post('/', async (req: Request, res: Response) => {
       throw new Error('Failed to generate unique SDK key after multiple attempts')
     }
 
-    // Create project
+    // Create project (default to active)
     const { data: project, error } = await supabase
       .from('projects')
       .insert({
@@ -71,7 +71,8 @@ router.post('/', async (req: Request, res: Response) => {
         description: description?.trim() || null,
         platform: platformValue,
         sdk_key: sdkKey,
-        user_id: user_id || null
+        user_id: user_id || null,
+        is_active: true // New projects are active by default
       })
       .select()
       .single()
@@ -112,7 +113,7 @@ router.get('/', async (req: Request, res: Response) => {
     // For now, return all projects (will be restricted in production)
     const { data: projects, error } = await supabase
       .from('projects')
-      .select('id, name, description, sdk_key, platform, created_at, updated_at')
+      .select('id, name, description, sdk_key, platform, is_active, created_at, updated_at')
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -134,6 +135,68 @@ router.get('/', async (req: Request, res: Response) => {
 })
 
 /**
+ * PATCH /api/projects/:id/toggle-active
+ * Toggle project active/inactive status
+ * 
+ * This allows users to turn projects on/off without deleting them.
+ * Inactive projects won't appear in data views but are preserved.
+ * 
+ * NOTE: This route MUST come before router.get('/:id') to avoid route conflicts
+ */
+router.patch('/:id/toggle-active', async (req: Request, res: Response) => {
+  try {
+    const projectId = req.params.id
+
+    if (!projectId) {
+      return res.status(400).json({
+        error: 'Missing required parameter',
+        message: 'Project ID is required'
+      })
+    }
+
+    // Get current project status
+    const { data: project, error: findError } = await supabase
+      .from('projects')
+      .select('id, name, is_active')
+      .eq('id', projectId)
+      .single()
+
+    if (findError || !project) {
+      return res.status(404).json({
+        error: 'Project not found',
+        message: `Project ${projectId} not found`
+      })
+    }
+
+    // Toggle is_active status
+    const newStatus = !project.is_active
+
+    const { data: updatedProject, error: updateError } = await supabase
+      .from('projects')
+      .update({ is_active: newStatus, updated_at: new Date().toISOString() })
+      .eq('id', projectId)
+      .select()
+      .single()
+
+    if (updateError) {
+      throw new Error(`Failed to update project: ${updateError.message}`)
+    }
+
+    res.json({
+      success: true,
+      project: updatedProject,
+      message: `Project "${project.name}" is now ${newStatus ? 'active' : 'inactive'}`
+    })
+  } catch (error: any) {
+    console.error('Error in PATCH /api/projects/:id/toggle-active:', error)
+    res.status(500).json({
+      error: 'Failed to toggle project status',
+      message: error.message
+    })
+  }
+})
+
+/**
  * GET /api/projects/:id
  * Get a specific project by ID
  */
@@ -143,7 +206,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 
     const { data: project, error } = await supabase
       .from('projects')
-      .select('id, name, description, sdk_key, platform, created_at, updated_at')
+      .select('id, name, description, sdk_key, platform, is_active, created_at, updated_at')
       .eq('id', projectId)
       .single()
 

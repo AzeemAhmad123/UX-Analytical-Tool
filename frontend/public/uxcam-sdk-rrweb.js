@@ -1008,10 +1008,31 @@
           }
         }
         
-        // Track session end
+        // Calculate session duration
+        const sessionDuration = Date.now() - sessionStartTime;
+        
+        // Track session end with duration
         trackEvent('session_end', {
-          duration: Date.now() - sessionStartTime
+          duration: sessionDuration
         });
+        
+        // Send session duration update to backend
+        if (sessionDbId && config.apiUrl) {
+          fetch(`${config.apiUrl}/api/sessions/${sessionDbId}/end`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              duration: sessionDuration,
+              end_time: new Date().toISOString()
+            })
+          }).catch(err => {
+            if (window.UXCamSDK && window.UXCamSDK.debug) {
+              console.warn('UXCam SDK: Failed to update session duration', err);
+            }
+          });
+        }
         
         // Flush remaining data
         flushEvents();
@@ -1026,8 +1047,9 @@
         }
         
         sessionId = null;
+        sessionDbId = null;
         if (window.UXCamSDK && window.UXCamSDK.debug) {
-          console.log('UXCam: Session ended');
+          console.log('UXCam: Session ended', { duration: sessionDuration });
         }
       }, null, null, 'endSession failed');
     }
@@ -1181,7 +1203,7 @@
     
     // Inactivity detection - stop recording if user is inactive
     let inactivityTimer = null;
-    const INACTIVITY_TIMEOUT = 30 * 1000; // 30 seconds of inactivity
+    const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes of inactivity (matching session timeout)
     
     function resetInactivityTimer() {
       if (inactivityTimer) {
@@ -1191,7 +1213,7 @@
       // Only set timer if we have an active session
       if (sessionId && stopRecording) {
         inactivityTimer = setTimeout(() => {
-          console.log('UXCam SDK: User inactive for 30 seconds, ending session');
+          console.log('UXCam SDK: User inactive for 30 minutes, ending session');
           endSession();
         }, INACTIVITY_TIMEOUT);
       }
@@ -1333,6 +1355,114 @@
               reason: event.reason ? event.reason.toString() : 'Unknown error'
             });
           });
+          
+          // ============================================
+          // NETWORK CALLS TRACKING
+          // ============================================
+          // Intercept fetch() API calls
+          const originalFetch = window.fetch;
+          window.fetch = function(...args) {
+            const startTime = Date.now();
+            const url = typeof args[0] === 'string' ? args[0] : args[0].url || args[0].toString();
+            const method = args[1]?.method || 'GET';
+            
+            // Track request start
+            trackEvent('network_request', {
+              url: url,
+              method: method,
+              timestamp: new Date().toISOString(),
+              status: 'pending'
+            });
+            
+            // Call original fetch
+            const fetchPromise = originalFetch.apply(this, args);
+            
+            // Track response
+            fetchPromise
+              .then(response => {
+                const duration = Date.now() - startTime;
+                trackEvent('network_response', {
+                  url: url,
+                  method: method,
+                  status: response.status,
+                  statusText: response.statusText,
+                  duration: duration,
+                  timestamp: new Date().toISOString(),
+                  success: response.ok
+                });
+                return response;
+              })
+              .catch(error => {
+                const duration = Date.now() - startTime;
+                trackEvent('network_error', {
+                  url: url,
+                  method: method,
+                  error: error.message || error.toString(),
+                  duration: duration,
+                  timestamp: new Date().toISOString()
+                });
+                throw error;
+              });
+            
+            return fetchPromise;
+          };
+          
+          // Intercept XMLHttpRequest
+          const originalXHROpen = XMLHttpRequest.prototype.open;
+          const originalXHRSend = XMLHttpRequest.prototype.send;
+          
+          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+            this._uxcam_method = method;
+            this._uxcam_url = url;
+            this._uxcam_startTime = Date.now();
+            return originalXHROpen.apply(this, [method, url, ...rest]);
+          };
+          
+          XMLHttpRequest.prototype.send = function(...args) {
+            const xhr = this;
+            const url = xhr._uxcam_url || '';
+            const method = xhr._uxcam_method || 'GET';
+            const startTime = xhr._uxcam_startTime || Date.now();
+            
+            // Track request
+            trackEvent('network_request', {
+              url: url,
+              method: method,
+              timestamp: new Date().toISOString(),
+              status: 'pending',
+              type: 'xhr'
+            });
+            
+            // Track response
+            xhr.addEventListener('loadend', function() {
+              const duration = Date.now() - startTime;
+              trackEvent('network_response', {
+                url: url,
+                method: method,
+                status: xhr.status,
+                statusText: xhr.statusText,
+                duration: duration,
+                timestamp: new Date().toISOString(),
+                success: xhr.status >= 200 && xhr.status < 400,
+                type: 'xhr'
+              });
+            });
+            
+            // Track errors
+            xhr.addEventListener('error', function() {
+              const duration = Date.now() - startTime;
+              trackEvent('network_error', {
+                url: url,
+                method: method,
+                error: 'Network error',
+                duration: duration,
+                timestamp: new Date().toISOString(),
+                type: 'xhr'
+              });
+            });
+            
+            return originalXHRSend.apply(this, args);
+          };
 
           // Check session timeout periodically
           setInterval(checkSessionTimeout, 60000); // Check every minute

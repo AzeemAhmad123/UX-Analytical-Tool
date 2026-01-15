@@ -55,6 +55,7 @@ export interface FunnelDefinition {
   form_url?: string
   time_window_hours?: number // Time window for funnel completion (e.g., 24 hours)
   track_first_time_users?: boolean // Track first-time vs returning users
+  calculation_mode?: 'sessions' | 'users' // How to calculate funnel: by sessions or unique users
   created_at: string
   updated_at: string
 }
@@ -271,6 +272,54 @@ export async function analyzeFunnel(
       // Apply step condition
       if (step.condition.type === 'page_view') {
         query = query.eq('type', 'page_view')
+        
+        // Smart URL/path matching for page_view steps
+        // If no explicit URL/path filter is set, try to match by step name
+        const hasUrlFilter = step.condition.data && (step.condition.data.url || step.condition.data.path)
+        if (!hasUrlFilter) {
+          // Try to match step name to common URL patterns
+          const stepName = step.name.toLowerCase().trim()
+          
+          // Common page name to path mappings
+          const pathMappings: Record<string, string[]> = {
+            'home': ['/', '/home', '/index'],
+            'cart': ['/cart', '/basket', '/shopping-cart'],
+            'checkout': ['/checkout', '/payment', '/pay'],
+            'product': ['/product', '/products', '/item', '/items'],
+            'info': ['/info', '/information', '/about'],
+            'success': ['/success', '/thank-you', '/thankyou', '/complete', '/completed'],
+            'payment': ['/payment', '/pay', '/checkout'],
+            'signup': ['/signup', '/register', '/registration'],
+            'login': ['/login', '/signin', '/sign-in'],
+            'profile': ['/profile', '/account', '/user']
+          }
+          
+          // Check if step name matches a known pattern
+          let matchedPaths: string[] = []
+          for (const [key, paths] of Object.entries(pathMappings)) {
+            if (stepName.includes(key) || key.includes(stepName)) {
+              matchedPaths = paths
+              break
+            }
+          }
+          
+          // If no mapping found, try to construct path from step name
+          if (matchedPaths.length === 0) {
+            // Convert step name to path format (e.g., "product page" -> "/product-page")
+            const pathFromName = '/' + stepName.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+            matchedPaths = [pathFromName, pathFromName + '/']
+          }
+          
+          // For Supabase, we'll filter by the first path using contains
+          // We'll do additional filtering in memory after fetching
+          if (matchedPaths.length > 0) {
+            // Try to match the first path in the data->path or data->url field
+            // Use contains for partial matching
+            const primaryPath = matchedPaths[0]
+            // Note: Supabase JSONB querying is limited, so we'll filter in memory
+            // For now, we'll add this as a note and filter after fetching
+          }
+        }
       } else if (step.condition.type === 'event') {
         query = query.eq('type', step.condition.event_type)
       } else if (step.condition.type === 'form_field') {
@@ -492,12 +541,68 @@ export async function analyzeFunnel(
         throw error
       }
 
-      // Apply time window filter if set
+      // Smart path matching for page_view steps (filter in memory)
       let filteredEvents = events || []
+      if (step.condition.type === 'page_view' && events && events.length > 0) {
+        const hasUrlFilter = step.condition.data && (step.condition.data.url || step.condition.data.path)
+        if (!hasUrlFilter) {
+          // Try to match step name to URL paths
+          const stepName = step.name.toLowerCase().trim()
+          
+          // Common page name to path mappings
+          const pathMappings: Record<string, string[]> = {
+            'home': ['/', '/home', '/index'],
+            'cart': ['/cart', '/basket', '/shopping-cart'],
+            'checkout': ['/checkout', '/payment', '/pay'],
+            'product': ['/product', '/products', '/item', '/items'],
+            'info': ['/info', '/information', '/about'],
+            'success': ['/success', '/thank-you', '/thankyou', '/complete', '/completed', '/payment-completed'],
+            'payment': ['/payment', '/pay', '/checkout'],
+            'signup': ['/signup', '/register', '/registration'],
+            'login': ['/login', '/signin', '/sign-in'],
+            'profile': ['/profile', '/account', '/user']
+          }
+          
+          // Find matching paths
+          let matchedPaths: string[] = []
+          for (const [key, paths] of Object.entries(pathMappings)) {
+            if (stepName.includes(key) || key.includes(stepName)) {
+              matchedPaths = paths
+              break
+            }
+          }
+          
+          // If no mapping found, construct path from step name
+          if (matchedPaths.length === 0) {
+            const pathFromName = '/' + stepName.replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+            matchedPaths = [pathFromName, pathFromName + '/']
+          }
+          
+          // Filter events by matching path or URL
+          filteredEvents = events.filter((event: any) => {
+            const eventPath = (event.data?.path || '').toLowerCase()
+            const eventUrl = (event.data?.url || '').toLowerCase()
+            
+            // Check if event path/URL matches any of the expected paths
+            return matchedPaths.some(path => {
+              const pathLower = path.toLowerCase()
+              return eventPath.includes(pathLower) || 
+                     eventUrl.includes(pathLower) ||
+                     eventPath === pathLower ||
+                     eventUrl.includes(pathLower + '/') ||
+                     (pathLower === '/' && (eventPath === '/' || eventPath === ''))
+            })
+          })
+          
+          console.log(`[Funnel] Step "${step.name}": Filtered ${filteredEvents.length} events from ${events.length} using paths: ${matchedPaths.join(', ')}`)
+        }
+      }
+
+      // Apply time window filter if set
       if (timeWindowMs && !isFirstStep && previousStepSessions) {
         // For non-first steps, check if events occur within time window from previous step
         const previousStepEventList = stepEvents[i - 1] || []
-        const currentStepEventList = events || []
+        const currentStepEventList = filteredEvents || []
         
         // Group by session and check time window
         const sessionStepTimes = new Map<string, { prev: number; curr: number }>()
@@ -534,7 +639,20 @@ export async function analyzeFunnel(
       stepEvents.push(filteredEvents.map(e => ({ session_id: e.session_id, timestamp: e.timestamp })))
 
       // Get unique sessions for this step
-      let sessionIds = filteredEvents.map(e => e.session_id) || []
+      let currentStepSessions = new Set(filteredEvents.map(e => e.session_id))
+      let count = currentStepSessions.size
+      
+      // Debug logging
+      console.log(`[Funnel] Step ${step.order} (${step.name}):`, {
+        totalEvents: events?.length || 0,
+        filteredEvents: filteredEvents.length,
+        uniqueSessions: count,
+        previousStepSessions: previousStepSessions?.size || 0,
+        stepType: step.condition.type,
+        hasDataFilter: !!step.condition.data
+      })
+      
+      let sessionIds = Array.from(currentStepSessions)
       
       // Apply additional filters (country, device, app version)
       if (sessionIds.length > 0 && (countryFilter || deviceFilter || appVersionFilter)) {
@@ -635,8 +753,9 @@ export async function analyzeFunnel(
         sessionIds = filteredSessionIds
       }
       
-      const currentStepSessions = new Set(sessionIds)
-      const count = currentStepSessions.size
+      // Update currentStepSessions with filtered sessionIds
+      currentStepSessions = new Set(sessionIds)
+      count = currentStepSessions.size
       
       // Track dropped sessions (for session replay links)
       const droppedSessions: string[] = []
@@ -758,11 +877,48 @@ export async function analyzeFunnel(
         returningUsers = userTypes.returning
       }
 
+      // Calculate users vs sessions based on calculation_mode
+      let usersCount = count
+      let sessionsCount = count
+      
+      if (funnel.calculation_mode === 'users' && currentStepSessions.size > 0) {
+        // For user-based calculation, fetch sessions to get user IDs and deduplicate
+        const sessionIdsArray = Array.from(currentStepSessions)
+        const { data: sessionsData } = await supabase
+          .from('sessions')
+          .select('id, device_info')
+          .in('id', sessionIdsArray)
+          .limit(1000) // Limit for performance
+        
+        if (sessionsData) {
+          const uniqueUserIds = new Set<string>()
+          sessionsData.forEach(session => {
+            const deviceInfo = session.device_info || {}
+            // Extract user identifier (same logic as in analytics)
+            if (deviceInfo.userId) {
+              uniqueUserIds.add(`user_${deviceInfo.userId}`)
+            } else if (deviceInfo.anonymousId) {
+              uniqueUserIds.add(`anon_${deviceInfo.anonymousId}`)
+            } else {
+              // Fallback to session ID prefix
+              const sessionId = session.id || ''
+              uniqueUserIds.add(`session_${sessionId.split('_')[0] || sessionId}`)
+            }
+          })
+          usersCount = uniqueUserIds.size
+          sessionsCount = currentStepSessions.size
+        }
+      } else {
+        // Session-based (default): count sessions
+        usersCount = count
+        sessionsCount = count
+      }
+      
       stepResults.push({
         order: step.order,
         name: step.name,
-        users: count,
-        sessions: count,
+        users: usersCount,
+        sessions: sessionsCount,
         conversion_rate: conversionRate,
         drop_off_rate: dropOffRate,
         avg_time_to_complete: avgTimeToComplete,

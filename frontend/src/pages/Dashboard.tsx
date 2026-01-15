@@ -3,7 +3,7 @@ import { useNavigate, Routes, Route } from 'react-router-dom'
 import { auth } from '../config/supabase'
 import { DashboardSidebar } from '../components/dashboard/DashboardSidebar'
 import { DashboardHome } from '../components/dashboard/DashboardHome'
-import { AnalyticsDashboard } from './dashboard/AnalyticsDashboard'
+import { OverviewDashboard } from '../components/dashboard/OverviewDashboard'
 import { SessionsList } from './dashboard/SessionsList'
 import { SessionReplayPlayer } from './dashboard/SessionReplayPlayer'
 import { Heatmaps } from './dashboard/Heatmaps'
@@ -70,8 +70,9 @@ const Dashboard = () => {
       <div className={`dashboard-main ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <main className="dashboard-content">
           <Routes>
-            <Route index element={<AnalyticsDashboard />} />
+            <Route index element={<OverviewDashboard />} />
             <Route path="home" element={<DashboardHome />} />
+            <Route path="overview" element={<OverviewDashboard />} />
             <Route path="sessions" element={<SessionsList />} />
             <Route path="sessions/list" element={<SessionsList />} />
             <Route path="sessions/:projectId/:sessionId" element={<SessionReplayPlayer />} />

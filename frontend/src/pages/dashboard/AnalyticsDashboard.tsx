@@ -50,7 +50,11 @@ export function AnalyticsDashboard() {
       const response = await projectsAPI.getAll()
       const projectsList = response.projects || []
       setProjects(projectsList)
-      if (projectsList.length > 0) {
+      // Prefer active projects, but allow selecting inactive ones
+      const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
+      if (activeProjects.length > 0) {
+        setSelectedProject(activeProjects[0].id)
+      } else if (projectsList.length > 0) {
         setSelectedProject(projectsList[0].id)
       }
     } catch (error) {
@@ -145,9 +149,24 @@ export function AnalyticsDashboard() {
               value={selectedProject || ''}
               onChange={(e) => setSelectedProject(e.target.value)}
             >
-              {projects.map(project => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
+              {projects
+                .filter((p: any) => p.is_active !== false)
+                .map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              {projects.some((p: any) => p.is_active === false) && (
+                <optgroup label="Inactive Projects">
+                  {projects
+                    .filter((p: any) => p.is_active === false)
+                    .map(project => (
+                      <option key={project.id} value={project.id} style={{ color: '#9ca3af' }}>
+                        {project.name} (Inactive)
+                      </option>
+                    ))}
+                </optgroup>
+              )}
             </select>
           )}
         </div>

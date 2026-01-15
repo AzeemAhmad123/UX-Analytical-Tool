@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, Copy, Check, ChevronDown, ChevronUp, Code, Activity, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, Copy, Check, ChevronDown, ChevronUp, Code, Activity, ExternalLink, Power, PowerOff } from 'lucide-react'
 import { projectsAPI, sessionsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 
@@ -31,6 +31,7 @@ interface Project {
   sdk_key: string
   platform: string
   created_at: string
+  is_active?: boolean
 }
 
 export function Projects() {
@@ -126,8 +127,27 @@ export function Projects() {
     }
   }
 
+  const handleToggleActive = async (id: string) => {
+    try {
+      console.log('Toggling project status for:', id)
+      const response = await projectsAPI.toggleActive(id)
+      console.log('Toggle response:', response)
+      setProjects(projects.map(p => 
+        p.id === id ? { ...p, is_active: response.project.is_active } : p
+      ))
+    } catch (error: any) {
+      console.error('Error toggling project status:', error)
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      })
+      alert('Failed to toggle project status: ' + error.message)
+    }
+  }
+
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this project?')) return
+    if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) return
     
     try {
       await projectsAPI.delete(id)
@@ -419,9 +439,24 @@ class UXCamSDK {
             <div key={project.id} className="stats-card" style={{ position: 'relative' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '1rem' }}>
                 <div>
-                  <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#111827', marginBottom: '0.25rem' }}>
-                    {project.name}
-                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                    <h3 style={{ fontSize: '1.125rem', fontWeight: '600', color: '#111827', margin: 0 }}>
+                      {project.name}
+                    </h3>
+                    {project.is_active === false && (
+                      <span style={{ 
+                        fontSize: '0.625rem', 
+                        padding: '0.125rem 0.375rem', 
+                        backgroundColor: '#fee2e2', 
+                        color: '#dc2626', 
+                        borderRadius: '4px',
+                        fontWeight: '600',
+                        textTransform: 'uppercase'
+                      }}>
+                        Inactive
+                      </span>
+                    )}
+                  </div>
                   <span style={{ 
                     fontSize: '0.75rem', 
                     padding: '0.25rem 0.5rem', 
@@ -437,6 +472,20 @@ class UXCamSDK {
                   </span>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button 
+                    className="icon-button"
+                    onClick={() => handleToggleActive(project.id)}
+                    title={project.is_active === false ? 'Activate Project' : 'Deactivate Project'}
+                    style={{ 
+                      color: project.is_active === false ? '#6b7280' : '#9333ea' 
+                    }}
+                  >
+                    {project.is_active === false ? (
+                      <Power className="icon-small" />
+                    ) : (
+                      <PowerOff className="icon-small" />
+                    )}
+                  </button>
                   <button 
                     className="icon-button"
                     onClick={() => handleDelete(project.id)}

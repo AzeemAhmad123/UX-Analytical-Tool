@@ -12,7 +12,7 @@ const router = Router()
 router.post('/:projectId', validateProject, async (req: Request, res: Response) => {
   try {
     const projectId = req.params.projectId
-    const { name, description, steps, is_form_funnel, form_url, time_window_hours, track_first_time_users } = req.body
+    const { name, description, steps, is_form_funnel, form_url, time_window_hours, track_first_time_users, calculation_mode } = req.body
 
     // Validate required fields
     if (!name) {
@@ -168,7 +168,8 @@ router.put('/:projectId/:funnelId', validateProject, async (req: Request, res: R
       is_form_funnel, 
       form_url,
       time_window_hours,
-      track_first_time_users
+      track_first_time_users,
+      calculation_mode
     } = req.body
 
     // Verify funnel exists and belongs to project
@@ -206,6 +207,7 @@ router.put('/:projectId/:funnelId', validateProject, async (req: Request, res: R
     if (form_url !== undefined) updateData.form_url = form_url
     if (time_window_hours !== undefined) updateData.time_window_hours = time_window_hours
     if (track_first_time_users !== undefined) updateData.track_first_time_users = track_first_time_users
+    if (calculation_mode !== undefined) updateData.calculation_mode = calculation_mode || 'sessions'
 
     const { data: updatedFunnel, error } = await supabase
       .from('funnels')

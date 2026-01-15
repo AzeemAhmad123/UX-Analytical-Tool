@@ -40,6 +40,7 @@ interface FunnelBuilderProps {
     form_url?: string
     time_window_hours?: number
     track_first_time_users?: boolean
+    calculation_mode?: 'sessions' | 'users'
   }) => void
   onCancel: () => void
   initialData?: {
@@ -50,6 +51,7 @@ interface FunnelBuilderProps {
     form_url?: string
     time_window_hours?: number
     track_first_time_users?: boolean
+    calculation_mode?: 'sessions' | 'users'
   }
 }
 
@@ -61,6 +63,7 @@ export function FunnelBuilder({ onSave, onCancel, initialData }: FunnelBuilderPr
   const [formUrl, setFormUrl] = useState(initialData?.form_url || '')
   const [timeWindowHours, setTimeWindowHours] = useState<number | undefined>(initialData?.time_window_hours)
   const [trackFirstTimeUsers, setTrackFirstTimeUsers] = useState(initialData?.track_first_time_users || false)
+  const [calculationMode, setCalculationMode] = useState<'sessions' | 'users'>(initialData?.calculation_mode || 'sessions')
   const [editingStep, setEditingStep] = useState<number | null>(null)
 
   // Drag and drop sensors
@@ -138,7 +141,8 @@ export function FunnelBuilder({ onSave, onCancel, initialData }: FunnelBuilderPr
       is_form_funnel: isFormFunnel,
       form_url: isFormFunnel ? formUrl : undefined,
       time_window_hours: timeWindowHours,
-      track_first_time_users: trackFirstTimeUsers
+      track_first_time_users: trackFirstTimeUsers,
+      calculation_mode: calculationMode
     })
   }
 
@@ -258,6 +262,32 @@ export function FunnelBuilder({ onSave, onCancel, initialData }: FunnelBuilderPr
         </label>
         <small style={{ display: 'block', marginTop: '0.25rem', color: '#6b7280', fontSize: '0.75rem' }}>
           Enable to see breakdown of new vs returning users in funnel analysis
+        </small>
+      </div>
+
+      {/* Calculation Mode */}
+      <div style={{ marginBottom: '1.5rem' }}>
+        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+          Calculation Mode
+        </label>
+        <select
+          value={calculationMode}
+          onChange={(e) => setCalculationMode(e.target.value as 'sessions' | 'users')}
+          style={{
+            width: '100%',
+            padding: '0.5rem',
+            border: '1px solid #d1d5db',
+            borderRadius: '6px',
+            fontSize: '0.875rem'
+          }}
+        >
+          <option value="sessions">Session-based (Count sessions)</option>
+          <option value="users">User-based (Count unique users)</option>
+        </select>
+        <small style={{ display: 'block', marginTop: '0.25rem', color: '#6b7280', fontSize: '0.75rem' }}>
+          {calculationMode === 'sessions' 
+            ? 'Counts each session that completes a step. One user can have multiple sessions.'
+            : 'Counts unique users who complete a step. Each user is counted only once per step.'}
         </small>
       </div>
 

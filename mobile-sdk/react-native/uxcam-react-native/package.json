@@ -1,0 +1,28 @@
+{
+  "name": "uxcam-react-native",
+  "version": "1.0.0",
+  "description": "UXCam Analytics SDK for React Native - Session replay, event tracking, and user analytics",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "keywords": [
+    "react-native",
+    "uxcam",
+    "analytics",
+    "session-replay",
+    "user-analytics"
+  ],
+  "author": "",
+  "license": "MIT",
+  "peerDependencies": {
+    "react-native": ">=0.60.0"
+  },
+  "devDependencies": {
+    "@types/react-native": "^0.70.0",
+    "typescript": "^4.9.0"
+  },
+  "dependencies": {}
+}

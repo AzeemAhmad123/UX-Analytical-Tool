@@ -63,10 +63,10 @@ router.get('/:token', async (req: Request, res: Response) => {
 
     // Convert platform_filter for analyzeFunnel (it expects 'all' | 'web' | 'android' | 'ios')
     let platformFilter: 'all' | 'web' | 'android' | 'ios' = 'all'
-    const sharePlatformFilter = shareLink.share_params.platform_filter
+    const sharePlatformFilter = shareLink.share_params.platform_filter as string | undefined
     if (sharePlatformFilter === 'web') {
       platformFilter = 'web'
-    } else if (sharePlatformFilter === 'android') {
+    } else if (sharePlatformFilter === 'android' || sharePlatformFilter === 'mobile') {
       platformFilter = 'android'
     } else if (sharePlatformFilter === 'ios') {
       platformFilter = 'ios'

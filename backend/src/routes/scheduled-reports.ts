@@ -12,7 +12,8 @@ import {
   updateScheduledReport,
   deleteScheduledReport,
   getDueReports,
-  sendScheduledReport
+  sendScheduledReport,
+  type ScheduledReport
 } from '../services/scheduledReportsService'
 import { getFunnelById } from '../services/funnelService'
 
@@ -81,16 +82,18 @@ router.post('/:projectId/:funnelId/scheduled-reports', validateProject, async (r
     const userId = (req as any).user?.id
 
     const report = await createScheduledReport(funnelId, projectId, {
-      name,
-      schedule_type,
+      name: name as string,
+      schedule_type: schedule_type as 'daily' | 'weekly' | 'monthly',
       schedule_config: schedule_config || {},
-      recipients,
-      report_format: report_format || 'html',
+      recipients: recipients as string[],
+      report_format: (report_format || 'html') as 'html' | 'pdf' | 'csv',
       include_charts: include_charts !== undefined ? include_charts : true,
       report_params: report_params || {},
       enabled: true,
-      created_by: userId
-    })
+      created_by: userId || undefined,
+      funnel_id: funnelId,
+      project_id: projectId
+    } as any)
 
     res.json({
       success: true,

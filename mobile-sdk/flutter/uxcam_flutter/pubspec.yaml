@@ -1,0 +1,26 @@
+name: uxcam_flutter
+description: UXCam Analytics SDK for Flutter - Session replay, event tracking, and user analytics
+version: 1.0.0
+homepage: https://github.com/your-org/uxcam-flutter
+
+environment:
+  sdk: '>=2.17.0 <4.0.0'
+  flutter: ">=2.5.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.uxcam.flutter
+        pluginClass: UXCamFlutterPlugin
+      ios:
+        pluginClass: UXCamFlutterPlugin

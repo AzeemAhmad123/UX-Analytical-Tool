@@ -25,19 +25,36 @@ async function apiRequest(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...options,
-    headers,
-  })
+  const url = `${API_URL}${endpoint}`
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+    })
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
-    // Use message if available, otherwise use error, otherwise use status
-    const errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
-    throw new Error(errorMessage)
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
+      // Use message if available, otherwise use error, otherwise use status
+      const errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+      throw new Error(errorMessage)
+    }
+
+    return response.json()
+  } catch (error: any) {
+    // Enhanced error handling for network issues
+    if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
+      console.error('Network error:', {
+        url,
+        method: options.method || 'GET',
+        apiUrl: API_URL,
+        endpoint,
+        error: error.message
+      })
+      throw new Error(`Cannot connect to backend server at ${API_URL}. Please check if the server is running.`)
+    }
+    throw error
   }
-
-  return response.json()
 }
 
 // Projects API
@@ -57,6 +74,10 @@ export const projectsAPI = {
   delete: (id: string) =>
     apiRequest(`/api/projects/${id}`, {
       method: 'DELETE',
+    }),
+  toggleActive: (id: string) =>
+    apiRequest(`/api/projects/${id}/toggle-active`, {
+      method: 'PATCH',
     }),
 }
 
@@ -120,6 +141,19 @@ export const analyticsAPI = {
     const query = queryParams.toString()
     return apiRequest(`/api/analytics/${projectId}/overview${query ? `?${query}` : ''}`)
   },
+  getOverviewDetailed: (projectId: string, params?: { 
+    start_date?: string
+    end_date?: string
+    platform_filter?: 'all' | 'mobile' | 'web'
+  }) => {
+    const queryParams = new URLSearchParams()
+    if (params?.start_date) queryParams.append('start_date', params.start_date)
+    if (params?.end_date) queryParams.append('end_date', params.end_date)
+    if (params?.platform_filter) queryParams.append('platform_filter', params.platform_filter)
+    
+    const query = queryParams.toString()
+    return apiRequest(`/api/analytics/${projectId}/overview-detailed${query ? `?${query}` : ''}`)
+  },
 }
 
 // Snapshots API
@@ -165,6 +199,7 @@ export const funnelsAPI = {
     form_url?: string
     time_window_hours?: number
     track_first_time_users?: boolean
+    calculation_mode?: 'sessions' | 'users'
   }) =>
     apiRequest(`/api/funnels/${projectId}/${funnelId}`, {
       method: 'PUT',
