@@ -446,6 +446,51 @@
     // ============================================
     // CLEAN SESSION RECORDING - STEP BY STEP
     // ============================================
+    // Wait for all CSS stylesheets to load
+    async function waitForCSS() {
+      const stylesheets = Array.from(document.styleSheets);
+      const promises = [];
+      
+      for (let i = 0; i < stylesheets.length; i++) {
+        try {
+          const sheet = stylesheets[i];
+          // Check if stylesheet is from same origin or CORS-enabled
+          if (sheet.href) {
+            // External stylesheet - wait for it to load
+            if (sheet.cssRules || sheet.rules) {
+              // Already loaded
+              continue;
+            } else {
+              // Wait for stylesheet to load
+              const link = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+                .find(link => link.href === sheet.href);
+              if (link) {
+                promises.push(new Promise(resolve => {
+                  if (link.sheet && link.sheet.cssRules) {
+                    resolve(); // Already loaded
+                  } else {
+                    link.onload = resolve;
+                    link.onerror = resolve; // Continue even if CSS fails
+                    // Timeout after 3 seconds
+                    setTimeout(resolve, 3000);
+                  }
+                }));
+              }
+            }
+          }
+        } catch (e) {
+          // CORS error or other issue - continue
+          continue;
+        }
+      }
+      
+      // Wait for all stylesheets or timeout
+      await Promise.all(promises);
+      
+      // Additional delay to ensure styles are computed
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
     async function startRecording() {
       // Step 1: Basic validation
       if (!window.rrweb) {
@@ -465,16 +510,21 @@
         });
       }
       
-      // Step 3: Small delay for browser paint
+      // Step 3: Wait for CSS to load (CRITICAL for proper styling)
+      console.log('UXCam SDK: Waiting for CSS stylesheets to load...');
+      await waitForCSS();
+      console.log('UXCam SDK: CSS stylesheets loaded');
+      
+      // Step 4: Additional delay for browser paint and style computation
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Step 4: Initialize recording state
+      // Step 5: Initialize recording state
       type2Uploaded = false;
       let capturedType2 = null;
       let type2Resolve = null;
       const type2Promise = new Promise(resolve => { type2Resolve = resolve; });
       
-      // Step 5: Start rrweb recording engine
+      // Step 6: Start rrweb recording engine
       console.log('UXCam SDK: Starting rrweb recording...');
       stopRecording = window.rrweb.record({
         emit(event) {
@@ -527,14 +577,14 @@
         recordAfter: 'DOMContentLoaded',
       });
       
-      // Step 6: Wait for Type 2 event (rrweb emits it automatically)
+      // Step 7: Wait for Type 2 event (rrweb emits it automatically)
       try {
         const type2Event = await Promise.race([
           type2Promise,
           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
         ]);
         
-        // Step 7: Validate Type 2 snapshot
+        // Step 8: Validate Type 2 snapshot
         // Don't modify the snapshot - rrweb handles it correctly
         // Just validate it has data
         if (!type2Event.data) {
@@ -582,7 +632,7 @@
           });
         }
         
-        // Step 8: Upload Type 2 immediately
+        // Step 9: Upload Type 2 immediately
         console.log('UXCam SDK: Uploading Type 2 snapshot...');
         const compressed = compressSnapshots([type2Event]);
         
@@ -630,7 +680,7 @@
           projectId = responseData.project_id;
         }
         
-        // Step 9: Enable incremental events
+        // Step 10: Enable incremental events
         type2Uploaded = true;
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
         
