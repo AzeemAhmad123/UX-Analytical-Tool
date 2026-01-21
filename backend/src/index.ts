@@ -62,12 +62,25 @@ app.use(cors({
     const originMatches = allowedOrigins.some(allowed => {
       // Exact match
       if (allowed === origin) return true
+      
       // Wildcard match (e.g., *.vercel.app or https://*.vercel.app)
       if (allowed.includes('*')) {
-        const pattern = allowed.replace(/\*/g, '.*').replace(/^https?:\/\//, 'https?://')
-        const regex = new RegExp(`^${pattern}$`, 'i')
+        // Extract protocol and domain parts
+        const protocolMatch = allowed.match(/^(https?:\/\/)?(.*)$/i)
+        const protocol = protocolMatch?.[1] || 'https://'
+        const domainPattern = protocolMatch?.[2] || ''
+        
+        // Replace * with .* and escape dots
+        const escapedDomain = domainPattern
+          .replace(/\./g, '\\.')  // Escape dots first
+          .replace(/\*/g, '.*')   // Then replace wildcards
+        
+        // Build regex pattern
+        const regexPattern = `^${protocol}${escapedDomain}$`
+        const regex = new RegExp(regexPattern, 'i')
         return regex.test(origin)
       }
+      
       // Domain match (e.g., vercel.app matches any subdomain)
       const allowedDomain = allowed.replace(/^https?:\/\//, '')
       if (origin.includes(allowedDomain)) return true
@@ -88,6 +101,18 @@ app.use(cors({
       const hasVercelWildcard = allowedOrigins.some(allowed => 
         allowed.includes('*vercel.app') || allowed.includes('vercel.app')
       )
+      
+      // Debug logging (remove in production if needed)
+      if (process.env.NODE_ENV === 'development') {
+        console.log('CORS check:', {
+          origin,
+          allowedOrigins,
+          originMatches,
+          isVercelDomain,
+          hasVercelWildcard,
+          willAllow: allowedOrigins.length === 0 || originMatches || (isVercelDomain && hasVercelWildcard) || isLocalhost
+        })
+      }
       
       if (allowedOrigins.length === 0 || originMatches || (isVercelDomain && hasVercelWildcard) || isLocalhost) {
         return callback(null, true)
