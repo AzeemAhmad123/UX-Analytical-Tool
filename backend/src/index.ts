@@ -14,6 +14,16 @@ const CORS_ORIGINS = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim().replace(/\/$/, ''))
   : []
 
+// Log CORS configuration at startup (for debugging)
+console.log('🔧 CORS Configuration:', {
+  CORS_ORIGINS_env: process.env.CORS_ORIGINS || 'NOT SET',
+  CORS_ORIGINS_parsed: CORS_ORIGINS,
+  CORS_ORIGINS_count: CORS_ORIGINS.length,
+  FRONTEND_URL: FRONTEND_URL,
+  NODE_ENV: process.env.NODE_ENV,
+  VERCEL: process.env.VERCEL
+})
+
 // Middleware
 // CORS Configuration for Production
 // For SDK ingestion endpoints, allow requests from any origin (SDK embedded on various websites)
