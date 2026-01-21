@@ -58,6 +58,11 @@ app.use(cors({
     // Check if origin is a Vercel domain (for preview deployments)
     const isVercelDomain = origin.includes('.vercel.app')
     
+    // Check if any allowed origin contains a wildcard for Vercel
+    const hasVercelWildcard = allowedOrigins.some(allowed => 
+      allowed.includes('*vercel.app') || allowed.includes('vercel.app')
+    )
+    
     // Check if origin matches any allowed origin (case-insensitive)
     const originMatches = allowedOrigins.some(allowed => {
       // Exact match
@@ -78,45 +83,51 @@ app.use(cors({
         // Build regex pattern
         const regexPattern = `^${protocol}${escapedDomain}$`
         const regex = new RegExp(regexPattern, 'i')
-        return regex.test(origin)
+        const matches = regex.test(origin)
+        if (matches) {
+          console.log(`CORS: Wildcard match - ${allowed} matches ${origin}`)
+        }
+        return matches
       }
       
       // Domain match (e.g., vercel.app matches any subdomain)
       const allowedDomain = allowed.replace(/^https?:\/\//, '')
-      if (origin.includes(allowedDomain)) return true
+      if (origin.includes(allowedDomain)) {
+        console.log(`CORS: Domain match - ${allowed} matches ${origin}`)
+        return true
+      }
       return false
     })
     
+    // Determine if request should be allowed
+    let shouldAllow = false
+    
     if (isDevelopment) {
       // Development: Allow localhost, local network IPs, file://, and configured origins
-      if (originMatches || 
-          origin.startsWith('file://') || 
-          isLocalhost || 
-          isLocalNetwork) {
-        return callback(null, true)
-      }
+      shouldAllow = originMatches || 
+                    origin.startsWith('file://') || 
+                    isLocalhost || 
+                    isLocalNetwork
     } else {
       // Production: Allow configured origins, Vercel domains (if wildcard configured), or all origins if none configured
-      // Check if any allowed origin is a wildcard that matches Vercel
-      const hasVercelWildcard = allowedOrigins.some(allowed => 
-        allowed.includes('*vercel.app') || allowed.includes('vercel.app')
-      )
+      shouldAllow = allowedOrigins.length === 0 || 
+                    originMatches || 
+                    (isVercelDomain && hasVercelWildcard) || 
+                    isLocalhost
       
-      // Debug logging (remove in production if needed)
-      if (process.env.NODE_ENV === 'development') {
-        console.log('CORS check:', {
-          origin,
-          allowedOrigins,
-          originMatches,
-          isVercelDomain,
-          hasVercelWildcard,
-          willAllow: allowedOrigins.length === 0 || originMatches || (isVercelDomain && hasVercelWildcard) || isLocalhost
-        })
-      }
-      
-      if (allowedOrigins.length === 0 || originMatches || (isVercelDomain && hasVercelWildcard) || isLocalhost) {
-        return callback(null, true)
-      }
+      // Log CORS decision for debugging
+      console.log('CORS check:', {
+        origin,
+        allowedOrigins: allowedOrigins.slice(0, 3), // Log first 3 to avoid spam
+        originMatches,
+        isVercelDomain,
+        hasVercelWildcard,
+        shouldAllow
+      })
+    }
+    
+    if (shouldAllow) {
+      return callback(null, true)
     }
     
     console.warn(`CORS blocked origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`)
