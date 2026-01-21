@@ -8,6 +8,11 @@ const app = express()
 const PORT = parseInt(process.env.PORT || '3001', 10)
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
 
+// Parse CORS_ORIGINS from environment (comma-separated list)
+const CORS_ORIGINS = process.env.CORS_ORIGINS 
+  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+  : []
+
 // Middleware
 // CORS Configuration for Production
 // For SDK ingestion endpoints, allow requests from any origin (SDK embedded on various websites)
@@ -21,35 +26,65 @@ app.use(cors({
     // In development, allow localhost and file:// for testing
     const isDevelopment = process.env.NODE_ENV !== 'production'
     
+    // Build allowed origins list
+    const allowedOrigins: string[] = []
+    
+    // Add FRONTEND_URL if set
+    if (FRONTEND_URL) {
+      allowedOrigins.push(FRONTEND_URL)
+    }
+    
+    // Add CORS_ORIGINS from environment
+    if (CORS_ORIGINS.length > 0) {
+      allowedOrigins.push(...CORS_ORIGINS)
+    }
+    
+    // Add default localhost origins for development
     if (isDevelopment) {
-      // Development: Allow localhost, local network IPs (for mobile testing), and file://
-      const allowedOrigins = [
-        FRONTEND_URL,
+      allowedOrigins.push(
         'http://localhost:5173',
         'http://localhost:3000',
-        'http://localhost:5174',
-        'null' // file:// protocol sends null origin
-      ]
-      
-      // Check if origin is localhost or local network IP (for mobile testing)
-      const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
-      const isLocalNetwork = /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin) || 
-                            /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/.test(origin) ||
-                            /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/.test(origin)
-      
-      if (allowedOrigins.includes(origin) || 
+        'http://localhost:5174'
+      )
+    }
+    
+    // Check if origin is localhost or local network IP (for mobile testing)
+    const isLocalhost = origin.includes('localhost') || origin.includes('127.0.0.1')
+    const isLocalNetwork = /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin) || 
+                          /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/.test(origin) ||
+                          /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/.test(origin)
+    
+    // Check if origin matches any allowed origin (case-insensitive)
+    const originMatches = allowedOrigins.some(allowed => {
+      // Exact match
+      if (allowed === origin) return true
+      // Wildcard match (e.g., *.vercel.app)
+      if (allowed.includes('*')) {
+        const pattern = allowed.replace(/\*/g, '.*')
+        const regex = new RegExp(`^${pattern}$`, 'i')
+        return regex.test(origin)
+      }
+      // Domain match (e.g., vercel.app matches any subdomain)
+      if (origin.endsWith('.' + allowed.replace(/^https?:\/\//, ''))) return true
+      return false
+    })
+    
+    if (isDevelopment) {
+      // Development: Allow localhost, local network IPs, file://, and configured origins
+      if (originMatches || 
           origin.startsWith('file://') || 
           isLocalhost || 
           isLocalNetwork) {
         return callback(null, true)
       }
     } else {
-      // Production: Allow all origins for SDK endpoints
-      // SDK endpoints don't require authentication, so CORS is safe
-      // Dashboard endpoints are protected by authentication
-      return callback(null, true)
+      // Production: Allow configured origins, or all origins if none configured (for SDK endpoints)
+      if (allowedOrigins.length === 0 || originMatches || isLocalhost) {
+        return callback(null, true)
+      }
     }
     
+    console.warn(`CORS blocked origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`)
     callback(new Error('Not allowed by CORS'))
   },
   credentials: true,
