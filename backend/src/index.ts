@@ -55,18 +55,22 @@ app.use(cors({
                           /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/.test(origin) ||
                           /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/.test(origin)
     
+    // Check if origin is a Vercel domain (for preview deployments)
+    const isVercelDomain = origin.includes('.vercel.app')
+    
     // Check if origin matches any allowed origin (case-insensitive)
     const originMatches = allowedOrigins.some(allowed => {
       // Exact match
       if (allowed === origin) return true
-      // Wildcard match (e.g., *.vercel.app)
+      // Wildcard match (e.g., *.vercel.app or https://*.vercel.app)
       if (allowed.includes('*')) {
-        const pattern = allowed.replace(/\*/g, '.*')
+        const pattern = allowed.replace(/\*/g, '.*').replace(/^https?:\/\//, 'https?://')
         const regex = new RegExp(`^${pattern}$`, 'i')
         return regex.test(origin)
       }
       // Domain match (e.g., vercel.app matches any subdomain)
-      if (origin.endsWith('.' + allowed.replace(/^https?:\/\//, ''))) return true
+      const allowedDomain = allowed.replace(/^https?:\/\//, '')
+      if (origin.includes(allowedDomain)) return true
       return false
     })
     
@@ -79,8 +83,13 @@ app.use(cors({
         return callback(null, true)
       }
     } else {
-      // Production: Allow configured origins, or all origins if none configured (for SDK endpoints)
-      if (allowedOrigins.length === 0 || originMatches || isLocalhost) {
+      // Production: Allow configured origins, Vercel domains (if wildcard configured), or all origins if none configured
+      // Check if any allowed origin is a wildcard that matches Vercel
+      const hasVercelWildcard = allowedOrigins.some(allowed => 
+        allowed.includes('*vercel.app') || allowed.includes('vercel.app')
+      )
+      
+      if (allowedOrigins.length === 0 || originMatches || (isVercelDomain && hasVercelWildcard) || isLocalhost) {
         return callback(null, true)
       }
     }
