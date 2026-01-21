@@ -37,7 +37,18 @@ export async function getLocationFromIP(ipAddress: string): Promise<GeolocationR
     })
 
     if (response.ok) {
-      const data = await response.json()
+      const data = await response.json() as {
+        error?: boolean
+        reason?: string
+        country_name?: string
+        country?: string
+        city?: string
+        region?: string
+        region_code?: string
+        country_code?: string
+        latitude?: number
+        longitude?: number
+      }
       if (data.error) {
         throw new Error(data.reason || 'IP API error')
       }
@@ -69,7 +80,17 @@ export async function getLocationFromIP(ipAddress: string): Promise<GeolocationR
     })
 
     if (response.ok) {
-      const data = await response.json()
+      const data = await response.json() as {
+        status?: string
+        message?: string
+        country?: string
+        city?: string
+        region?: string
+        regionName?: string
+        countryCode?: string
+        lat?: number
+        lon?: number
+      }
       if (data.status === 'success') {
         return {
           country: data.country || undefined,
