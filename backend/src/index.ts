@@ -110,19 +110,27 @@ app.use(cors({
                     isLocalNetwork
     } else {
       // Production: Allow configured origins, Vercel domains (if wildcard configured), or all origins if none configured
+      // More permissive: if it's a Vercel domain and we have ANY vercel-related origin, allow it
+      const hasAnyVercelOrigin = allowedOrigins.some(allowed => 
+        allowed.includes('vercel.app')
+      )
+      
       shouldAllow = allowedOrigins.length === 0 || 
                     originMatches || 
-                    (isVercelDomain && hasVercelWildcard) || 
+                    (isVercelDomain && (hasVercelWildcard || hasAnyVercelOrigin)) || 
                     isLocalhost
       
-      // Log CORS decision for debugging
+      // Log CORS decision for debugging (always log to help troubleshoot)
       console.log('CORS check:', {
         origin,
-        allowedOrigins: allowedOrigins.slice(0, 3), // Log first 3 to avoid spam
+        allowedOriginsCount: allowedOrigins.length,
+        allowedOriginsSample: allowedOrigins.slice(0, 3), // Log first 3 to avoid spam
         originMatches,
         isVercelDomain,
         hasVercelWildcard,
-        shouldAllow
+        hasAnyVercelOrigin,
+        shouldAllow,
+        CORS_ORIGINS_env: process.env.CORS_ORIGINS?.substring(0, 150) // Log env var to verify it's loaded
       })
     }
     
