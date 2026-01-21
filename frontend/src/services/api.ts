@@ -16,6 +16,12 @@ const getApiUrl = (): string => {
       return 'https://api.enalyze.123fixit.com'
     }
     
+    // Auto-detect backend for Vercel deployments
+    // If frontend is on ux-analytical-tool-*.vercel.app, use ux-analytical-tool-gzsn.vercel.app as backend
+    if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
+      return 'https://ux-analytical-tool-gzsn.vercel.app'
+    }
+    
     // If we're on localhost, use local backend
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return 'http://localhost:3001'
