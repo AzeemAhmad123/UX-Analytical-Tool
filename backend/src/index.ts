@@ -9,8 +9,9 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173'
 
 // Parse CORS_ORIGINS from environment (comma-separated list)
+// Normalize URLs by removing trailing slashes (browsers send origin without trailing slash)
 const CORS_ORIGINS = process.env.CORS_ORIGINS 
-  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim())
+  ? process.env.CORS_ORIGINS.split(',').map(origin => origin.trim().replace(/\/$/, ''))
   : []
 
 // Middleware
@@ -29,9 +30,9 @@ app.use(cors({
     // Build allowed origins list
     const allowedOrigins: string[] = []
     
-    // Add FRONTEND_URL if set
+    // Add FRONTEND_URL if set (normalize by removing trailing slash)
     if (FRONTEND_URL) {
-      allowedOrigins.push(FRONTEND_URL)
+      allowedOrigins.push(FRONTEND_URL.replace(/\/$/, ''))
     }
     
     // Add CORS_ORIGINS from environment
