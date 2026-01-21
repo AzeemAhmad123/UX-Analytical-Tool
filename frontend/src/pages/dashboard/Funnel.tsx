@@ -66,9 +66,9 @@ export function Funnel() {
   const [includeGeography, setIncludeGeography] = useState(false)
   const [includeTrendOverTime] = useState(true)
   
-  // Date range - Default to last 30 days, but will auto-adjust if events are in future
+  // Date range - Default to last 2 days
   const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+    start: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
   })
   
@@ -433,9 +433,22 @@ export function Funnel() {
       // For larger ranges, it's too slow - user can enable it manually if needed
       const shouldIncludeTrend = includeTrendOverTime && daysDiff <= 30
       
+      const startDate = new Date(dateRange.start).toISOString()
+      const endDate = new Date(dateRange.end + 'T23:59:59').toISOString()
+      
+      console.log('🔍 Analyzing funnel:', {
+        funnelId: funnel.id,
+        funnelName: funnel.name,
+        dateRange: { start: startDate, end: endDate },
+        daysDiff,
+        platformFilter,
+        countryFilter,
+        deviceFilter
+      })
+      
       const response = await funnelsAPI.analyze(selectedProject, funnel.id, {
-        start_date: new Date(dateRange.start).toISOString(),
-        end_date: new Date(dateRange.end + 'T23:59:59').toISOString(),
+        start_date: startDate,
+        end_date: endDate,
         include_geography: includeGeography,
         include_trend_over_time: shouldIncludeTrend, // Optimized: only for small date ranges
         platform_filter: platformFilter,
@@ -447,11 +460,24 @@ export function Funnel() {
           acquisition_source: acquisitionSourceFilter || undefined
         }
       })
+      
+      console.log('✅ Funnel analysis result:', {
+        hasResult: !!response,
+        steps: response?.steps?.length || 0,
+        totalSessions: response?.total_sessions || 0,
+        conversionRate: response?.overall_conversion_rate || 0
+      })
+      
       setAnalysisResult(response)
       setSelectedFunnel(funnel)
       setActiveTab('overview')
     } catch (error: any) {
-      console.error('Error analyzing funnel:', error)
+      console.error('❌ Error analyzing funnel:', {
+        error: error.message,
+        stack: error.stack,
+        funnelId: funnel.id,
+        dateRange: { start: dateRange.start, end: dateRange.end }
+      })
       alert('Failed to analyze funnel: ' + error.message)
     } finally {
       setAnalyzing(false)

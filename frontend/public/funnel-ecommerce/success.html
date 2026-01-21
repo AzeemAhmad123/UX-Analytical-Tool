@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Success - E-Commerce Store</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- UXCam Analytics SDK - Web (JavaScript) -->
+    <!-- Load rrweb for visual session replay -->
+    <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+    
+    <!-- UXCam SDK Configuration -->
+    <script>
+      window.UXCamSDK = {
+        key: 'ux_10d3d2f46073542c01af7803f62ffe79',
+        apiUrl: 'http://localhost:3001'
+      };
+    </script>
+    
+    <!-- Load UXCam SDK -->
+    <script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>
+</head>
+<body>
+    <div class="header">
+        <h1>🛍️ E-Commerce Store</h1>
+    </div>
+    
+    <div class="nav">
+        <a href="index.html">Home</a>
+        <a href="products.html">Products</a>
+        <a href="cart.html">Cart</a>
+    </div>
+    
+    <div class="container">
+        <div style="background: white; padding: 60px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; max-width: 600px; margin: 40px auto;">
+            <div style="font-size: 5em; margin-bottom: 20px;">✅</div>
+            <h2 style="font-size: 2.5em; margin-bottom: 20px; color: #667eea;">Order Successful!</h2>
+            <p style="font-size: 1.2em; color: #666; margin-bottom: 30px;">
+                Thank you for your purchase! Your order has been confirmed and will be shipped soon.
+            </p>
+            
+            <div id="orderDetails" style="background: #f9fafb; padding: 20px; border-radius: 8px; margin-bottom: 30px; text-align: left;">
+                <h3 style="margin-bottom: 15px;">Order Details</h3>
+                <div id="orderItems"></div>
+                <div style="border-top: 2px solid #e5e7eb; margin-top: 15px; padding-top: 15px; display: flex; justify-content: space-between; font-weight: bold;">
+                    <span>Total:</span>
+                    <span id="orderTotal" style="color: #667eea;">$0</span>
+                </div>
+            </div>
+            
+            <a href="index.html" class="btn">Continue Shopping</a>
+        </div>
+        
+        <div id="status" class="status success" style="display: none; margin-top: 30px; text-align: center;">
+            ✅ Purchase completed and tracked!
+        </div>
+    </div>
+    
+    <script>
+        function loadOrderDetails() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            const orderItems = document.getElementById('orderItems');
+            const orderTotal = document.getElementById('orderTotal');
+            
+            if (cart.length === 0) {
+                orderItems.innerHTML = '<p style="color: #666;">No order details available</p>';
+                orderTotal.textContent = '$0';
+                return;
+            }
+            
+            let html = '';
+            let total = 0;
+            cart.forEach(item => {
+                total += item.price;
+                html += `<div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                    <span>${item.name}</span>
+                    <span style="color: #667eea; font-weight: bold;">$${item.price}</span>
+                </div>`;
+            });
+            
+            orderItems.innerHTML = html;
+            orderTotal.textContent = `$${total}`;
+            
+            // Track purchase completion
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('purchase_completed', {
+                    order_id: 'ORD-' + Date.now(),
+                    items: cart.length,
+                    total: total,
+                    products: cart.map(item => item.name)
+                });
+            }
+            
+            // Clear cart after successful purchase
+            localStorage.removeItem('cart');
+        }
+        
+        window.addEventListener('load', function() {
+            loadOrderDetails();
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            
+            // Track page view
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('page_view', {
+                    url: window.location.href,
+                    page: 'success'
+                });
+            }
+        });
+    </script>
+</body>
+</html>

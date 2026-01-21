@@ -18,8 +18,23 @@ const getApiUrl = (): string => {
     return backendTunnelUrl
   }
   
-  // Production or no tunnel - use configured API URL
-  return import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  // Check if VITE_API_URL is explicitly set
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  
+  // Auto-detect production backend based on current hostname
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname
+    
+    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
+    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
+      return 'https://api.enalyze.123fixit.com'
+    }
+  }
+  
+  // Default fallback
+  return 'http://localhost/backend-php'
 }
 
 const API_URL = getApiUrl()
@@ -67,12 +82,19 @@ export function Projects() {
           limit: 1,
           start_date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() // Last 24 hours
         })
+        // Use total_unfiltered or total to show all sessions, not just replayable ones
         setSessionCounts(prev => ({
           ...prev,
-          [project.id]: response.count || 0
+          [project.id]: response.total_unfiltered || response.total || response.count || 0
         }))
-      } catch (error) {
-        console.error(`Error checking sessions for project ${project.id}:`, error)
+      } catch (error: any) {
+        // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
+        if (error?.name !== 'AbortError' && error?.message !== 'signal is aborted without reason') {
+          // Also ignore 404 errors (project might not exist or have no sessions)
+          if (!error?.message?.includes('404') && !error?.message?.includes('not found')) {
+            console.error(`Error checking sessions for project ${project.id}:`, error)
+          }
+        }
         setSessionCounts(prev => ({
           ...prev,
           [project.id]: 0
@@ -102,10 +124,29 @@ export function Projects() {
   const loadProjects = async () => {
     try {
       setLoading(true)
+      console.log('📥 Loading projects from API...')
       const response = await projectsAPI.getAll()
-      setProjects(response.projects || [])
+      console.log('📊 API Response:', response)
+      console.log('📊 Response type:', typeof response)
+      console.log('📊 Response.projects:', response.projects)
+      console.log('📊 Response.projects type:', typeof response.projects)
+      console.log('📊 Response.projects length:', response.projects?.length ?? 'N/A')
+      
+      const projectsList = response.projects || []
+      console.log('✅ Setting projects:', projectsList.length, 'projects')
+      setProjects(projectsList)
+      
+      if (projectsList.length === 0) {
+        console.warn('⚠️ No projects returned from API, but response was successful')
+        console.warn('⚠️ Full response:', JSON.stringify(response, null, 2))
+      }
     } catch (error: any) {
-      console.error('Error loading projects:', error)
+      console.error('❌ Error loading projects:', error)
+      console.error('❌ Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      })
       alert('Failed to load projects: ' + error.message)
     } finally {
       setLoading(false)
@@ -150,11 +191,32 @@ export function Projects() {
     if (!confirm('Are you sure you want to delete this project? This action cannot be undone.')) return
     
     try {
+      // First, verify the project exists
+      try {
+        await projectsAPI.getById(id)
+      } catch (verifyError: any) {
+        // If project doesn't exist, just refresh the list
+        if (verifyError.message?.includes('not found') || verifyError.message?.includes('404')) {
+          console.log('Project not found, refreshing list...')
+          await loadProjects()
+          return
+        }
+      }
+      
+      // Project exists, proceed with deletion
       await projectsAPI.delete(id)
-      setProjects(projects.filter(p => p.id !== id))
+      // Refresh projects list to get updated data from server
+      await loadProjects()
     } catch (error: any) {
       console.error('Error deleting project:', error)
-      alert('Failed to delete project: ' + error.message)
+      // Check if it's a 404 (project not found) - might already be deleted
+      if (error.message?.includes('not found') || error.message?.includes('404')) {
+        // Project might already be deleted, refresh the list
+        console.log('Project not found (404), refreshing list...')
+        await loadProjects()
+      } else {
+        alert('Failed to delete project: ' + (error.message || 'Unknown error'))
+      }
     }
   }
 
@@ -165,16 +227,33 @@ export function Projects() {
   }
 
   const getApiUrl = (): string => {
-    const isProduction = typeof window !== 'undefined' && 
-                        window.location.hostname !== 'localhost' && 
-                        window.location.hostname !== '127.0.0.1'
-    
-    if (isProduction) {
-      return import.meta.env.VITE_API_URL || API_URL
-    } else {
-      const backendTunnelUrl = import.meta.env.VITE_BACKEND_TUNNEL_URL
-      return backendTunnelUrl || 'http://localhost:3001'
+    // Check if VITE_API_URL is explicitly set
+    if (import.meta.env.VITE_API_URL) {
+      return import.meta.env.VITE_API_URL
     }
+    
+    // Check if we have a backend tunnel URL (for local development)
+    const backendTunnelUrl = import.meta.env.VITE_BACKEND_TUNNEL_URL
+    const isLocalhost = typeof window !== 'undefined' && 
+                       (window.location.hostname === 'localhost' || 
+                        window.location.hostname === '127.0.0.1')
+    
+    if (isLocalhost && backendTunnelUrl) {
+      return backendTunnelUrl
+    }
+    
+    // Auto-detect production backend based on current hostname
+    if (typeof window !== 'undefined') {
+      const hostname = window.location.hostname
+      
+      // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
+      if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
+        return 'https://api.enalyze.123fixit.com'
+      }
+    }
+    
+    // Default fallback
+    return API_URL || 'http://localhost/backend-php'
   }
 
   const getSdkFileUrl = (): string => {

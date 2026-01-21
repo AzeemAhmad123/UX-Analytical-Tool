@@ -50,7 +50,8 @@ router.post('/:projectId', validateProject, async (req: Request, res: Response) 
         is_form_funnel: is_form_funnel || false,
         form_url: form_url || null,
         time_window_hours: time_window_hours || null,
-        track_first_time_users: track_first_time_users || false
+        track_first_time_users: track_first_time_users || false,
+        calculation_mode: calculation_mode || 'sessions'
       })
       .select()
       .single()

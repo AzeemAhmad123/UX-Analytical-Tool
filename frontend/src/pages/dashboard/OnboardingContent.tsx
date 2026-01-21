@@ -5,16 +5,32 @@ import '../../components/dashboard/Dashboard.css'
 
 // Get API URL - use environment variable or auto-detect
 const getApiUrl = (): string => {
+  // Check if VITE_API_URL is explicitly set
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  
   const isLocalhost = typeof window !== 'undefined' && 
                      (window.location.hostname === 'localhost' || 
                       window.location.hostname === '127.0.0.1')
   
   if (isLocalhost) {
     const backendTunnelUrl = import.meta.env.VITE_BACKEND_TUNNEL_URL
-    return backendTunnelUrl || 'http://localhost:3001'
+    return backendTunnelUrl || 'http://localhost/backend-php'
   }
   
-  return import.meta.env.VITE_API_URL || (typeof window !== 'undefined' ? window.location.origin : '')
+  // Auto-detect production backend based on current hostname
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname
+    
+    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
+    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
+      return 'https://api.enalyze.123fixit.com'
+    }
+  }
+  
+  // Default fallback
+  return typeof window !== 'undefined' ? window.location.origin : ''
 }
 
 // Get SDK file URL

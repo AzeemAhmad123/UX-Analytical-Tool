@@ -22,6 +22,36 @@ const Login = () => {
   const formRef = useRef<HTMLFormElement>(null)
 
   useEffect(() => {
+    // Clear any stored email/password from localStorage or sessionStorage
+    // This prevents showing previously entered credentials
+    const clearStoredCredentials = () => {
+      // Clear any email-related storage
+      const keysToRemove: string[] = []
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key && (key.toLowerCase().includes('email') || key.toLowerCase().includes('login'))) {
+          keysToRemove.push(key)
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key))
+      
+      // Also clear sessionStorage
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i)
+        if (key && (key.toLowerCase().includes('email') || key.toLowerCase().includes('login'))) {
+          sessionStorage.removeItem(key)
+        }
+      }
+      
+      // Ensure form is empty
+      setFormData({
+        email: '',
+        password: ''
+      })
+    }
+    
+    clearStoredCredentials()
+
     const ctx = gsap.context(() => {
       // Animate page entrance
       gsap.from(containerRef.current, {
@@ -117,7 +147,7 @@ const Login = () => {
 
         {/* Login Form */}
         <div className="login-form-container">
-          <form ref={formRef} className="login-form" onSubmit={handleSubmit}>
+          <form ref={formRef} className="login-form" onSubmit={handleSubmit} autoComplete="off">
             {/* Email */}
             <div className="form-group">
               <label htmlFor="email" className="form-label">
@@ -125,6 +155,14 @@ const Login = () => {
                 Email Address
               </label>
               <div className={`input-wrapper ${focusedField === 'email' ? 'focused' : ''} ${formData.email ? 'has-value' : ''}`}>
+                {/* Hidden fake email field to trick browser autofill */}
+                <input
+                  type="email"
+                  name="fake-email"
+                  autoComplete="off"
+                  style={{ position: 'absolute', left: '-9999px', opacity: 0, pointerEvents: 'none' }}
+                  tabIndex={-1}
+                />
                 <input
                   id="email"
                   name="email"
@@ -136,6 +174,10 @@ const Login = () => {
                   onBlur={() => setFocusedField(null)}
                   className="form-input"
                   placeholder="you@example.com"
+                  autoComplete="new-password"
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  spellCheck="false"
                 />
                 <div className="input-border"></div>
               </div>

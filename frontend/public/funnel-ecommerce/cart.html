@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping Cart - E-Commerce Store</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- UXCam Analytics SDK - Web (JavaScript) -->
+    <!-- Load rrweb for visual session replay -->
+    <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+    
+    <!-- UXCam SDK Configuration -->
+    <script>
+      window.UXCamSDK = {
+        key: 'ux_10d3d2f46073542c01af7803f62ffe79',
+        apiUrl: 'http://localhost:3001'
+      };
+    </script>
+    
+    <!-- Load UXCam SDK -->
+    <script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>
+</head>
+<body>
+    <div class="header">
+        <h1>🛍️ E-Commerce Store</h1>
+    </div>
+    
+    <div class="nav">
+        <a href="index.html">Home</a>
+        <a href="products.html">Products</a>
+        <a href="cart.html">Cart <span id="cartCount">(0)</span></a>
+    </div>
+    
+    <div class="container">
+        <h2 style="margin-bottom: 30px; color: #667eea;">Shopping Cart</h2>
+        
+        <div id="cartItems" style="background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+            <p style="text-align: center; color: #666; padding: 40px;">Loading cart...</p>
+        </div>
+        
+        <div id="cartSummary" style="display: none; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-top: 30px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3>Total: <span id="totalPrice" style="color: #667eea; font-size: 1.5em;">$0</span></h3>
+                <a href="checkout.html" class="btn" style="text-decoration: none;">Proceed to Checkout</a>
+            </div>
+        </div>
+        
+        <div id="status" class="status success" style="display: none; margin-top: 30px;">
+            ✅ Cart page viewed!
+        </div>
+    </div>
+    
+    <script>
+        function updateCartCount() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            document.getElementById('cartCount').textContent = `(${cart.length})`;
+        }
+        
+        function removeFromCart(index) {
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            const removed = cart.splice(index, 1)[0];
+            localStorage.setItem('cart', JSON.stringify(cart));
+            loadCart();
+            
+            // Track remove from cart event
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('remove_from_cart', {
+                    product_id: removed.id,
+                    product_name: removed.name
+                });
+            }
+        }
+        
+        function loadCart() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            const cartItems = document.getElementById('cartItems');
+            const cartSummary = document.getElementById('cartSummary');
+            
+            updateCartCount();
+            
+            if (cart.length === 0) {
+                cartItems.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">Your cart is empty. <a href="products.html" style="color: #667eea;">Browse products</a></p>';
+                cartSummary.style.display = 'none';
+                return;
+            }
+            
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            html += '<thead><tr style="border-bottom: 2px solid #e5e7eb;"><th style="text-align: left; padding: 15px;">Product</th><th style="text-align: left; padding: 15px;">Price</th><th style="text-align: right; padding: 15px;">Action</th></tr></thead>';
+            html += '<tbody>';
+            
+            let total = 0;
+            cart.forEach((item, index) => {
+                total += item.price;
+                html += `<tr style="border-bottom: 1px solid #e5e7eb;">
+                    <td style="padding: 15px;">${item.name}</td>
+                    <td style="padding: 15px; color: #667eea; font-weight: bold;">$${item.price}</td>
+                    <td style="padding: 15px; text-align: right;">
+                        <button onclick="removeFromCart(${index})" style="background: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Remove</button>
+                    </td>
+                </tr>`;
+            });
+            
+            html += '</tbody></table>';
+            cartItems.innerHTML = html;
+            
+            document.getElementById('totalPrice').textContent = `$${total}`;
+            cartSummary.style.display = 'block';
+        }
+        
+        window.addEventListener('load', function() {
+            loadCart();
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            
+            // Track page view
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('page_view', {
+                    url: window.location.href,
+                    page: 'cart'
+                });
+            }
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        });
+    </script>
+</body>
+</html>

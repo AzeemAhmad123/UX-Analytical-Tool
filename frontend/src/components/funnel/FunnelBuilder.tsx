@@ -66,9 +66,13 @@ export function FunnelBuilder({ onSave, onCancel, initialData }: FunnelBuilderPr
   const [calculationMode, setCalculationMode] = useState<'sessions' | 'users'>(initialData?.calculation_mode || 'sessions')
   const [editingStep, setEditingStep] = useState<number | null>(null)
 
-  // Drag and drop sensors
+  // Drag and drop sensors - configure to not interfere with form inputs
   const sensors = useSensors(
-    useSensor(PointerSensor),
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // Only activate drag after 8px movement - prevents accidental drags when clicking inputs/buttons
+      },
+    }),
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
@@ -400,8 +404,11 @@ function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, 
   const [eventType, setEventType] = useState(step.condition.event_type || '')
   const [fieldName, setFieldName] = useState(step.condition.field_name || '')
   const [formId, setFormId] = useState(step.condition.form_id || '')
-  const [dataKey, setDataKey] = useState('')
-  const [dataValue, setDataValue] = useState('')
+  // Initialize dataKey and dataValue from existing step.condition.data
+  const existingData = step.condition.data || {}
+  const existingDataEntries = Object.entries(existingData)
+  const [dataKey, setDataKey] = useState(existingDataEntries.length > 0 ? existingDataEntries[0][0] : '')
+  const [dataValue, setDataValue] = useState(existingDataEntries.length > 0 ? existingDataEntries[0][1] : '')
 
   if (!isEditing) {
     return (
@@ -447,17 +454,21 @@ function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, 
     const trimmedValue = dataValue?.trim()
     const hasValidData = trimmedKey && trimmedValue && trimmedKey !== '' && trimmedValue !== ''
     
+    // Build condition object
     const condition: FunnelStep['condition'] = {
       type: conditionType as any,
       ...(conditionType === 'event' && { event_type: eventType }),
       ...(conditionType === 'form_field' && {
         field_name: fieldName,
         form_id: formId
-      }),
-      ...(hasValidData && {
-        data: { [trimmedKey]: trimmedValue }
       })
     }
+    
+    // Only add data if we have valid key-value pair
+    if (hasValidData) {
+      condition.data = { [trimmedKey]: trimmedValue }
+    }
+    
     onSave({ name, condition })
   }
 

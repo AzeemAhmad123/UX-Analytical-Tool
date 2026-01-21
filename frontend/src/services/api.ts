@@ -1,12 +1,41 @@
 import { supabase } from '../config/supabase'
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+// Get API URL - auto-detect production backend if not set
+const getApiUrl = (): string => {
+  // Check if VITE_API_URL is explicitly set
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL
+  }
+  
+  // Auto-detect production backend based on current hostname
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname
+    
+    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
+    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
+      return 'https://api.enalyze.123fixit.com'
+    }
+    
+    // If we're on localhost, use local backend
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3001'
+    }
+  }
+  
+  // Default fallback
+  return 'http://localhost:3001'
+}
+
+const API_URL = getApiUrl()
 
 // Get auth token for API requests
 async function getAuthToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession()
   return session?.access_token || null
 }
+
+// Simple request cache to prevent duplicate concurrent requests
+const requestCache = new Map<string, Promise<any>>()
 
 // API request helper
 async function apiRequest(
@@ -27,34 +56,122 @@ async function apiRequest(
 
   const url = `${API_URL}${endpoint}`
   
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    })
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
-      // Use message if available, otherwise use error, otherwise use status
-      const errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
-      throw new Error(errorMessage)
-    }
-
-    return response.json()
-  } catch (error: any) {
-    // Enhanced error handling for network issues
-    if (error.message === 'Failed to fetch' || error.name === 'TypeError') {
-      console.error('Network error:', {
-        url,
-        method: options.method || 'GET',
-        apiUrl: API_URL,
-        endpoint,
-        error: error.message
-      })
-      throw new Error(`Cannot connect to backend server at ${API_URL}. Please check if the server is running.`)
-    }
-    throw error
+  // For GET requests, use cache to prevent duplicate concurrent requests
+  const isGetRequest = !options.method || options.method === 'GET'
+  const cacheKey = isGetRequest ? `${options.method || 'GET'}:${url}` : null
+  
+  // For projects endpoint, don't use cache on hard refresh
+  // This ensures fresh data is always fetched
+  const isProjectsEndpoint = endpoint === '/api/projects' && isGetRequest
+  
+  if (isProjectsEndpoint) {
+    console.log('🔄 Fetching fresh projects data (cache bypassed)')
   }
+  
+  const shouldUseCache = cacheKey && !isProjectsEndpoint && requestCache.has(cacheKey)
+  
+  if (shouldUseCache) {
+    // Return existing promise if request is already in progress
+    console.log('📦 Using cached request for:', url)
+    return requestCache.get(cacheKey)!
+  }
+  
+  const requestPromise = (async () => {
+    try {
+      // Create abort controller for timeout
+      // Increased timeout to 60 seconds for session replay and large data loads
+      const controller = new AbortController()
+      const timeoutDuration = 60000 // 60 second timeout for better compatibility
+      const timeoutId = setTimeout(() => controller.abort(), timeoutDuration)
+      
+      const response = await fetch(url, {
+        ...options,
+        headers,
+        signal: controller.signal
+      })
+      
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
+        // Use message if available, otherwise use error, otherwise use status
+        const errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+        
+        // Log detailed error for projects endpoint
+        if (endpoint === '/api/projects') {
+          console.error('❌ Projects API Error:', {
+            status: response.status,
+            statusText: response.statusText,
+            error,
+            url
+          })
+        }
+        
+        throw new Error(errorMessage)
+      }
+
+      const data = await response.json()
+      
+      // Log API responses for debugging (only for projects endpoint)
+      if (endpoint === '/api/projects' && (!options.method || options.method === 'GET')) {
+        console.log('🌐 API Response for /api/projects:', {
+          url,
+          status: response.status,
+          statusText: response.statusText,
+          data,
+          projectsCount: data.projects?.length ?? 0,
+          hasProjects: !!data.projects,
+          responseStructure: Object.keys(data),
+          fullResponse: data
+        })
+        
+        // Additional validation
+        if (!data.projects) {
+          console.error('❌ CRITICAL: Response missing projects property!')
+          console.error('❌ Response keys:', Object.keys(data))
+          console.error('❌ Full response:', JSON.stringify(data, null, 2))
+        } else if (data.projects.length === 0) {
+          console.warn('⚠️ WARNING: Projects array is empty!')
+          console.warn('⚠️ Response:', JSON.stringify(data, null, 2))
+        }
+      }
+      
+      // Remove from cache after successful response
+      // For projects endpoint, never cache to ensure fresh data
+      if (cacheKey && !isProjectsEndpoint) {
+        requestCache.delete(cacheKey)
+      }
+      
+      return data
+    } catch (error: any) {
+      // Remove from cache on error
+      if (cacheKey && !isProjectsEndpoint) {
+        requestCache.delete(cacheKey)
+      }
+      
+      // Enhanced error handling for network issues
+      if (error.message === 'Failed to fetch' || error.name === 'TypeError' || error.name === 'TimeoutError') {
+        console.error('Network error:', {
+          url,
+          method: options.method || 'GET',
+          apiUrl: API_URL,
+          endpoint,
+          error: error.message
+        })
+        throw new Error(`Cannot connect to backend server at ${API_URL}. Please check if the server is running.`)
+      }
+      throw error
+    }
+  })()
+  
+  // Cache the promise for GET requests (but not for projects endpoint)
+  if (cacheKey && !isProjectsEndpoint) {
+    requestCache.set(cacheKey, requestPromise)
+    // Auto-remove from cache after 1 second to allow fresh requests
+    setTimeout(() => requestCache.delete(cacheKey), 1000)
+  }
+  
+  return requestPromise
 }
 
 // Projects API

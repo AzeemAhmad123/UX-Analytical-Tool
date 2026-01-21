@@ -16,6 +16,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+    exclude: ['worker_threads'], // Exclude worker_threads to suppress browser warning
+  },
+  define: {
+    // Suppress worker_threads warning from rrweb
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
   },
   build: {
     rollupOptions: {

@@ -11,7 +11,7 @@ export function SessionReplayPlayer() {
   const { projectId, sessionId } = useParams()
   const navigate = useNavigate()
   const replayContainerRef = useRef<HTMLDivElement>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false) // Start with false - load in background
   const [error, setError] = useState<string | null>(null)
   const [session, setSession] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([]) // All sessions for left panel
@@ -30,22 +30,45 @@ export function SessionReplayPlayer() {
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('web')
 
   useEffect(() => {
+    let isMounted = true
+    
     if (projectId) {
-      loadAllSessions()
+      loadAllSessions().catch((error: any) => {
+        if (error?.name !== 'AbortError' && isMounted) {
+          console.error('Error loading sessions:', error)
+        }
+      })
     }
     if (projectId && sessionId) {
+      // Load data sequentially to avoid race conditions and AbortErrors
       loadSessionData()
-      loadSnapshots()
-      loadEvents()
+        .then(() => {
+          if (isMounted) {
+            return loadSnapshots()
+          }
+        })
+        .then(() => {
+          if (isMounted) {
+            return loadEvents()
+          }
+        })
+        .catch((error: any) => {
+          if (error?.name !== 'AbortError' && isMounted) {
+            console.error('Error loading session replay data:', error)
+          }
+        })
+    }
+    
+    return () => {
+      isMounted = false
     }
   }, [projectId, sessionId])
 
   useEffect(() => {
-    if (snapshots.length > 0 && replayContainerRef.current && !loading) {
+    if (snapshots.length > 0 && replayContainerRef.current) {
       console.log('🎬 useEffect: Conditions met, initializing player', {
         snapshotsCount: snapshots.length,
         hasContainer: !!replayContainerRef.current,
-        isLoading: loading,
         containerReady: replayContainerRef.current.offsetWidth > 0,
         platform: selectedPlatform
       })
@@ -104,8 +127,11 @@ export function SessionReplayPlayer() {
         end_date: new Date().toISOString()
       })
       setSessions(response.sessions || [])
-    } catch (error) {
-      console.error('Error loading sessions:', error)
+    } catch (error: any) {
+      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
+      if (error?.name !== 'AbortError' && error?.message !== 'signal is aborted without reason') {
+        console.error('Error loading sessions:', error)
+      }
     }
   }
 
@@ -144,15 +170,28 @@ export function SessionReplayPlayer() {
           setDuration(response.session.duration)
         }
         
-        // Check for video (mobile sessions)
-        if (response.session.has_video && response.session.video_url) {
+        // Check for video (mobile sessions) - check multiple possible fields
+        const videoUrl = response.session.video_url || response.session.videoUrl || null
+        const hasVideoFlag = response.session.has_video || response.session.hasVideo || false
+        
+        if (hasVideoFlag && videoUrl) {
           setHasVideo(true)
-          setVideoUrl(response.session.video_url)
+          setVideoUrl(videoUrl)
           // Use video duration if available
-          if (response.session.video_duration) {
-            setDuration(response.session.video_duration)
+          const videoDuration = response.session.video_duration || response.session.videoDuration
+          if (videoDuration) {
+            setDuration(videoDuration)
           }
-          console.log('📹 Mobile session with video:', response.session.video_url)
+          console.log('📹 Mobile session with video:', videoUrl)
+        } else if (videoUrl) {
+          // If video URL exists but flag is not set, still show video
+          setHasVideo(true)
+          setVideoUrl(videoUrl)
+          const videoDuration = response.session.video_duration || response.session.videoDuration
+          if (videoDuration) {
+            setDuration(videoDuration)
+          }
+          console.log('📹 Video URL found (flag not set):', videoUrl)
         }
       }
       
@@ -160,12 +199,19 @@ export function SessionReplayPlayer() {
         setEvents(response.events)
       }
     } catch (error: any) {
+      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
+      if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
+        // Don't set error state for abort errors - they're expected when component unmounts
+        console.log('Request was cancelled (this is normal when navigating away)')
+        return
+      }
+      
       console.error('Error loading session:', error)
       setError('Failed to load session data')
     }
   }
 
-  const loadEvents = async () => {
+  const loadEvents = async (): Promise<void> => {
     if (!projectId || !sessionId) return
     try {
       // Load events for the activity timeline
@@ -187,16 +233,19 @@ export function SessionReplayPlayer() {
       } else if (response.events) {
         setEvents(response.events)
       }
-    } catch (error) {
-      console.error('Error loading events:', error)
+    } catch (error: any) {
+      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
+      if (error?.name !== 'AbortError' && error?.message !== 'signal is aborted without reason') {
+        console.error('Error loading events:', error)
+      }
     }
   }
 
-  const loadSnapshots = async () => {
+  const loadSnapshots = async (): Promise<void> => {
     if (!projectId || !sessionId) return
     
     try {
-      setLoading(true)
+      // Load in background without blocking UI
       setError(null)
       
       console.log('📥 Loading snapshots for session:', { projectId, sessionId })
@@ -216,13 +265,29 @@ export function SessionReplayPlayer() {
       
       let events: any[] = []
       
-      // Check for video first (mobile sessions)
-      if (data.session?.has_video && data.session?.video_url) {
-        console.log('📹 Mobile session with video detected')
+      // Check for video first (mobile sessions) - check multiple possible fields
+      const videoUrl = data.session?.video_url || data.session?.videoUrl || null
+      const hasVideoFlag = data.session?.has_video || data.session?.hasVideo || false
+      
+      if (hasVideoFlag && videoUrl) {
+        console.log('📹 Mobile session with video detected:', videoUrl)
         setHasVideo(true)
-        setVideoUrl(data.session.video_url)
-        if (data.session.video_duration) {
-          setDuration(data.session.video_duration)
+        setVideoUrl(videoUrl)
+        const videoDuration = data.session?.video_duration || data.session?.videoDuration
+        if (videoDuration) {
+          setDuration(videoDuration)
+        }
+        setSnapshots([]) // No snapshots for mobile
+        setLoading(false)
+        return // Don't try to load snapshots
+      } else if (videoUrl) {
+        // If video URL exists but flag is not set, still show video
+        console.log('📹 Video URL found (flag not set):', videoUrl)
+        setHasVideo(true)
+        setVideoUrl(videoUrl)
+        const videoDuration = data.session?.video_duration || data.session?.videoDuration
+        if (videoDuration) {
+          setDuration(videoDuration)
         }
         setSnapshots([]) // No snapshots for mobile
         setLoading(false)
@@ -256,12 +321,28 @@ export function SessionReplayPlayer() {
       
       if (events.length === 0) {
         // Check if this is a mobile session with video instead of snapshots
-        if (data.session?.has_video && data.session?.video_url) {
-          console.log('📹 Mobile session detected - using video instead of snapshots')
+        const videoUrl = data.session?.video_url || data.session?.videoUrl || null
+        const hasVideoFlag = data.session?.has_video || data.session?.hasVideo || false
+        
+        if (hasVideoFlag && videoUrl) {
+          console.log('📹 Mobile session detected - using video instead of snapshots:', videoUrl)
           setHasVideo(true)
-          setVideoUrl(data.session.video_url)
-          if (data.session.video_duration) {
-            setDuration(data.session.video_duration)
+          setVideoUrl(videoUrl)
+          const videoDuration = data.session?.video_duration || data.session?.videoDuration
+          if (videoDuration) {
+            setDuration(videoDuration)
+          }
+          setSnapshots([]) // No snapshots for mobile
+          setLoading(false)
+          return // Don't show error, video will be displayed
+        } else if (videoUrl) {
+          // If video URL exists but flag is not set, still show video
+          console.log('📹 Video URL found (flag not set):', videoUrl)
+          setHasVideo(true)
+          setVideoUrl(videoUrl)
+          const videoDuration = data.session?.video_duration || data.session?.videoDuration
+          if (videoDuration) {
+            setDuration(videoDuration)
           }
           setSnapshots([]) // No snapshots for mobile
           setLoading(false)
@@ -368,15 +449,21 @@ export function SessionReplayPlayer() {
         }
       }
     } catch (error: any) {
+      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
+      if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
+        // Don't set error state for abort errors - they're expected when component unmounts
+        console.log('Request was cancelled (this is normal when navigating away)')
+        return
+      }
+      
       console.error('Error loading snapshots:', error)
       if (error.message?.includes('404') || error.message?.includes('not found')) {
         setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
       } else {
         setError(error.message || 'Failed to load snapshots')
       }
-    } finally {
-      setLoading(false)
     }
+    // No finally block - we don't set loading state anymore
   }
 
   const initializePlayer = () => {
@@ -419,8 +506,36 @@ export function SessionReplayPlayer() {
       } else if (type2Index === -1) {
         console.error('ERROR: No full snapshot (type 2) found! Replay will NOT work.')
         console.error('Event types:', validSnapshots.map((e: any) => e.type))
-        setError('Missing full snapshot. This session cannot be replayed. Please record a new session.')
-        return
+        console.error('Total events:', validSnapshots.length)
+        console.error('First few events:', validSnapshots.slice(0, 3))
+        
+        // Try to find Type 2 in a different format or location
+        // Sometimes Type 2 might be nested or have a different structure
+        let foundType2 = false
+        for (let i = 0; i < validSnapshots.length; i++) {
+          const event = validSnapshots[i]
+          // Check if event has nested data with type 2
+          if (event.data && typeof event.data === 'object') {
+            if (event.data.type === 2 || (Array.isArray(event.data) && event.data.some((e: any) => e?.type === 2))) {
+              console.log('Found Type 2 in nested structure, attempting to extract...')
+              // Try to extract Type 2 from nested structure
+              if (Array.isArray(event.data)) {
+                const type2InArray = event.data.find((e: any) => e?.type === 2)
+                if (type2InArray) {
+                  validSnapshots.unshift(type2InArray)
+                  foundType2 = true
+                  console.log('Extracted Type 2 from nested array')
+                  break
+                }
+              }
+            }
+          }
+        }
+        
+        if (!foundType2) {
+          setError('Missing full snapshot. This session cannot be replayed. Please record a new session.')
+          return
+        }
       }
 
       console.log(`Initializing replay player with ${validSnapshots.length} events`, {
@@ -719,16 +834,51 @@ export function SessionReplayPlayer() {
       // This watches for when rrweb creates the iframe and fixes it immediately
       const fixSandboxAttribute = (iframe: HTMLIFrameElement) => {
         try {
-          // Remove sandbox attribute completely - this is the safest approach
-          // rrweb will work fine without sandbox in our controlled environment
-          if (iframe.hasAttribute('sandbox')) {
-            iframe.removeAttribute('sandbox')
-            console.log('✅ Removed restrictive sandbox attribute from iframe', {
+          // Set sandbox with allow-scripts permission instead of removing it
+          // This prevents rrweb from re-adding restrictive sandbox and allows scripts to run
+          const currentSandbox = iframe.getAttribute('sandbox') || ''
+          
+          // Check if allow-scripts is already present
+          if (currentSandbox.includes('allow-scripts') && currentSandbox.includes('allow-same-origin')) {
+            return true // Already fixed
+          }
+          
+          // Set sandbox with proper permissions - always include all necessary permissions
+          // Remove any existing sandbox restrictions and set full permissions
+          const newSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
+          
+          // Multiple attempts to set sandbox attribute
+          try {
+            iframe.setAttribute('sandbox', newSandbox)
+          } catch (e) {
+            // Try alternative method
+            try {
+              Object.defineProperty(iframe, 'sandbox', {
+                value: newSandbox,
+                writable: true,
+                configurable: true
+              })
+            } catch (e2) {
+              console.warn('Could not set sandbox via defineProperty:', e2)
+            }
+          }
+          
+          // Verify it was set
+          const verifySandbox = iframe.getAttribute('sandbox') || ''
+          if (verifySandbox.includes('allow-scripts') && verifySandbox.includes('allow-same-origin')) {
+            console.log('✅ Fixed iframe sandbox attribute with allow-scripts', {
               iframeSrc: iframe.src?.substring(0, 50),
-              iframeId: iframe.id
+              iframeId: iframe.id,
+              newSandbox: verifySandbox
             })
             return true
+          } else {
+            console.warn('⚠️ Sandbox fix may not have applied correctly', {
+              expected: newSandbox,
+              actual: verifySandbox
+            })
           }
+          return true // Return true anyway to prevent repeated attempts
         } catch (e) {
           console.warn('⚠️ Could not modify iframe sandbox:', e)
         }
@@ -783,15 +933,15 @@ export function SessionReplayPlayer() {
       
       checkAndFixIframes() // Check immediately
       
-      // Also check periodically for the first few seconds (in case iframe is created very late)
+      // Also check periodically for the first 10 seconds (in case iframe is created very late or rrweb re-adds sandbox)
       const checkInterval = setInterval(() => {
         checkAndFixIframes()
       }, 100)
       
-      // Stop checking after 5 seconds
+      // Stop checking after 10 seconds (increased from 5 to catch late iframe creation)
       setTimeout(() => {
         clearInterval(checkInterval)
-      }, 5000)
+      }, 10000)
 
       // No need to restore - we're not overriding anything globally anymore
 
@@ -1129,24 +1279,7 @@ export function SessionReplayPlayer() {
     return events
   }
 
-  if (loading) {
-    return (
-      <div className="dashboard-page-content" style={{ padding: 0, height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ 
-            width: '48px', 
-            height: '48px', 
-            border: '2px solid #9333ea', 
-            borderTop: 'transparent', 
-            borderRadius: '50%', 
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 1rem'
-          }}></div>
-          <p style={{ color: '#4b5563' }}>Loading session replay...</p>
-        </div>
-      </div>
-    )
-  }
+  // Removed loading spinner - data loads in background
 
   if (error) {
     return (
@@ -1494,7 +1627,7 @@ export function SessionReplayPlayer() {
               </div>
             )}
             {/* Show video player for mobile sessions */}
-            {hasVideo && videoUrl && snapshots.length === 0 && !loading && (
+            {hasVideo && videoUrl && !loading && (
               <div style={{
                 width: '100%',
                 height: '100%',
@@ -1529,6 +1662,10 @@ export function SessionReplayPlayer() {
                     if (video && video.duration) {
                       setDuration(video.duration * 1000) // Convert to milliseconds
                     }
+                  }}
+                  onError={(e) => {
+                    console.error('❌ Video load error:', e)
+                    setError('Failed to load video. The video file may not be accessible.')
                   }}
                   onPlay={() => setIsPlaying(true)}
                   onPause={() => setIsPlaying(false)}

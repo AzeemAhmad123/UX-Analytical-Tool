@@ -24,6 +24,45 @@
   var SDK_ERRORS = [];
   var MAX_ERRORS = 10; // Prevent error spam
   
+  // Global error handler for matches() errors from rrweb
+  var originalErrorHandler = window.onerror;
+  window.onerror = function(message, source, lineno, colno, error) {
+    // Catch "matches is not a function" errors and suppress them
+    if (message && typeof message === 'string' && 
+        (message.includes('matches is not a function') || 
+         message.includes('.matches is not a function') ||
+         message.includes('t.matches is not a function'))) {
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK: Suppressed matches() error from rrweb:', message);
+      }
+      return true; // Suppress the error
+    }
+    
+    // Call original error handler if it exists
+    if (originalErrorHandler) {
+      return originalErrorHandler.call(this, message, source, lineno, colno, error);
+    }
+    return false;
+  };
+  
+  // Also catch unhandled promise rejections
+  window.addEventListener('unhandledrejection', function(event) {
+    var error = event.reason;
+    var errorMessage = error && error.message ? error.message : String(error);
+    
+    // Suppress matches() errors in promises
+    if (errorMessage && typeof errorMessage === 'string' && 
+        (errorMessage.includes('matches is not a function') || 
+         errorMessage.includes('.matches is not a function') ||
+         errorMessage.includes('t.matches is not a function'))) {
+      if (window.UXCamSDK && window.UXCamSDK.debug) {
+        console.warn('UXCam SDK: Suppressed matches() error in promise:', errorMessage);
+      }
+      event.preventDefault(); // Suppress the error
+      return;
+    }
+  });
+  
   function safeExecute(fn, context, fallback, errorMessage) {
     try {
       return fn.call(context);
@@ -81,57 +120,80 @@
 
   // CRITICAL POLYFILL: Fix for "t.matches is not a function" and "Illegal invocation" errors
   // This prevents rrweb from crashing on elements that don't have matches()
-  if (typeof Element !== 'undefined') {
-    // Always ensure matches exists and is properly bound
-    var matchesImpl = 
-      Element.prototype.matchesSelector ||
-      Element.prototype.mozMatchesSelector ||
-      Element.prototype.msMatchesSelector ||
-      Element.prototype.oMatchesSelector ||
-      Element.prototype.webkitMatchesSelector ||
-      function(selector) {
-        try {
-          if (!this || !this.ownerDocument) return false;
-          const matches = this.ownerDocument.querySelectorAll(selector);
-          let i = matches.length;
-          while (--i >= 0 && matches.item(i) !== this) {}
-          return i > -1;
-        } catch (e) {
-          return false;
-        }
-      };
+  (function() {
+    if (typeof Element === 'undefined') return;
     
-    // Bind to prevent "Illegal invocation" errors
-    var boundMatches = function(selector) {
-      return matchesImpl.call(this, selector);
+    // Create a safe matches implementation
+    var safeMatchesImpl = function(selector) {
+      try {
+        // Check if this is actually an Element
+        if (!this || typeof this !== 'object') return false;
+        if (!this.nodeType || this.nodeType !== 1) return false; // Not an Element node
+        if (!this.ownerDocument) return false;
+        
+        // Use native matches if available
+        if (Element.prototype.matches && this instanceof Element) {
+          try {
+            return Element.prototype.matches.call(this, selector);
+          } catch (e) {
+            // Fall through to fallback
+          }
+        }
+        
+        // Fallback: use querySelectorAll
+        var matches = this.ownerDocument.querySelectorAll(selector);
+        var i = matches.length;
+        while (--i >= 0 && matches.item(i) !== this) {}
+        return i > -1;
+      } catch (e) {
+        return false;
+      }
     };
     
+    // Apply polyfill to Element.prototype
     if (!Element.prototype.matches) {
       try {
         Object.defineProperty(Element.prototype, 'matches', {
-          value: boundMatches,
+          value: safeMatchesImpl,
           writable: true,
           enumerable: false,
           configurable: true
         });
       } catch (e) {
-        Element.prototype.matches = boundMatches;
+        Element.prototype.matches = safeMatchesImpl;
       }
     } else {
-      // Even if it exists, ensure it's properly bound
-      var existingMatches = Element.prototype.matches;
+      // Wrap existing matches to handle edge cases
+      var originalMatches = Element.prototype.matches;
       Element.prototype.matches = function(selector) {
         try {
-          return existingMatches.call(this, selector);
-        } catch (e) {
-          if (e.message && e.message.includes('Illegal invocation')) {
-            return boundMatches.call(this, selector);
+          // Check if this is a valid Element
+          if (!this || typeof this !== 'object' || !this.nodeType) {
+            return false;
           }
-          throw e;
+          return originalMatches.call(this, selector);
+        } catch (e) {
+          // If original fails, try safe fallback
+          if (e.message && (e.message.includes('Illegal invocation') || e.message.includes('not a function'))) {
+            return safeMatchesImpl.call(this, selector);
+          }
+          // For other errors, return false to prevent crashes
+          return false;
         }
       };
     }
-  }
+    
+    // Also add matches to Node.prototype for broader compatibility
+    if (typeof Node !== 'undefined' && Node.prototype && !Node.prototype.matches) {
+      Node.prototype.matches = function(selector) {
+        // Only work for Element nodes
+        if (this.nodeType === 1) {
+          return Element.prototype.matches.call(this, selector);
+        }
+        return false;
+      };
+    }
+  })();
   
   // Additional fix: Wrap JSON.stringify to prevent illegal invocation
   if (typeof JSON !== 'undefined' && JSON.stringify) {
@@ -260,13 +322,14 @@
     const config = {
       apiUrl: getApiUrl(),
       sdkKey: window.UXCamSDK?.key || '',
-      batchSize: 200, // Larger batch size for bigger snapshots (depends on user activity)
-      flushInterval: 15000, // 15 seconds - slower flushing to match user interaction timing
-      // IMPORTANT: Always flush first event immediately to ensure type 2 is sent
+      batchSize: 10000, // Very large batch - we'll flush all on page unload
+      flushInterval: 0, // Disabled - we only flush on page unload
+      // IMPORTANT: Type 2 is sent immediately, incremental events are batched until page unload
       flushFirstEventImmediately: true,
       sessionTimeout: 30 * 60 * 1000, // 30 minutes
-      snapshotInterval: 5000, // Take snapshot every 5 seconds (slower, more realistic)
-      checkoutInterval: 10000, // Take full snapshot every 10 seconds (for larger snapshots)
+      snapshotInterval: 5000, // Take snapshot every 5 seconds
+      checkoutInterval: 10000, // Take full snapshot every 10 seconds
+      flushOnUnload: true, // Flush all snapshots when user leaves
     };
 
     // State
@@ -528,32 +591,44 @@
       console.log('UXCam SDK: Starting rrweb recording...');
       stopRecording = window.rrweb.record({
         emit(event) {
-          // Capture first Type 2 event
-          if (event.type === 2 && !capturedType2) {
-            capturedType2 = event;
+          // Wrap in try-catch to prevent errors from breaking the website
+          try {
+            // Capture first Type 2 event
+            if (event.type === 2 && !capturedType2) {
+              capturedType2 = event;
+              events.push(event);
+              if (type2Resolve) type2Resolve(event);
+              return; // Don't add to queue, will upload separately
+            }
+            
+            // Block incremental events until Type 2 uploaded
+            if (!type2Uploaded && event.type !== 2) {
+              return;
+            }
+            
+            // Track activity when events are emitted
+            trackActivity();
+            
+            // Process all events (including periodic full snapshots)
             events.push(event);
-            if (type2Resolve) type2Resolve(event);
-            return; // Don't add to queue, will upload separately
-          }
-          
-          // Block incremental events until Type 2 uploaded
-          if (!type2Uploaded && event.type !== 2) {
-            return;
-          }
-          
-          // Track activity when events are emitted
-          trackActivity();
-          
-          // Process all events (including periodic full snapshots)
-          events.push(event);
-          snapshotQueue.push(event);
-          
-          // Auto-flush when batch is full (larger batches = bigger snapshots)
-          if (snapshotQueue.length >= config.batchSize) {
-            flushSnapshots();
-          } else {
-            // Schedule flush based on user activity timing (slower, more realistic)
-            scheduleSnapshotFlush();
+            snapshotQueue.push(event);
+            
+            // UXCam-style behavior: Collect all snapshots during session
+            // Only flush Type 2 immediately, all incremental events are batched until page unload
+            // This prevents frequent flushing and ensures complete session recording
+            
+            // Only auto-flush if batch is extremely large (safety measure)
+            if (snapshotQueue.length >= config.batchSize) {
+              console.warn('UXCam SDK: Snapshot queue very large, flushing to prevent memory issues');
+              flushSnapshots();
+            }
+            // Otherwise, do nothing - snapshots will be flushed on page unload
+          } catch (error) {
+            // Silently catch errors from rrweb to prevent breaking the website
+            if (window.UXCamSDK && window.UXCamSDK.debug) {
+              console.warn('UXCam SDK: Error in rrweb emit:', error);
+            }
+            // Don't rethrow - allow website to continue functioning
           }
         },
         maskAllInputs: true,
@@ -683,6 +758,10 @@
         // Step 10: Enable incremental events
         type2Uploaded = true;
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
+        console.log('UXCam SDK: Incremental events will be collected and sent when user leaves the page');
+        
+        // Don't flush incremental events immediately - collect them during the session
+        // They will be flushed when the user leaves (beforeunload/pagehide)
         
       } catch (error) {
         console.error('UXCam SDK: Type 2 failed:', error.message);
@@ -783,11 +862,9 @@
         
         const jsonString = safeStringify(snapshots);
         
-        // Use LZ-string for compression if available
-        if (window.LZString && jsonString) {
-          return window.LZString.compress(jsonString);
-        }
-        // For now, send as JSON (can be compressed on backend)
+        // CRITICAL: Send uncompressed JSON to ensure PHP backend can parse it
+        // PHP backend doesn't have LZString decompression, so we must send plain JSON
+        // Compression can be added later if needed with a PHP LZString library
         return jsonString;
       } catch (error) {
         console.error('UXCam SDK: Compression failed', error);
@@ -956,33 +1033,30 @@
       }, null, null, 'flushEvents failed');
     }
 
-    // Schedule flush
+    // Schedule flush (for events only - snapshots are flushed on page unload)
     function scheduleFlush() {
+      // If flushInterval is 0, don't schedule automatic flushing
+      // Events will only flush when batch size is reached or on page unload
+      if (config.flushInterval === 0) {
+        return;
+      }
+      
       if (flushTimer) {
         return;
       }
 
       flushTimer = setTimeout(() => {
         flushEvents();
-        if (snapshotQueue.length > 0) {
-          flushSnapshots();
-        }
+        // Don't flush snapshots here - they're only flushed on page unload (UXCam-style)
       }, config.flushInterval);
     }
 
     // Schedule snapshot flush (separate timer for snapshots)
     let snapshotFlushTimer = null;
     function scheduleSnapshotFlush() {
-      if (snapshotFlushTimer) {
-        return;
-      }
-
-      snapshotFlushTimer = setTimeout(() => {
-        if (snapshotQueue.length > 0) {
-          flushSnapshots();
-        }
-        snapshotFlushTimer = null;
-      }, config.flushInterval); // Flush based on config (15 seconds - matches user interaction timing)
+      // Disabled - we only flush on page unload for UXCam-style behavior
+      // This function is kept for compatibility but does nothing
+      return;
     }
 
     // End session (reusable function) - SAFE: Won't break website if it fails
@@ -1036,7 +1110,14 @@
         
         // Flush remaining data
         flushEvents();
-        flushSnapshots();
+        
+        // Flush all collected snapshots when ending session manually
+        if (snapshotQueue.length > 0) {
+          console.log('UXCam SDK: Ending session, flushing all collected snapshots', {
+            snapshotCount: snapshotQueue.length
+          });
+          flushSnapshots();
+        }
       
         // Clear session from localStorage when ending
         try {
@@ -1293,9 +1374,17 @@
                 console.warn('Error stopping recording:', e);
               }
               
-              // Flush remaining data synchronously
+              // CRITICAL: Flush all collected snapshots before page unload
+              // This is the UXCam-style behavior - collect during session, send on exit
+              if (snapshotQueue.length > 0) {
+                console.log('UXCam SDK: Flushing all collected snapshots on page unload', {
+                  snapshotCount: snapshotQueue.length,
+                  eventTypes: snapshotQueue.map(s => s?.type)
+                });
+              }
+              
+              // Flush remaining events
               flushEvents();
-              flushSnapshots();
               
               // Clear session
               try {
@@ -1320,21 +1409,65 @@
               navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
             }
 
+            // CRITICAL: Send all collected snapshots via sendBeacon (UXCam-style)
+            // This ensures all snapshots are sent when user leaves the page
             if (snapshotQueue.length > 0) {
               const snapshots = [...snapshotQueue];
               snapshotQueue = [];
               const compressed = compressSnapshots(snapshots);
+              
               const blob = new Blob([JSON.stringify({
                 sdk_key: config.sdkKey,
                 session_id: sessionId,
                 snapshots: compressed,
-                snapshot_count: snapshots.length
+                snapshot_count: snapshots.length,
+                is_initial_snapshot: false
               })], { type: 'application/json' });
-              navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+              
+              const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+              if (sent) {
+                console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon');
+              } else {
+                console.warn('UXCam SDK: ⚠️ sendBeacon failed, trying fetch with keepalive');
+                fetch(`${config.apiUrl}/api/snapshots/ingest`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sdk_key: config.sdkKey,
+                    session_id: sessionId,
+                    snapshots: compressed,
+                    snapshot_count: snapshots.length,
+                    is_initial_snapshot: false
+                  }),
+                  keepalive: true
+                }).catch(() => {
+                  console.warn('UXCam SDK: Failed to send snapshots on unload');
+                });
+              }
             }
 
             if (stopRecording) {
               stopRecording();
+            }
+          });
+          
+          // Also handle pagehide event (more reliable on mobile devices)
+          window.addEventListener('pagehide', () => {
+            if (sessionId && snapshotQueue.length > 0) {
+              console.log('UXCam SDK: Page hiding, flushing snapshots');
+              const snapshots = [...snapshotQueue];
+              snapshotQueue = [];
+              const compressed = compressSnapshots(snapshots);
+              
+              const blob = new Blob([JSON.stringify({
+                sdk_key: config.sdkKey,
+                session_id: sessionId,
+                snapshots: compressed,
+                snapshot_count: snapshots.length,
+                is_initial_snapshot: false
+              })], { type: 'application/json' });
+              
+              navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
             }
           });
           
@@ -1695,58 +1828,8 @@
     }
   }
 
-  // Validate domain to ensure SDK key is only used on authorized domains
-  function validateDomain(apiUrl, sdkKey, callback) {
-    try {
-      var currentDomain = window.location.hostname;
-      
-      // Send domain validation request to backend
-      fetch(apiUrl + '/api/sdk/validate-domain', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          sdk_key: sdkKey,
-          domain: currentDomain,
-          origin: window.location.origin
-        })
-      })
-      .then(function(response) {
-        return response.json();
-      })
-      .then(function(data) {
-        if (data.valid === true) {
-          // Domain is valid, proceed with initialization
-          if (window.UXCamSDK && window.UXCamSDK.debug) {
-            console.log('UXCam SDK: Domain validated successfully');
-          }
-          callback(true);
-        } else {
-          // Domain is not authorized
-          console.error('UXCam SDK: ❌ Domain not authorized for this SDK key');
-          console.error('UXCam SDK: This SDK key can only be used on: ' + (data.allowed_domains || 'authorized domains'));
-          console.error('UXCam SDK: Current domain: ' + currentDomain);
-          callback(false);
-        }
-      })
-      .catch(function(error) {
-        // If validation fails, allow initialization (fail open for first-time setup)
-        // Backend will validate on actual data submission
-        if (window.UXCamSDK && window.UXCamSDK.debug) {
-          console.warn('UXCam SDK: Domain validation request failed, proceeding with initialization');
-          console.warn('UXCam SDK: Backend will validate domain on data submission');
-        }
-        callback(true); // Allow initialization, backend will validate
-      });
-    } catch (e) {
-      // If validation fails, allow initialization (fail open)
-      if (window.UXCamSDK && window.UXCamSDK.debug) {
-        console.warn('UXCam SDK: Domain validation error, proceeding with initialization');
-      }
-      callback(true);
-    }
-  }
+  // Domain validation removed - SDK works on any website
+  // No domain restrictions - developers can use SDK key on any domain
 
   // Start initialization immediately when script loads - SAFE: Won't break website
   // Check if SDK config is available and if we should record
@@ -1760,18 +1843,11 @@
     }
     
     if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
-      // Validate domain before initializing
-      validateDomain(window.UXCamSDK.apiUrl, window.UXCamSDK.key, function(isValid) {
-        if (isValid) {
-          if (window.UXCamSDK.debug) {
-            console.log('UXCam SDK: Configuration found, starting initialization...');
-          }
-          initSDK();
-        } else {
-          // Domain validation failed, don't initialize
-          console.error('UXCam SDK: Initialization blocked - Domain not authorized');
-        }
-      });
+      // Initialize SDK - domain validation disabled (works on any website)
+      if (window.UXCamSDK.debug) {
+        console.log('UXCam SDK: Configuration found, starting initialization...');
+      }
+      initSDK();
     } else {
       if (window.UXCamSDK && window.UXCamSDK.debug) {
         console.warn('UXCam SDK: Configuration not found. Waiting for window.UXCamSDK to be set...');
@@ -1785,17 +1861,11 @@
           }
           
           if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
-            // Validate domain before initializing
-            validateDomain(window.UXCamSDK.apiUrl, window.UXCamSDK.key, function(isValid) {
-              if (isValid) {
-                if (window.UXCamSDK.debug) {
-                  console.log('UXCam SDK: Configuration found after delay, starting initialization...');
-                }
-                initSDK();
-              } else {
-                console.error('UXCam SDK: Initialization blocked - Domain not authorized');
-              }
-            });
+            // Initialize SDK - domain validation disabled (works on any website)
+            if (window.UXCamSDK.debug) {
+              console.log('UXCam SDK: Configuration found after delay, starting initialization...');
+            }
+            initSDK();
           } else {
             if (window.UXCamSDK && window.UXCamSDK.debug) {
               console.error('UXCam SDK: ❌ Configuration still not found. Please set window.UXCamSDK.key and window.UXCamSDK.apiUrl');

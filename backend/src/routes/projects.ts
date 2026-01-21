@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { supabase } from '../config/supabase'
 import { generateSDKKey } from '../utils/sdkKeyGenerator'
+import { authenticateUser } from '../middleware/auth'
 
 const router = Router()
 
@@ -12,13 +13,15 @@ const router = Router()
  * {
  *   name: string (required),
  *   description?: string,
- *   platform?: string (default: 'all', options: 'all', 'web', 'mobile'),
- *   user_id?: string (optional, for future auth)
+ *   platform?: string (default: 'all', options: 'all', 'web', 'mobile')
  * }
+ * 
+ * Requires: Bearer token in Authorization header
  */
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', authenticateUser, async (req: Request, res: Response) => {
   try {
-    const { name, description, platform = 'all', user_id } = req.body
+    const userId = (req as any).userId // Get user_id from authenticated token
+    const { name, description, platform = 'all' } = req.body
 
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
@@ -71,7 +74,7 @@ router.post('/', async (req: Request, res: Response) => {
         description: description?.trim() || null,
         platform: platformValue,
         sdk_key: sdkKey,
-        user_id: user_id || null,
+        user_id: userId, // Use authenticated user's ID
         is_active: true // New projects are active by default
       })
       .select()
@@ -104,16 +107,18 @@ router.post('/', async (req: Request, res: Response) => {
  * GET /api/projects
  * Get all projects for the authenticated user
  * 
- * Note: This endpoint currently returns all projects.
- * In the future, it should filter by authenticated user_id.
+ * Requires: Bearer token in Authorization header
+ * Returns: Only projects belonging to the authenticated user
  */
-router.get('/', async (req: Request, res: Response) => {
+router.get('/', authenticateUser, async (req: Request, res: Response) => {
   try {
-    // TODO: Get user_id from authentication token
-    // For now, return all projects (will be restricted in production)
+    const userId = (req as any).userId // Get user_id from authenticated token
+    
+    // Filter projects by user_id
     const { data: projects, error } = await supabase
       .from('projects')
       .select('id, name, description, sdk_key, platform, is_active, created_at, updated_at')
+      .eq('user_id', userId) // Only return projects for this user
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -141,10 +146,12 @@ router.get('/', async (req: Request, res: Response) => {
  * This allows users to turn projects on/off without deleting them.
  * Inactive projects won't appear in data views but are preserved.
  * 
+ * Requires: Bearer token in Authorization header
  * NOTE: This route MUST come before router.get('/:id') to avoid route conflicts
  */
-router.patch('/:id/toggle-active', async (req: Request, res: Response) => {
+router.patch('/:id/toggle-active', authenticateUser, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId // Get user_id from authenticated token
     const projectId = req.params.id
 
     if (!projectId) {
@@ -154,10 +161,10 @@ router.patch('/:id/toggle-active', async (req: Request, res: Response) => {
       })
     }
 
-    // Get current project status
+    // Get current project status and verify ownership
     const { data: project, error: findError } = await supabase
       .from('projects')
-      .select('id, name, is_active')
+      .select('id, name, is_active, user_id')
       .eq('id', projectId)
       .single()
 
@@ -165,6 +172,14 @@ router.patch('/:id/toggle-active', async (req: Request, res: Response) => {
       return res.status(404).json({
         error: 'Project not found',
         message: `Project ${projectId} not found`
+      })
+    }
+
+    // Verify the project belongs to the authenticated user
+    if (project.user_id !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have permission to modify this project'
       })
     }
 
@@ -199,14 +214,18 @@ router.patch('/:id/toggle-active', async (req: Request, res: Response) => {
 /**
  * GET /api/projects/:id
  * Get a specific project by ID
+ * 
+ * Requires: Bearer token in Authorization header
+ * Returns: Project only if it belongs to the authenticated user
  */
-router.get('/:id', async (req: Request, res: Response) => {
+router.get('/:id', authenticateUser, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId // Get user_id from authenticated token
     const projectId = req.params.id
 
     const { data: project, error } = await supabase
       .from('projects')
-      .select('id, name, description, sdk_key, platform, is_active, created_at, updated_at')
+      .select('id, name, description, sdk_key, platform, is_active, created_at, updated_at, user_id')
       .eq('id', projectId)
       .single()
 
@@ -214,6 +233,14 @@ router.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({
         error: 'Project not found',
         message: `Project ${projectId} not found`
+      })
+    }
+
+    // Verify the project belongs to the authenticated user
+    if (project.user_id !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have permission to access this project'
       })
     }
 
@@ -236,9 +263,12 @@ router.get('/:id', async (req: Request, res: Response) => {
  * 
  * Note: This will cascade delete all sessions, snapshots, events, and funnels
  * associated with this project due to foreign key constraints.
+ * 
+ * Requires: Bearer token in Authorization header
  */
-router.delete('/:id', async (req: Request, res: Response) => {
+router.delete('/:id', authenticateUser, async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId // Get user_id from authenticated token
     const projectId = req.params.id
 
     if (!projectId) {
@@ -248,10 +278,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
       })
     }
 
-    // First, verify the project exists
+    // First, verify the project exists and belongs to the user
     const { data: project, error: findError } = await supabase
       .from('projects')
-      .select('id, name')
+      .select('id, name, user_id')
       .eq('id', projectId)
       .single()
 
@@ -259,6 +289,14 @@ router.delete('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({
         error: 'Project not found',
         message: `Project ${projectId} not found`
+      })
+    }
+
+    // Verify the project belongs to the authenticated user
+    if (project.user_id !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have permission to delete this project'
       })
     }
 

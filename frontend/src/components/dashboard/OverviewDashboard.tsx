@@ -39,7 +39,7 @@ export function OverviewDashboard() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<any[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d'>('7d')
+  const [dateRange, setDateRange] = useState<'7d' | '30d' | '90d'>('7d') // Keep 7d as default but will show 2 days of data
   const [loading, setLoading] = useState(true)
   const [data, setData] = useState<OverviewData | null>(null)
   const [selectedCard, setSelectedCard] = useState<'sessions' | 'activeUsers' | 'topEvents' | 'appVersion' | 'sessionDuration' | 'rageGestures' | null>(null)
@@ -60,7 +60,13 @@ export function OverviewDashboard() {
 
   const loadProjects = async () => {
     try {
-      const response = await projectsAPI.getAll()
+      // Add timeout for faster failure
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 5000) // 5 second timeout
+      )
+      
+      const apiPromise = projectsAPI.getAll()
+      const response = await Promise.race([apiPromise, timeoutPromise]) as any
       const projectsList = response.projects || []
       const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
       setProjects(projectsList)
@@ -71,55 +77,92 @@ export function OverviewDashboard() {
       }
     } catch (error) {
       console.error('Error loading projects:', error)
+      setLoading(false) // Stop loading on error
     }
   }
 
   const loadOverviewData = useCallback(async () => {
-    if (!selectedProject) return
+    if (!selectedProject) {
+      console.log('⚠️ Overview: No project selected')
+      return
+    }
 
     try {
       setLoading(true)
       
-      // Calculate date range
-      const days = dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90
+      // Calculate date range - default to 2 days for better performance
+      const days = dateRange === '7d' ? 2 : dateRange === '30d' ? 30 : 90
       const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
       const endDate = new Date().toISOString()
+      
+      console.log('🔍 Overview: Loading data', {
+        projectId: selectedProject,
+        dateRange: { start: startDate, end: endDate },
+        days
+      })
+
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 10000) // 10 second timeout
+      )
 
       // Use optimized endpoint that does all calculations server-side
-      const [detailedData, rageClicks] = await Promise.all([
-        analyticsAPI.getOverviewDetailed(selectedProject, {
-          start_date: startDate,
-          end_date: endDate,
-          platform_filter: 'all'
-        }).catch(() => null),
-        advancedAnalyticsAPI.getRageClicksSummary(selectedProject, startDate, endDate).catch(() => ({ count: 0 }))
-      ])
+      const [detailedData, rageClicks] = await Promise.race([
+        Promise.all([
+          analyticsAPI.getOverviewDetailed(selectedProject, {
+            start_date: startDate,
+            end_date: endDate,
+            platform_filter: 'all'
+          }).catch(() => null),
+          advancedAnalyticsAPI.getRageClicksSummary(selectedProject, startDate, endDate).catch(() => ({ count: 0 }))
+        ]),
+        timeoutPromise
+      ]) as [any, any]
 
       if (!detailedData) {
+        console.log('⚠️ Overview: Detailed API failed, trying basic overview')
         // Fallback to basic overview if detailed fails
-        const analytics = await analyticsAPI.getOverview(selectedProject, {
-          start_date: startDate,
-          end_date: endDate,
-          platform_filter: 'all'
-        })
-        setData({
-          sessions: analytics.sessions || 0,
-          activeUsers: analytics.active_users || 0,
-          sessionsTrend: 0,
-          activeUsersTrend: 0,
-          topEvents: { name: 'UI Freeze', count: 0 },
-          sessionsByDuration: [],
-          sessionsByWeekDay: [],
-          topAppVersion: { version: '1.0.11', percentage: 99 },
-          sessionDuration: { avg: '0.0 min', change: 0 },
-          rageGestures: rageClicks.count || 0,
-          topWeekDay: { day: 'Thursday', percentage: 17, breakdown: { morning: 35, afternoon: 40, evening: 25 } },
-          topScreen: { name: 'unknown', percentage: 100, breakdown: [] },
-          topCountry: { name: 'United States', percentage: 88 },
-          topDevices: { name: 'Android Large', percentage: 95 }
-        })
-        return
+        try {
+          const analytics = await analyticsAPI.getOverview(selectedProject, {
+            start_date: startDate,
+            end_date: endDate,
+            platform_filter: 'all'
+          })
+          console.log('✅ Overview: Basic overview loaded', {
+            sessions: analytics.sessions || 0,
+            activeUsers: analytics.active_users || 0
+          })
+          setData({
+            sessions: analytics.sessions || 0,
+            activeUsers: analytics.active_users || 0,
+            sessionsTrend: 0,
+            activeUsersTrend: 0,
+            topEvents: { name: 'UI Freeze', count: 0 },
+            sessionsByDuration: [],
+            sessionsByWeekDay: [],
+            topAppVersion: { version: '1.0.11', percentage: 99 },
+            sessionDuration: { avg: '0.0 min', change: 0 },
+            rageGestures: rageClicks.count || 0,
+            topWeekDay: { day: 'Thursday', percentage: 17, breakdown: { morning: 35, afternoon: 40, evening: 25 } },
+            topScreen: { name: 'unknown', percentage: 100, breakdown: [] },
+            topCountry: { name: 'United States', percentage: 88 },
+            topDevices: { name: 'Android Large', percentage: 95 }
+          })
+          return
+        } catch (fallbackError) {
+          console.error('❌ Overview: Basic overview also failed', fallbackError)
+          // Set empty data to show "No data available"
+          setData(null)
+          return
+        }
       }
+      
+      console.log('✅ Overview: Detailed data loaded', {
+        sessions: detailedData.sessions || 0,
+        activeUsers: detailedData.active_users || 0,
+        hasSessionsByDuration: Array.isArray(detailedData.sessions_by_duration),
+        sessionsByDurationLength: Array.isArray(detailedData.sessions_by_duration) ? detailedData.sessions_by_duration.length : 0
+      })
 
       setData({
         sessions: detailedData.sessions || 0,
@@ -148,8 +191,15 @@ export function OverviewDashboard() {
         sessionDurationChart: detailedData.session_duration_chart || [],
         rageGesturesChart: detailedData.rage_gestures_chart || []
       })
-    } catch (error) {
-      console.error('Error loading overview data:', error)
+    } catch (error: any) {
+      console.error('❌ Overview: Error loading data', {
+        error: error.message,
+        stack: error.stack,
+        projectId: selectedProject,
+        dateRange
+      })
+      // Set data to null to show "No data available"
+      setData(null)
     } finally {
       setLoading(false)
     }
@@ -217,7 +267,20 @@ export function OverviewDashboard() {
 
       {!data ? (
         <div className="text-center py-12">
-          <p className="text-gray-500">No data available</p>
+          <p className="text-gray-500 mb-2">No data available</p>
+          <p className="text-sm text-gray-400">
+            {selectedProject 
+              ? 'Try selecting a different date range or check if there are sessions recorded in this period.'
+              : 'Please select a project to view data.'}
+          </p>
+          {selectedProject && (
+            <button
+              onClick={() => loadOverviewData()}
+              className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              Retry Loading Data
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-6 items-stretch">

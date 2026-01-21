@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Store - Home</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.8em;
+        }
+        
+        .nav {
+            background: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .nav a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: background 0.3s;
+        }
+        
+        .nav a:hover {
+            background: #f0f0f0;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+        
+        .hero {
+            background: white;
+            padding: 60px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 40px;
+        }
+        
+        .hero h2 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+        
+        .hero p {
+            font-size: 1.2em;
+            color: #666;
+            margin-bottom: 30px;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 14px 28px;
+            background: #667eea;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: all 0.3s;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .btn:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+        
+        .product-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+        }
+        
+        .product-card img {
+            width: 100%;
+            height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            background: #f0f0f0;
+        }
+        
+        .product-card h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .product-card .price {
+            font-size: 1.5em;
+            color: #667eea;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        .status.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+    </style>
+    
+    <!-- UXCam Analytics SDK - Web (JavaScript) -->
+    <!-- Load rrweb for visual session replay -->
+    <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+    
+    <!-- UXCam SDK Configuration -->
+    <script>
+      window.UXCamSDK = {
+        key: 'ux_10d3d2f46073542c01af7803f62ffe79',
+        apiUrl: 'http://localhost:3001'
+      };
+    </script>
+    
+    <!-- Load UXCam SDK -->
+    <script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>
+</head>
+<body>
+    <div class="header">
+        <h1>🛍️ E-Commerce Store</h1>
+    </div>
+    
+    <div class="nav">
+        <a href="index.html">Home</a>
+        <a href="products.html">Products</a>
+        <a href="cart.html">Cart</a>
+    </div>
+    
+    <div class="container">
+        <div class="hero">
+            <h2>Welcome to Our Store!</h2>
+            <p>Discover amazing products at great prices</p>
+            <a href="products.html" class="btn">Shop Now</a>
+        </div>
+        
+        <div class="products-grid">
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">📱</div>
+                <h3>Smartphone</h3>
+                <div class="price">$599</div>
+                <a href="product.html?id=1" class="btn" style="width: 100%; text-align: center; display: block;">View Details</a>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">💻</div>
+                <h3>Laptop</h3>
+                <div class="price">$999</div>
+                <a href="product.html?id=2" class="btn" style="width: 100%; text-align: center; display: block;">View Details</a>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">⌚</div>
+                <h3>Smart Watch</h3>
+                <div class="price">$299</div>
+                <a href="product.html?id=3" class="btn" style="width: 100%; text-align: center; display: block;">View Details</a>
+            </div>
+        </div>
+        
+        <div id="status" class="status success" style="display: none;">
+            ✅ Page view tracked!
+        </div>
+    </div>
+    
+    <script>
+        window.addEventListener('load', function() {
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            
+            // Track page view
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('page_view', {
+                    url: window.location.href,
+                    page: 'home'
+                });
+            }
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        });
+    </script>
+</body>
+</html>

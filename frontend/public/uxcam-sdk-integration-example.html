@@ -1,0 +1,29 @@
+<!-- UXCam Analytics SDK - Web (JavaScript) - COMPLETE VERSION -->
+<!-- Copy and paste this code into the <head> section of your HTML -->
+
+<!-- Load rrweb for visual session replay -->
+<script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+
+<!-- UXCam SDK Configuration -->
+<script>
+  window.UXCamSDK = {
+    key: 'ux_b56f732d3ae936ebd6e8773f706c54fd',
+    apiUrl: 'https://api.enalyze.123fixit.com'
+  };
+</script>
+
+<!-- Load UXCam SDK -->
+<script src="https://enalyze.123fixit.com/uxcam-sdk-rrweb.js" async></script>
+
+<!-- 
+  Note: The Web SDK automatically includes device_info when sending events.
+  No additional code needed - the SDK handles everything automatically.
+  
+  The SDK will send:
+  - Platform: "web"
+  - Viewport dimensions
+  - User agent
+  - Browser information
+  - Screen resolution
+  - And more device/browser details
+-->

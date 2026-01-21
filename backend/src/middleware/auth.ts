@@ -159,6 +159,53 @@ export async function authenticateSDK(
 }
 
 /**
+ * Express middleware to authenticate users using Supabase JWT token
+ * Extracts user_id from Bearer token and attaches it to request
+ */
+export async function authenticateUser(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authHeader = req.headers.authorization
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        error: 'Authentication required',
+        message: 'Please provide a valid Bearer token in Authorization header'
+      })
+      return
+    }
+
+    const token = authHeader.substring(7) // Remove 'Bearer ' prefix
+
+    // Verify token and get user
+    const { data: { user }, error } = await supabase.auth.getUser(token)
+
+    if (error || !user) {
+      res.status(401).json({
+        error: 'Invalid token',
+        message: 'The provided token is not valid or has expired'
+      })
+      return
+    }
+
+    // Attach user info to request
+    ;(req as any).userId = user.id
+    ;(req as any).user = user
+
+    next()
+  } catch (error: any) {
+    console.error('Error authenticating user:', error)
+    res.status(500).json({ 
+      error: 'Authentication failed',
+      message: error.message
+    })
+  }
+}
+
+/**
  * Express middleware to validate that a project exists
  * Used for routes that require Bearer token authentication (dashboard)
  * Validates project exists but doesn't require SDK key

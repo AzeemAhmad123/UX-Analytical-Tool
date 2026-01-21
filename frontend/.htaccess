@@ -1,0 +1,232 @@
+# ============================================================================
+# Frontend .htaccess - React Router SPA Configuration
+# SiteGround-compatible configuration with proper MIME type handling
+# ============================================================================
+
+# ============================================================================
+# CRITICAL: MIME Type Configuration (MUST BE FIRST)
+# ============================================================================
+# Set correct MIME types for JavaScript and CSS files
+# This prevents browsers from rejecting module scripts due to wrong MIME types
+<IfModule mod_mime.c>
+  # JavaScript files
+  AddType application/javascript .js
+  AddType application/javascript .mjs
+  AddType application/javascript .jsx
+  
+  # CSS files
+  AddType text/css .css
+  
+  # Set charset for text-based files
+  AddCharset UTF-8 .js .mjs .jsx .css .json
+  
+  # Other common file types
+  AddType image/svg+xml .svg
+  AddType application/json .json
+  AddType application/font-woff .woff
+  AddType application/font-woff2 .woff2
+</IfModule>
+
+# ============================================================================
+# CRITICAL: Force MIME Types for JavaScript Files
+# ============================================================================
+# Force correct MIME type even if server tries to serve as HTML
+# This is especially important for SiteGround hosting
+<FilesMatch "\.(js|mjs|jsx)$">
+  ForceType application/javascript
+  SetHandler default-handler
+  # Prevent PHP from processing JavaScript files
+  RemoveHandler .php .phtml .php3 .php4 .php5 .phps .cgi
+</FilesMatch>
+
+# ============================================================================
+# CRITICAL: Force MIME Types for CSS Files
+# ============================================================================
+<FilesMatch "\.css$">
+  ForceType text/css
+  SetHandler default-handler
+  # Prevent PHP from processing CSS files
+  RemoveHandler .php .phtml .php3 .php4 .php5 .phps .cgi
+</FilesMatch>
+
+# ============================================================================
+# Security: Block Access to Sensitive Files
+# ============================================================================
+<FilesMatch "\.(env|log|ini|conf|bak|backup|old|tmp)$">
+  <IfVersion < 2.4>
+    Order deny,allow
+    Deny from all
+  </IfVersion>
+  <IfVersion >= 2.4>
+    Require all denied
+  </IfVersion>
+</FilesMatch>
+
+# ============================================================================
+# React Router Configuration - SPA Routing
+# ============================================================================
+# IMPORTANT: Order matters! File existence checks MUST come before rewrite rules
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  
+  # ========================================================================
+  # CRITICAL: STOP if file exists - serve it directly
+  # ========================================================================
+  # This MUST be first to prevent existing files from being rewritten
+  RewriteCond %{REQUEST_FILENAME} -f
+  RewriteRule . - [L]
+  
+  # ========================================================================
+  # CRITICAL: STOP if directory exists - serve it directly
+  # ========================================================================
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule . - [L]
+  
+  # ========================================================================
+  # CRITICAL: Handle OLD JavaScript File (Specific Rule)
+  # ========================================================================
+  # Serve empty JS file instead of letting React Router handle it
+  # This prevents "No routes matched" and MIME type errors
+  RewriteCond %{REQUEST_URI} ^/assets/index-D49xRFc2\.js$ [NC]
+  RewriteRule .* assets/empty.js [L]
+  
+  # ========================================================================
+  # CRITICAL: Handle Missing JavaScript Files in /assets/
+  # ========================================================================
+  # For missing JS/MJS files in assets folder, serve empty.js
+  # This prevents MIME type errors and React Router routing attempts
+  RewriteCond %{REQUEST_URI} ^/assets/.*\.(js|mjs|jsx)$ [NC]
+  RewriteRule .* assets/empty.js [L]
+  
+  # ========================================================================
+  # Handle Missing CSS Files
+  # ========================================================================
+  RewriteCond %{REQUEST_URI} \.css$ [NC]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule . - [R=404,L]
+  
+  # ========================================================================
+  # Handle Missing Static Assets (images, fonts, etc.)
+  # ========================================================================
+  RewriteCond %{REQUEST_URI} \.(png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|otf|webp|avif|json|xml|txt|pdf|zip)$ [NC]
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteRule . - [R=404,L]
+  
+  # ========================================================================
+  # React Router: Rewrite all other requests to index.html
+  # ========================================================================
+  # Only non-file, non-directory requests reach here
+  # This enables client-side routing for React Router
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# ============================================================================
+# Security Headers
+# ============================================================================
+<IfModule mod_headers.c>
+  # Basic security headers
+  Header set X-Frame-Options "SAMEORIGIN"
+  Header set X-Content-Type-Options "nosniff"
+  Header set X-XSS-Protection "1; mode=block"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+  
+  # ========================================================================
+  # CRITICAL: Set Content-Type for JavaScript Requests
+  # ========================================================================
+  # This ensures that even 404 responses for JS files have correct MIME type
+  # This prevents "Expected a JavaScript module script" errors
+  # "always" ensures headers are set even for error responses (404, etc.)
+  <LocationMatch "^/assets/.*\.(js|mjs|jsx)$">
+    Header always set Content-Type "application/javascript"
+    Header always set X-Content-Type-Options "nosniff"
+  </LocationMatch>
+  
+  # ========================================================================
+  # CRITICAL: Handle Old File Specifically
+  # ========================================================================
+  # Ensure the old problematic file gets correct MIME type even on 404
+  <LocationMatch "^/assets/index-D49xRFc2\.js$">
+    Header always set Content-Type "application/javascript"
+    Header always set Cache-Control "no-cache, no-store, must-revalidate"
+  </LocationMatch>
+  
+  # ========================================================================
+  # CRITICAL: Prevent Caching of index.html
+  # ========================================================================
+  # This ensures browsers always get the latest version of index.html
+  # which prevents stale asset references
+  <FilesMatch "^(index\.html)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate, max-age=0"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+</IfModule>
+
+# ============================================================================
+# Disable Directory Browsing
+# ============================================================================
+Options -Indexes
+
+# ============================================================================
+# Cache Static Assets
+# ============================================================================
+# Cache static assets for better performance
+# Note: index.html is NOT cached (see headers above)
+<IfModule mod_expires.c>
+  ExpiresActive On
+  
+  # Images - cache for 1 year
+  ExpiresByType image/jpg "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/gif "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/avif "access plus 1 year"
+  ExpiresByType image/x-icon "access plus 1 year"
+  
+  # Fonts - cache for 1 year
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType application/font-woff "access plus 1 year"
+  ExpiresByType application/font-woff2 "access plus 1 year"
+  
+  # CSS and JavaScript - cache for 1 month
+  # This allows updates to be deployed while still benefiting from caching
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  
+  # Other assets
+  ExpiresByType application/json "access plus 1 hour"
+  ExpiresByType application/pdf "access plus 1 month"
+</IfModule>
+
+# ============================================================================
+# Compression (if mod_deflate is available)
+# ============================================================================
+<IfModule mod_deflate.c>
+  # Compress HTML, CSS, JavaScript, Text, XML and fonts
+  AddOutputFilterByType DEFLATE application/javascript
+  AddOutputFilterByType DEFLATE application/json
+  AddOutputFilterByType DEFLATE application/rss+xml
+  AddOutputFilterByType DEFLATE application/vnd.ms-fontobject
+  AddOutputFilterByType DEFLATE application/x-font
+  AddOutputFilterByType DEFLATE application/x-font-opentype
+  AddOutputFilterByType DEFLATE application/x-font-otf
+  AddOutputFilterByType DEFLATE application/x-font-truetype
+  AddOutputFilterByType DEFLATE application/x-font-ttf
+  AddOutputFilterByType DEFLATE application/x-javascript
+  AddOutputFilterByType DEFLATE application/xhtml+xml
+  AddOutputFilterByType DEFLATE application/xml
+  AddOutputFilterByType DEFLATE font/opentype
+  AddOutputFilterByType DEFLATE font/otf
+  AddOutputFilterByType DEFLATE font/ttf
+  AddOutputFilterByType DEFLATE image/svg+xml
+  AddOutputFilterByType DEFLATE image/x-icon
+  AddOutputFilterByType DEFLATE text/css
+  AddOutputFilterByType DEFLATE text/html
+  AddOutputFilterByType DEFLATE text/javascript
+  AddOutputFilterByType DEFLATE text/plain
+  AddOutputFilterByType DEFLATE text/xml
+</IfModule>

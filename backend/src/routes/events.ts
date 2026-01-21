@@ -13,6 +13,7 @@ import {
   getOrCreateUserProperties,
   updateUserProperties
 } from '../services/userPropertiesService'
+import { getLocationFromIP, extractDeviceInfo } from '../utils/ipGeolocation'
 
 const router = Router()
 
@@ -88,7 +89,15 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
 
     // Get or create user properties
     const deviceInfo = req.body.device_info || {}
-    let ipAddress = req.ip || ''
+    let ipAddress = req.ip || req.socket.remoteAddress || ''
+    
+    // Handle X-Forwarded-For header (for proxies/load balancers)
+    const forwardedFor = req.get('x-forwarded-for')
+    if (forwardedFor) {
+      // Take the first IP in the chain (original client)
+      ipAddress = forwardedFor.split(',')[0].trim()
+    }
+    
     // Anonymize IP if enabled
     if (privacySettings?.ip_anonymization && ipAddress) {
       ipAddress = anonymizeIP(ipAddress)
@@ -103,21 +112,51 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       else platform = 'web'
     }
 
-    // Update/create user properties (async, don't block event ingestion)
-    getOrCreateUserProperties(projectId, userId, {
-      country: deviceInfo.country || userProperties.country,
-      platform: platform as any,
-      app_version: deviceInfo.appVersion || deviceInfo.app_version || userProperties.app_version,
-      device_type: deviceInfo.deviceType || deviceInfo.device_type || userProperties.device_type,
-      acquisition_source: userProperties.acquisition_source,
-      properties: userProperties
-    }).catch(err => console.error('Error updating user properties:', err))
+    // Get location from IP address (async, don't block if it fails)
+    let locationData: any = {}
+    if (ipAddress && ipAddress !== '::1' && ipAddress !== '127.0.0.1') {
+      try {
+        locationData = await getLocationFromIP(ipAddress)
+      } catch (error: any) {
+        console.warn('Failed to get location from IP:', error.message)
+        // Continue without location data
+      }
+    }
 
+    // Extract device information from user agent
+    const extractedDeviceInfo = extractDeviceInfo(userAgent)
+
+    // Combine all device information
     const sessionDeviceInfo = {
       userAgent,
       ip: ipAddress,
-      ...deviceInfo
+      // Location from IP geolocation (preferred)
+      country: locationData.country || deviceInfo.country || userProperties.country || undefined,
+      city: locationData.city || deviceInfo.city || undefined,
+      region: locationData.region || deviceInfo.region || undefined,
+      countryCode: locationData.countryCode || deviceInfo.countryCode || undefined,
+      latitude: locationData.latitude || deviceInfo.latitude || undefined,
+      longitude: locationData.longitude || deviceInfo.longitude || undefined,
+      // Device info from user agent extraction
+      deviceType: extractedDeviceInfo.deviceType || deviceInfo.deviceType || deviceInfo.device_type || userProperties.device_type || undefined,
+      deviceModel: extractedDeviceInfo.deviceModel || deviceInfo.deviceModel || deviceInfo.device_model || undefined,
+      os: extractedDeviceInfo.os || deviceInfo.os || deviceInfo.osPlatform || undefined,
+      browser: extractedDeviceInfo.browser || deviceInfo.browser || undefined,
+      // Other device info from SDK
+      ...deviceInfo,
+      // Platform
+      platform: platform
     }
+
+    // Update/create user properties (async, don't block event ingestion)
+    getOrCreateUserProperties(projectId, userId, {
+      country: sessionDeviceInfo.country || userProperties.country,
+      platform: platform as any,
+      app_version: deviceInfo.appVersion || deviceInfo.app_version || userProperties.app_version,
+      device_type: sessionDeviceInfo.deviceType || userProperties.device_type,
+      acquisition_source: userProperties.acquisition_source,
+      properties: userProperties
+    }).catch(err => console.error('Error updating user properties:', err))
 
     const { session } = await findOrCreateSession(
       projectId,

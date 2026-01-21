@@ -51,13 +51,13 @@ export function SessionsList() {
   const [allSessions, setAllSessions] = useState<any[]>([]) // Store all sessions for comparison
   // const [projects, setProjects] = useState<any[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  // Removed loading state - data loads in background without blocking UI
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set())
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all')
   const [previousMetrics, setPreviousMetrics] = useState<SessionMetrics | null>(null)
   const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+    start: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days by default
     end: new Date()
   })
   const [isSearchVisible, setIsSearchVisible] = useState(false)
@@ -67,21 +67,20 @@ export function SessionsList() {
     loadProjects()
   }, [])
 
-  // Background check for new sessions (non-disruptive)
+  // Load sessions immediately when project is selected (no delays, instant)
   useEffect(() => {
     if (!selectedProject) return
     
-    // Initial load with loading indicator
-    loadSessions(true)
+    // Load immediately - no delays, no loading indicators
+    loadSessions()
     
-    // Check for new sessions in background (every 60 seconds - less frequent)
-    // Only start checking after initial load is complete
+    // Check for new sessions in background (every 60 seconds)
     let intervalId: number | null = null
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
         checkForNewSessions()
       }, 60000) // Check every 60 seconds
-    }, 5000) // Wait 5 seconds after initial load before starting background checks
+    }, 2000) // Reduced delay for faster initial check
     
     return () => {
       clearTimeout(timeout)
@@ -93,41 +92,79 @@ export function SessionsList() {
 
   const loadProjects = async () => {
     try {
-      const response = await projectsAPI.getAll()
+      // Increased timeout to 30 seconds to handle slow Supabase queries
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+      )
+      
+      const apiPromise = projectsAPI.getAll()
+      const response = await Promise.race([apiPromise, timeoutPromise]) as any
       const projectsList = response.projects || []
       // setProjects(projectsList)
       if (projectsList.length > 0) {
         setSelectedProject(projectsList[0].id)
+        } else {
+          // No projects - nothing to do
+        }
+    } catch (error: any) {
+      // Only log non-timeout errors (timeout might be expected on slow connections)
+      if (error?.message !== 'Request timeout') {
+        console.error('Error loading projects:', error)
       }
-    } catch (error) {
-      console.error('Error loading projects:', error)
-    } finally {
-      setLoading(false)
     }
   }
 
-  const loadSessions = async (showLoading = true) => {
-    if (!selectedProject) return
+  const loadSessions = async () => {
+    if (!selectedProject) {
+      console.log('⚠️ loadSessions: No selected project')
+      return
+    }
     try {
-      if (showLoading) {
-      setLoading(true)
-      }
-      const response = await sessionsAPI.getByProject(selectedProject, {
-        limit: 1000, // Load more sessions for accurate metrics
+      console.log('📡 Loading sessions for project:', selectedProject)
+      console.log('📅 Date range:', {
+        start: dateRange.start.toISOString(),
+        end: dateRange.end.toISOString()
+      })
+      
+      // Load in background without blocking UI - no loading spinner
+      // Increased timeout to 30 seconds to handle slow Supabase queries
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+      )
+      
+      const apiPromise = sessionsAPI.getByProject(selectedProject, {
+        limit: 100, // Reduced from 1000 to 100 for faster initial load
         start_date: dateRange.start.toISOString(),
         end_date: dateRange.end.toISOString()
       })
+      
+      const response = await Promise.race([apiPromise, timeoutPromise]) as any
+      console.log('✅ Sessions API response:', {
+        hasResponse: !!response,
+        hasSessions: !!(response?.sessions),
+        sessionCount: response?.sessions?.length || 0,
+        total: response?.total || 0,
+        count: response?.count || 0
+      })
+      
       const loadedSessions = response.sessions || []
+      console.log(`📊 Loaded ${loadedSessions.length} sessions from API`)
       setAllSessions(loadedSessions)
       // Apply current filters
       applyFilters(loadedSessions, activeFilters, platformFilter)
-    } catch (error) {
-      console.error('Error loading sessions:', error)
-    } finally {
-      if (showLoading) {
-      setLoading(false)
-      }
+    } catch (error: any) {
+      // Log all errors for debugging
+      console.error('❌ Error loading sessions:', {
+        message: error?.message,
+        name: error?.name,
+        stack: error?.stack,
+        error: error
+      })
+      // Set empty array on error to show "no sessions" instead of infinite loading
+      setAllSessions([])
+      setSessions([])
     }
+    // No finally block - we don't set loading state anymore
   }
 
   // Check for new sessions in background (non-disruptive)
@@ -167,10 +204,10 @@ export function SessionsList() {
     }
   }
 
-  // Reload sessions when date range changes (with loading indicator)
+  // Reload sessions when date range changes
   useEffect(() => {
     if (selectedProject) {
-      loadSessions(true) // Show loading when user changes date range
+      loadSessions() // Reload when date range changes
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRange.start.getTime(), dateRange.end.getTime(), selectedProject])
@@ -205,10 +242,18 @@ export function SessionsList() {
   }
 
   const applyFilters = (sessionsToFilter: any[], filters: Set<string>, platform: PlatformFilter = platformFilter) => {
+    console.log('🔍 Applying filters:', {
+      inputCount: sessionsToFilter.length,
+      filters: Array.from(filters),
+      platform: platform
+    })
+    
     // First apply platform filter
     let filtered = filterByPlatform(sessionsToFilter, platform)
+    console.log(`  After platform filter (${platform}): ${filtered.length} sessions`)
     
     if (filters.size === 0) {
+      console.log(`✅ No additional filters, showing ${filtered.length} sessions`)
       setSessions(filtered)
       return
     }
@@ -259,6 +304,7 @@ export function SessionsList() {
       })
     }
 
+    console.log(`✅ Final filtered sessions: ${filtered.length}`)
     setSessions(filtered)
   }
 
@@ -561,20 +607,52 @@ export function SessionsList() {
   // Get location from session
   const getLocation = (session: any) => {
     const deviceInfo = session.device_info || {}
-    const city = session.city || deviceInfo.city || 'Unknown'
-    const country = session.country || deviceInfo.country || deviceInfo.region || 'Unknown'
+    // Try multiple possible field names for location data
+    const city = deviceInfo.city || session.city || 'Unknown'
+    const country = deviceInfo.country || session.country || deviceInfo.region || session.region || 'Unknown'
     return { city, country }
   }
 
   // Get device name
   const getDeviceName = (session: any) => {
     const deviceInfo = session.device_info || {}
+    
+    // Prefer deviceModel or device_model from device_info
+    if (deviceInfo.deviceModel) {
+      return deviceInfo.deviceModel.toUpperCase()
+    }
+    if (deviceInfo.device_model) {
+      return deviceInfo.device_model.toUpperCase()
+    }
+    
+    // Fallback to deviceType or device_type
+    if (deviceInfo.deviceType) {
+      return deviceInfo.deviceType.toUpperCase()
+    }
+    if (deviceInfo.device_type) {
+      return deviceInfo.device_type.toUpperCase()
+    }
+    
+    // Extract from user agent as last resort
     const userAgent = deviceInfo.userAgent || ''
-    // Extract device name from user agent
-    if (userAgent.includes('Samsung')) return 'SAMSUNG ' + userAgent.split('Samsung')[1]?.split(' ')[0] || 'UNKNOWN'
-    if (userAgent.includes('iPhone')) return 'APPLE IPHONE'
-    if (userAgent.includes('Pixel')) return 'GOOGLE PIXEL ' + userAgent.split('Pixel')[1]?.split(' ')[0] || ''
-    return userAgent.split(' ')[0] || 'Unknown'
+    if (userAgent.includes('Samsung')) {
+      const match = userAgent.match(/Samsung[\/\s]([A-Za-z0-9-]+)/i)
+      return match ? `SAMSUNG ${match[1].toUpperCase()}` : 'SAMSUNG'
+    }
+    if (userAgent.includes('iPhone')) {
+      const match = userAgent.match(/iPhone\s?(\d+)/i)
+      return match ? `APPLE IPHONE ${match[1]}` : 'APPLE IPHONE'
+    }
+    if (userAgent.includes('Pixel')) {
+      const match = userAgent.match(/Pixel\s?(\d+)/i)
+      return match ? `GOOGLE PIXEL ${match[1]}` : 'GOOGLE PIXEL'
+    }
+    if (userAgent.includes('iPad')) {
+      return 'APPLE IPAD'
+    }
+    
+    // Default fallback
+    return deviceInfo.platform ? deviceInfo.platform.toUpperCase() : 'UNKNOWN'
   }
 
   // Check if session has video (has snapshots)
@@ -1345,20 +1423,7 @@ export function SessionsList() {
       </div>
 
       {/* Sessions Table */}
-      {loading ? (
-        <div style={{ padding: '3rem', textAlign: 'center', backgroundColor: 'white' }}>
-          <div style={{ 
-            width: '48px', 
-            height: '48px', 
-            border: '2px solid #9333ea', 
-            borderTop: 'transparent', 
-            borderRadius: '50%', 
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 1rem'
-          }}></div>
-          <p style={{ color: '#4b5563' }}>Loading sessions...</p>
-        </div>
-      ) : sessions.length === 0 ? (
+      {sessions.length === 0 ? (
         <div style={{ padding: '4rem', textAlign: 'center', backgroundColor: 'white' }}>
           <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📄</div>
           <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#111827', marginBottom: '0.5rem' }}>No sessions</h3>

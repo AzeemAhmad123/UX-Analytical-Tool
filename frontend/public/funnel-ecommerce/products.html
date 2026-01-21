@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Products - E-Commerce Store</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- UXCam Analytics SDK - Web (JavaScript) -->
+    <!-- Load rrweb for visual session replay -->
+    <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
+    
+    <!-- UXCam SDK Configuration -->
+    <script>
+      window.UXCamSDK = {
+        key: 'ux_10d3d2f46073542c01af7803f62ffe79',
+        apiUrl: 'http://localhost:3001'
+      };
+    </script>
+    
+    <!-- Load UXCam SDK -->
+    <script src="http://localhost:5173/uxcam-sdk-rrweb.js" async></script>
+</head>
+<body>
+    <div class="header">
+        <h1>🛍️ E-Commerce Store</h1>
+    </div>
+    
+    <div class="nav">
+        <a href="index.html">Home</a>
+        <a href="products.html">Products</a>
+        <a href="cart.html">Cart <span id="cartCount">(0)</span></a>
+    </div>
+    
+    <div class="container">
+        <h2 style="margin-bottom: 30px; color: #667eea;">Browse Products</h2>
+        
+        <div class="products-grid">
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">📱</div>
+                <h3>Smartphone Pro</h3>
+                <p style="color: #666; margin: 10px 0;">Latest model with advanced features</p>
+                <div class="price">$599</div>
+                <button onclick="addToCart(1, 'Smartphone Pro', 599)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">💻</div>
+                <h3>Laptop Ultra</h3>
+                <p style="color: #666; margin: 10px 0;">High-performance laptop for professionals</p>
+                <div class="price">$999</div>
+                <button onclick="addToCart(2, 'Laptop Ultra', 999)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">⌚</div>
+                <h3>Smart Watch</h3>
+                <p style="color: #666; margin: 10px 0;">Track your fitness and stay connected</p>
+                <div class="price">$299</div>
+                <button onclick="addToCart(3, 'Smart Watch', 299)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">🎧</div>
+                <h3>Wireless Headphones</h3>
+                <p style="color: #666; margin: 10px 0;">Premium sound quality</p>
+                <div class="price">$199</div>
+                <button onclick="addToCart(4, 'Wireless Headphones', 199)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">📷</div>
+                <h3>Camera Pro</h3>
+                <p style="color: #666; margin: 10px 0;">Professional photography camera</p>
+                <div class="price">$1299</div>
+                <button onclick="addToCart(5, 'Camera Pro', 1299)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+            
+            <div class="product-card">
+                <div style="background: linear-gradient(135deg, #30cfd0 0%, #330867 100%); height: 200px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 3em;">🎮</div>
+                <h3>Gaming Console</h3>
+                <p style="color: #666; margin: 10px 0;">Next-gen gaming experience</p>
+                <div class="price">$499</div>
+                <button onclick="addToCart(6, 'Gaming Console', 499)" class="btn" style="width: 100%;">Add to Cart</button>
+            </div>
+        </div>
+        
+        <div id="status" class="status success" style="display: none; margin-top: 30px;">
+            ✅ Products page viewed!
+        </div>
+    </div>
+    
+    <script>
+        // Load cart count
+        function updateCartCount() {
+            const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            document.getElementById('cartCount').textContent = `(${cart.length})`;
+        }
+        
+        function addToCart(id, name, price) {
+            let cart = JSON.parse(localStorage.getItem('cart') || '[]');
+            cart.push({ id, name, price });
+            localStorage.setItem('cart', JSON.stringify(cart));
+            updateCartCount();
+            
+            // Track add to cart event
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('add_to_cart', {
+                    product_id: id,
+                    product_name: name,
+                    price: price
+                });
+            }
+            
+            alert(`${name} added to cart!`);
+        }
+        
+        window.addEventListener('load', function() {
+            updateCartCount();
+            const status = document.getElementById('status');
+            status.style.display = 'block';
+            
+            // Track page view
+            if (window.UXCamSDK && window.UXCamSDK.track) {
+                window.UXCamSDK.track('page_view', {
+                    url: window.location.href,
+                    page: 'products'
+                });
+            }
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        });
+    </script>
+</body>
+</html>
