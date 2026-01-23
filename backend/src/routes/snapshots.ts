@@ -22,13 +22,28 @@ const router = Router()
  */
 router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
   try {
+    const snapshotSize = typeof req.body.snapshots === 'string' ? req.body.snapshots.length : 0
+    const snapshotSizeKB = (snapshotSize / 1024).toFixed(2)
+    const snapshotSizeMB = (snapshotSize / (1024 * 1024)).toFixed(2)
+    
     console.log('📥 Snapshot ingest request received', {
       hasProjectId: !!(req as any).projectId,
       hasSessionId: !!req.body.session_id,
       hasSnapshots: !!req.body.snapshots,
       snapshotType: typeof req.body.snapshots,
-      snapshotLength: typeof req.body.snapshots === 'string' ? req.body.snapshots.length : 'N/A'
+      snapshotLength: snapshotSize,
+      snapshotSizeKB: `${snapshotSizeKB}KB`,
+      snapshotSizeMB: `${snapshotSizeMB}MB`
     })
+    
+    // Check if snapshot is too large (Vercel limit is 4.5MB)
+    if (snapshotSize > 4 * 1024 * 1024) { // 4MB threshold
+      console.warn('⚠️ Large snapshot detected:', {
+        size: `${snapshotSizeMB}MB`,
+        threshold: '4MB',
+        recommendation: 'Consider implementing chunking for snapshots > 4MB'
+      })
+    }
     
     const projectId = (req as any).projectId
     const sessionId = req.body.session_id
