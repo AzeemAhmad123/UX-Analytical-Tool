@@ -713,27 +713,54 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
 /**
  * POST /api/sessions/:sessionId/end
  * Update session with end time and calculated duration
+ * 
+ * Accepts both database UUIDs and SDK session_ids
  */
 router.post('/:sessionId/end', async (req: Request, res: Response) => {
   try {
-    const sessionId = String(req.params.sessionId)
+    const sessionIdParam = String(req.params.sessionId)
     const { duration, end_time } = req.body
 
-    if (!sessionId) {
+    if (!sessionIdParam) {
       return res.status(400).json({
         error: 'Missing required parameter',
         message: 'sessionId is required'
       })
     }
 
-    // Get session to calculate duration if not provided
-    const session = await getSessionById(sessionId)
+    let session
+    // Check if sessionIdParam is a UUID (database ID)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionIdParam)
+
+    if (isUUID) {
+      // It's a database UUID - use getSessionById
+      session = await getSessionById(sessionIdParam)
+    } else {
+      // Assume it's an SDK session_id - query by session_id
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('id, start_time, last_activity_time, duration')
+        .eq('session_id', sessionIdParam)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') { // PGRST116 means no rows found
+        throw new Error(`Failed to fetch session by SDK ID: ${error.message}`)
+      }
+      session = data
+    }
+
     if (!session) {
-      return res.status(404).json({
-        error: 'Session not found',
-        message: `Session ${sessionId} not found`
+      // If session not found, return success for idempotency
+      console.warn(`Session ${sessionIdParam} not found for ending. It might have been deleted or not yet created.`)
+      return res.json({
+        success: true,
+        session_id: sessionIdParam,
+        message: `Session ${sessionIdParam} not found, but request processed (idempotent).`
       })
     }
+
+    // Use the actual database ID for the update
+    const sessionDbId = session.id
 
     // Calculate duration if not provided
     let calculatedDuration = duration
@@ -756,7 +783,7 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
     const { error } = await supabase
       .from('sessions')
       .update(updateData)
-      .eq('id', sessionId)
+      .eq('id', sessionDbId) // Use the database ID here
 
     if (error) {
       throw new Error(`Failed to update session: ${error.message}`)
@@ -764,7 +791,7 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      session_id: sessionId,
+      session_id: sessionIdParam,
       duration: calculatedDuration
     })
   } catch (error: any) {

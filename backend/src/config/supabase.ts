@@ -15,6 +15,30 @@ export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false
+  },
+  db: {
+    schema: 'public'
+  },
+  global: {
+    headers: {
+      'x-client-info': 'uxcam-backend'
+    }
   }
 })
 
+// Test Supabase connection on startup
+async function testSupabaseConnection() {
+  try {
+    const { data, error } = await supabase.from('projects').select('id').limit(1)
+    if (error) {
+      console.error('❌ Supabase connection test failed:', error.message)
+    } else {
+      console.log('✅ Supabase connection test successful')
+    }
+  } catch (err: any) {
+    console.error('❌ Supabase connection error:', err.message)
+  }
+}
+
+// Test connection (non-blocking)
+testSupabaseConnection().catch(() => {})
