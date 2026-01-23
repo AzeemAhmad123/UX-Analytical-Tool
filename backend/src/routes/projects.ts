@@ -23,6 +23,27 @@ router.post('/', authenticateUser, async (req: Request, res: Response) => {
     const userId = (req as any).userId // Get user_id from authenticated token
     const { name, description, platform = 'all' } = req.body
 
+    // Log user_id for debugging
+    console.log('Creating project for user_id:', userId, 'Type:', typeof userId)
+    
+    // Validate user_id exists
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Authentication error',
+        message: 'User ID not found in token'
+      })
+    }
+
+    // Verify user_id is a valid UUID format
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    if (!uuidRegex.test(userId)) {
+      console.error('Invalid user_id format:', userId)
+      return res.status(400).json({
+        error: 'Invalid user ID format',
+        message: 'User ID must be a valid UUID'
+      })
+    }
+
     // Validate required fields
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return res.status(400).json({
@@ -67,6 +88,7 @@ router.post('/', authenticateUser, async (req: Request, res: Response) => {
     }
 
     // Create project (default to active)
+    console.log('Inserting project with user_id:', userId)
     const { data: project, error } = await supabase
       .from('projects')
       .insert({
@@ -81,7 +103,14 @@ router.post('/', authenticateUser, async (req: Request, res: Response) => {
       .single()
 
     if (error) {
-      console.error('Supabase error creating project:', error)
+      console.error('Supabase error creating project:', {
+        error,
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        userId
+      })
       throw new Error(`Database error: ${error.message || error.code || 'Unknown database error'}`)
     }
 
