@@ -24,29 +24,43 @@ console.log('🔧 CORS Configuration:', {
   VERCEL: process.env.VERCEL
 })
 
-// Middleware to detect SDK endpoints before CORS
+// Custom CORS middleware that can access request object
 app.use((req, res, next) => {
-  // Check if this is an SDK endpoint (before CORS middleware)
+  // Check if this is an SDK endpoint
   const isSDKEndpoint = req.path?.includes('/api/snapshots/ingest') || 
                        req.path?.includes('/api/events/ingest') ||
                        (req.path?.includes('/api/sessions') && req.method === 'POST' && req.path?.includes('/end'))
   
-  // Store in request for CORS middleware to use
+  // Store in request
   ;(req as any).isSDKEndpoint = isSDKEndpoint
+  
+  // Handle CORS manually for SDK endpoints (allow all origins)
+  if (isSDKEndpoint) {
+    const origin = req.headers.origin
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type')
+      res.setHeader('Access-Control-Max-Age', '86400')
+      console.log('✅ CORS: SDK endpoint - allowing origin', { origin, path: req.path })
+    }
+    
+    // Handle preflight
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end()
+    }
+  }
+  
   next()
 })
 
-// CORS Configuration
-// For SDK ingestion endpoints, allow requests from ANY origin (SDK embedded on various websites)
-// For dashboard endpoints, restrict to configured origins
+// CORS Configuration for non-SDK endpoints
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, Postman, or file://)
     if (!origin) return callback(null, true)
-    
-    // Get the request object from the callback context (hacky but works)
-    // Actually, we can't access req here, so we'll use a different approach
-    // Check if origin is from a known SDK domain pattern or allow all for now
     
     const isDevelopment = process.env.NODE_ENV !== 'production'
     
@@ -132,17 +146,13 @@ app.use(cors({
                     isLocalhost || 
                     isLocalNetwork
     } else {
-      // Production: Allow all Vercel domains (for SDK endpoints on customer websites)
-      // Also allow configured origins for dashboard
+      // Production: Allow configured origins and Vercel domains for dashboard
       const hasAnyVercelOrigin = allowedOrigins.some(allowed => 
         allowed.includes('vercel.app')
       )
       
-      // Allow ALL Vercel domains (for SDK embedded on customer websites)
-      // This is necessary because SDK can be embedded on any website
       shouldAllow = allowedOrigins.length === 0 || 
                     originMatches || 
-                    isVercelDomain || // Allow ALL Vercel domains
                     (isVercelDomain && (hasVercelWildcard || hasAnyVercelOrigin)) || 
                     isLocalhost
       

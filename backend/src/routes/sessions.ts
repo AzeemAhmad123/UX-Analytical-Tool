@@ -78,6 +78,7 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     
     // Filter out sessions without snapshots (recording never started)
     // Also filter out sessions with very short duration (< 2 seconds) as they're likely incomplete
+    // BUT: Don't filter when deleting - allow deletion of all sessions
     const MIN_DURATION_MS = 2000 // 2 seconds minimum
     const filteredSessions = (sessions || []).filter((session: any) => {
       const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
@@ -85,6 +86,9 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       // Keep session if it has snapshots OR has valid duration (some sessions might have events but no snapshots yet)
       return hasSnapshots || hasValidDuration
     })
+    
+    // Store all session IDs (including filtered ones) for deletion purposes
+    const allSessionIds = (sessions || []).map((s: any) => s.id)
 
     // Get video information for all sessions
     const { data: videos } = await supabase
@@ -207,6 +211,9 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })
     }
 
+    // Set a longer timeout for this endpoint (60 seconds)
+    req.setTimeout(60000)
+
     // Get session
     const session = await getSessionByProjectAndSessionId(String(projectId), String(sessionId))
 
@@ -217,8 +224,25 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })
     }
 
-    // Get all snapshots for this session
-    const snapshots = await getSessionSnapshots(session.id)
+    // Get all snapshots for this session with timeout handling
+    let snapshots: any[]
+    try {
+      snapshots = await Promise.race([
+        getSessionSnapshots(session.id),
+        new Promise<any[]>((_, reject) => 
+          setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 45000) // 45 second timeout
+        )
+      ])
+    } catch (error: any) {
+      if (error.message === 'Snapshot retrieval timeout') {
+        console.error('⏱️ Timeout retrieving snapshots for session:', session.id)
+        return res.status(504).json({
+          error: 'Request timeout',
+          message: 'Snapshot retrieval timed out. The session may have too many snapshots. Please try again later.'
+        })
+      }
+      throw error
+    }
 
     console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`)
 
