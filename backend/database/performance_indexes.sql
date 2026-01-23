@@ -1,31 +1,19 @@
 -- Performance Optimization: Database Indexes
 -- Run this SQL in your Supabase SQL Editor to speed up queries
--- This will significantly improve query performance
+-- IMPORTANT: Run indexes one at a time or in small batches to avoid timeouts
 
 -- ============================================
--- SESSIONS TABLE INDEXES
+-- SESSIONS TABLE INDEXES (CRITICAL - Run these first)
 -- ============================================
 
--- Index for filtering sessions by project_id (most common query)
-CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
+-- Index for filtering sessions by project_id (most common query) - CRITICAL
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
 
--- Index for finding sessions by session_id
-CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+-- Index for finding sessions by session_id - CRITICAL
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 
--- Composite index for finding sessions by project_id + session_id (very common)
-CREATE INDEX IF NOT EXISTS idx_sessions_project_session ON sessions(project_id, session_id);
-
--- Index for ordering and filtering by start_time (date range queries)
-CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions(start_time DESC);
-
--- Composite index for project_id + start_time (for filtered date queries)
-CREATE INDEX IF NOT EXISTS idx_sessions_project_start_time ON sessions(project_id, start_time DESC);
-
--- Index for filtering by duration (for session filtering)
-CREATE INDEX IF NOT EXISTS idx_sessions_duration ON sessions(duration) WHERE duration IS NOT NULL;
-
--- Index for last_activity_time (for session updates)
-CREATE INDEX IF NOT EXISTS idx_sessions_last_activity ON sessions(last_activity_time);
+-- Composite index for finding sessions by project_id + session_id (very common) - CRITICAL
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_project_session ON sessions(project_id, session_id);
 
 -- ============================================
 -- SESSION_SNAPSHOTS TABLE INDEXES
@@ -48,45 +36,24 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_session_created ON session_snapshots(se
 -- ============================================
 
 -- Index for finding videos by session_id
-CREATE INDEX IF NOT EXISTS idx_videos_session_id ON session_videos(session_id);
-
--- Index for ordering videos by creation time
-CREATE INDEX IF NOT EXISTS idx_videos_created_at ON session_videos(created_at DESC);
-
--- Composite index for session_id + created_at
-CREATE INDEX IF NOT EXISTS idx_videos_session_created ON session_videos(session_id, created_at DESC);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_videos_session_id ON session_videos(session_id);
 
 -- ============================================
--- PROJECTS TABLE INDEXES
+-- PROJECTS TABLE INDEXES (CRITICAL)
 -- ============================================
 
--- Index for filtering projects by user_id (very common)
-CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+-- Index for filtering projects by user_id (very common) - CRITICAL
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projects_user_id ON projects(user_id);
 
--- Index for SDK key lookup (authentication)
-CREATE INDEX IF NOT EXISTS idx_projects_sdk_key ON projects(sdk_key);
-
--- Index for filtering active projects
-CREATE INDEX IF NOT EXISTS idx_projects_is_active ON projects(is_active) WHERE is_active = true;
-
--- Composite index for user_id + is_active (common query pattern)
-CREATE INDEX IF NOT EXISTS idx_projects_user_active ON projects(user_id, is_active);
+-- Index for SDK key lookup (authentication) - CRITICAL
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projects_sdk_key ON projects(sdk_key);
 
 -- ============================================
--- EVENTS TABLE INDEXES (if exists)
+-- NOTES ON CONCURRENT INDEX CREATION:
 -- ============================================
-
--- Index for events by project_id
-CREATE INDEX IF NOT EXISTS idx_events_project_id ON events(project_id) WHERE project_id IS NOT NULL;
-
--- Index for events by session_id
-CREATE INDEX IF NOT EXISTS idx_events_session_id ON events(session_id) WHERE session_id IS NOT NULL;
-
--- Index for events by timestamp (for date filtering)
-CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp) WHERE timestamp IS NOT NULL;
-
--- Composite index for project_id + timestamp
-CREATE INDEX IF NOT EXISTS idx_events_project_timestamp ON events(project_id, timestamp) WHERE project_id IS NOT NULL AND timestamp IS NOT NULL;
+-- Using CONCURRENTLY allows indexes to be created without locking tables
+-- This means your app can continue working while indexes are being created
+-- However, CONCURRENTLY indexes take longer to create but don't block operations
 
 -- ============================================
 -- ANALYZE TABLES (Update statistics for query planner)
