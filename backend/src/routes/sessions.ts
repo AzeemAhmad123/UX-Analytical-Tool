@@ -505,7 +505,7 @@ router.delete('/:projectId/:sessionId', async (req: Request, res: Response) => {
  * 
  * Request body:
  * {
- *   sessionIds: string[]
+ *   sessionIds: string[]  // Can be either database IDs (UUIDs) or SDK session_ids (sess_...)
  * }
  */
 router.delete('/:projectId', async (req: Request, res: Response) => {
@@ -527,25 +527,48 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
       })
     }
 
-    // Get all sessions for this project
-    const { data: sessions, error: fetchError } = await supabase
-      .from('sessions')
-      .select('id, session_id')
-      .eq('project_id', projectId)
-      .in('session_id', sessionIds)
+    // Determine if sessionIds are database IDs (UUIDs) or SDK session_ids (sess_...)
+    const isUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    const areUUIDs = sessionIds.length > 0 && sessionIds.every(id => isUUID(id))
 
-    if (fetchError) {
-      throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
+    let sessions: any[] = []
+
+    if (areUUIDs) {
+      // sessionIds are database IDs (UUIDs) - directly query by id
+      const { data: fetchedSessions, error: fetchError } = await supabase
+        .from('sessions')
+        .select('id, session_id')
+        .eq('project_id', projectId)
+        .in('id', sessionIds)
+
+      if (fetchError) {
+        throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
+      }
+
+      sessions = fetchedSessions || []
+    } else {
+      // sessionIds are SDK session_ids (sess_...) - query by session_id
+      const { data: fetchedSessions, error: fetchError } = await supabase
+        .from('sessions')
+        .select('id, session_id')
+        .eq('project_id', projectId)
+        .in('session_id', sessionIds)
+
+      if (fetchError) {
+        throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
+      }
+
+      sessions = fetchedSessions || []
     }
 
-    if (!sessions || sessions.length === 0) {
+    if (sessions.length === 0) {
       return res.status(404).json({
         error: 'No sessions found',
         message: 'No matching sessions found for deletion'
       })
     }
 
-    // Delete sessions
+    // Delete sessions using database IDs
     const sessionDbIds = sessions.map(s => s.id)
     const { error: deleteError } = await supabase
       .from('sessions')

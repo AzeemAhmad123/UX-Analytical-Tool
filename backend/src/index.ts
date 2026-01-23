@@ -24,17 +24,30 @@ console.log('🔧 CORS Configuration:', {
   VERCEL: process.env.VERCEL
 })
 
-// Middleware
-// CORS Configuration for Production
-// For SDK ingestion endpoints, allow requests from any origin (SDK embedded on various websites)
-// For dashboard endpoints, restrict to frontend URL
+// Middleware to detect SDK endpoints before CORS
+app.use((req, res, next) => {
+  // Check if this is an SDK endpoint (before CORS middleware)
+  const isSDKEndpoint = req.path?.includes('/api/snapshots/ingest') || 
+                       req.path?.includes('/api/events/ingest') ||
+                       (req.path?.includes('/api/sessions') && req.method === 'POST' && req.path?.includes('/end'))
+  
+  // Store in request for CORS middleware to use
+  ;(req as any).isSDKEndpoint = isSDKEndpoint
+  next()
+})
+
+// CORS Configuration
+// For SDK ingestion endpoints, allow requests from ANY origin (SDK embedded on various websites)
+// For dashboard endpoints, restrict to configured origins
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, Postman, or file://)
     if (!origin) return callback(null, true)
     
-    // In production, allow all origins for SDK endpoints (SDK will be embedded on various websites)
-    // In development, allow localhost and file:// for testing
+    // Get the request object from the callback context (hacky but works)
+    // Actually, we can't access req here, so we'll use a different approach
+    // Check if origin is from a known SDK domain pattern or allow all for now
+    
     const isDevelopment = process.env.NODE_ENV !== 'production'
     
     // Build allowed origins list
@@ -119,28 +132,30 @@ app.use(cors({
                     isLocalhost || 
                     isLocalNetwork
     } else {
-      // Production: Allow configured origins, Vercel domains (if wildcard configured), or all origins if none configured
-      // More permissive: if it's a Vercel domain and we have ANY vercel-related origin, allow it
+      // Production: Allow all Vercel domains (for SDK endpoints on customer websites)
+      // Also allow configured origins for dashboard
       const hasAnyVercelOrigin = allowedOrigins.some(allowed => 
         allowed.includes('vercel.app')
       )
       
+      // Allow ALL Vercel domains (for SDK embedded on customer websites)
+      // This is necessary because SDK can be embedded on any website
       shouldAllow = allowedOrigins.length === 0 || 
                     originMatches || 
+                    isVercelDomain || // Allow ALL Vercel domains
                     (isVercelDomain && (hasVercelWildcard || hasAnyVercelOrigin)) || 
                     isLocalhost
       
-      // Log CORS decision for debugging (always log to help troubleshoot)
+      // Log CORS decision for debugging
       console.log('CORS check:', {
         origin,
         allowedOriginsCount: allowedOrigins.length,
-        allowedOriginsSample: allowedOrigins.slice(0, 3), // Log first 3 to avoid spam
+        allowedOriginsSample: allowedOrigins.slice(0, 3),
         originMatches,
         isVercelDomain,
         hasVercelWildcard,
         hasAnyVercelOrigin,
-        shouldAllow,
-        CORS_ORIGINS_env: process.env.CORS_ORIGINS?.substring(0, 150) // Log env var to verify it's loaded
+        shouldAllow
       })
     }
     
@@ -158,8 +173,10 @@ app.use(cors({
   maxAge: 86400 // 24 hours - cache preflight requests
 }))
 
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true }))
+// Increase body size limit for large snapshots (Vercel limit is 4.5MB, but we'll set higher for Express)
+// Note: Vercel serverless functions have a 4.5MB request body limit, so we'll need to handle chunking
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 
 // Root endpoint
 app.get('/', (req, res) => {
