@@ -319,8 +319,9 @@
     }
     
     // Configuration
+    const apiUrl = getApiUrl();
     const config = {
-      apiUrl: getApiUrl(),
+      apiUrl: apiUrl,
       sdkKey: window.UXCamSDK?.key || '',
       batchSize: 10000, // Very large batch - we'll flush all on page unload
       flushInterval: 0, // Disabled - we only flush on page unload
@@ -331,6 +332,17 @@
       checkoutInterval: 10000, // Take full snapshot every 10 seconds
       flushOnUnload: true, // Flush all snapshots when user leaves
     };
+    
+    // Log configuration for debugging
+    console.log('UXCam SDK: Configuration loaded', {
+      apiUrl: config.apiUrl,
+      sdkKey: config.sdkKey ? config.sdkKey.substring(0, 10) + '...' : 'NOT SET',
+      windowUXCamSDK: window.UXCamSDK ? {
+        hasKey: !!window.UXCamSDK.key,
+        hasApiUrl: !!window.UXCamSDK.apiUrl,
+        apiUrl: window.UXCamSDK.apiUrl
+      } : 'NOT SET'
+    });
 
     // State
     let sessionId = null;

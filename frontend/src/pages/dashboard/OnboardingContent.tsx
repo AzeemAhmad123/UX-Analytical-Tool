@@ -89,17 +89,21 @@ export function OnboardingContent() {
     let code = ''
     
     if (sdkVersion === 'rrweb') {
-      // Add cache-busting version parameter
-      const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0`
+      // Add cache-busting with timestamp
+      const timestamp = Date.now()
+      const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0&t=${timestamp}`
       code = `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
 <!-- UXCam SDK Configuration - MUST be set BEFORE SDK loads -->
+<!-- IMPORTANT: Clear browser cache (Ctrl+Shift+Delete) if you see old URLs -->
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
-    apiUrl: '${apiUrl}'
+    apiUrl: '${apiUrl}',
+    debug: true  // Enable debug logging
   };
+  console.log('UXCam SDK Config:', window.UXCamSDK);
 </script>
 
 <!-- Load UXCam SDK with DOM recording -->
@@ -262,16 +266,20 @@ export function OnboardingContent() {
                         {(() => {
                           const apiUrl = getApiUrl()
                           const sdkFileUrl = getSdkFileUrl()
-                          const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0`
+                          const timestamp = Date.now()
+                          const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0&t=${timestamp}`
                           return sdkVersion === 'rrweb' ? `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
 <!-- UXCam SDK Configuration - MUST be set BEFORE SDK loads -->
+<!-- IMPORTANT: Clear browser cache (Ctrl+Shift+Delete) if you see old URLs -->
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
-    apiUrl: '${apiUrl}'
+    apiUrl: '${apiUrl}',
+    debug: true  // Enable debug logging
   };
+  console.log('UXCam SDK Config:', window.UXCamSDK);
 </script>
 
 <!-- Load UXCam SDK with DOM recording -->
