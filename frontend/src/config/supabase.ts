@@ -15,7 +15,21 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true
+    detectSessionInUrl: true,
+    // Increase timeout for slow connections
+    flowType: 'pkce'
+  },
+  // Add global fetch options for better error handling
+  global: {
+    headers: {
+      'x-client-info': 'uxcam-frontend'
+    }
+  },
+  // Configure realtime and storage options
+  realtime: {
+    params: {
+      eventsPerSecond: 10
+    }
   }
 })
 

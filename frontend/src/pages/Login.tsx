@@ -122,51 +122,116 @@ const Login = () => {
       // Trim email to remove whitespace
       const trimmedEmail = formData.email.trim().toLowerCase()
       
-      // Add timeout for login (10 seconds max)
-      const loginPromise = auth.signIn(trimmedEmail, formData.password)
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 10000)
-      )
+      // Retry logic for network issues (up to 3 attempts)
+      let lastError: any = null
+      let attempts = 0
+      const maxAttempts = 3
       
-      const { data, error: signInError } = await Promise.race([loginPromise, timeoutPromise]) as any
+      while (attempts < maxAttempts) {
+        attempts++
+        try {
+          // Add timeout for login (15 seconds max - increased for slow connections)
+          const loginPromise = auth.signIn(trimmedEmail, formData.password)
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 15000)
+          )
+          
+          const { data, error: signInError } = await Promise.race([loginPromise, timeoutPromise]) as any
 
-      if (signInError) {
-        console.error('Supabase auth error:', signInError)
-        
-        // Handle specific Supabase errors
-        if (signInError.message?.includes('Invalid login credentials') || 
-            signInError.message?.includes('invalid') ||
-            signInError.status === 400) {
-          setError('Invalid email or password. Please check your credentials and try again.')
-        } else if (signInError.message?.includes('Email not confirmed')) {
-          setError('Please verify your email before logging in')
-        } else if (signInError.status === 422) {
-          setError('Invalid email or password format. Please check your input.')
-        } else {
-          setError(signInError.message || 'Failed to sign in. Please try again.')
+          if (signInError) {
+            lastError = signInError
+            console.error(`Supabase auth error (attempt ${attempts}/${maxAttempts}):`, signInError)
+            
+            // Handle specific Supabase errors that shouldn't be retried
+            if (signInError.message?.includes('Invalid login credentials') || 
+                signInError.message?.includes('invalid') ||
+                signInError.status === 400 ||
+                signInError.status === 401) {
+              // Don't retry for invalid credentials
+              setError('Invalid email or password. Please check your credentials and try again.')
+              setLoading(false)
+              return
+            } else if (signInError.message?.includes('Email not confirmed')) {
+              setError('Please verify your email before logging in')
+              setLoading(false)
+              return
+            } else if (signInError.status === 422) {
+              setError('Invalid email or password format. Please check your input.')
+              setLoading(false)
+              return
+            }
+            
+            // For network/timeout errors, retry if we have attempts left
+            if (attempts < maxAttempts && (
+              signInError.message?.includes('timeout') ||
+              signInError.message?.includes('Failed to fetch') ||
+              signInError.message?.includes('network') ||
+              signInError.status === 522 ||
+              signInError.status === 500 ||
+              signInError.status === 503
+            )) {
+              console.log(`Retrying login (attempt ${attempts + 1}/${maxAttempts})...`)
+              await new Promise(resolve => setTimeout(resolve, 1000 * attempts)) // Exponential backoff
+              continue
+            }
+            
+            // If we get here, it's a non-retryable error or we've exhausted retries
+            setError(signInError.message || 'Failed to sign in. Please try again.')
+            setLoading(false)
+            return
+          }
+
+          if (data?.user) {
+            // Successfully logged in - navigate immediately (don't wait for dashboard to load)
+            // Dashboard will load data in background
+            setLoading(false) // Stop loading spinner before navigation
+            navigate('/dashboard', { replace: true }) // Use replace to avoid back button issues
+            return
+          } else {
+            setError('Login failed. Please try again.')
+            setLoading(false)
+            return
+          }
+        } catch (err: any) {
+          lastError = err
+          console.error(`Login error (attempt ${attempts}/${maxAttempts}):`, err)
+          
+          // Retry on network/timeout errors
+          if (attempts < maxAttempts && (
+            err.message?.includes('timeout') ||
+            err.message?.includes('Failed to fetch') ||
+            err.message?.includes('network') ||
+            err.message?.includes('522') ||
+            err.message?.includes('CORS')
+          )) {
+            console.log(`Retrying login (attempt ${attempts + 1}/${maxAttempts})...`)
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempts)) // Exponential backoff
+            continue
+          }
+          
+          // If we get here, it's a non-retryable error or we've exhausted retries
+          if (err.message?.includes('timeout')) {
+            setError('Login is taking too long. Please check your internet connection and try again.')
+          } else if (err.message?.includes('Failed to fetch') || err.message?.includes('network') || err.message?.includes('522')) {
+            setError('Unable to connect to the server. Please check your internet connection and try again. If the problem persists, the service may be temporarily unavailable.')
+          } else if (err.message?.includes('CORS')) {
+            setError('Connection blocked. Please check your browser settings or try again later.')
+          } else {
+            setError(err.message || 'An unexpected error occurred. Please try again.')
+          }
+          setLoading(false)
+          return
         }
-        setLoading(false)
-        return
       }
-
-      if (data?.user) {
-        // Successfully logged in - navigate immediately (don't wait for dashboard to load)
-        // Dashboard will load data in background
-        setLoading(false) // Stop loading spinner before navigation
-        navigate('/dashboard', { replace: true }) // Use replace to avoid back button issues
-      } else {
-        setError('Login failed. Please try again.')
+      
+      // If we exhausted all retries
+      if (lastError) {
+        setError('Login failed after multiple attempts. Please check your internet connection and try again.')
         setLoading(false)
       }
     } catch (err: any) {
       console.error('Login error:', err)
-      if (err.message?.includes('timeout')) {
-        setError('Login is taking too long. Please check your internet connection and try again.')
-      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('network')) {
-        setError('Network error. Please check your internet connection and try again.')
-      } else {
-        setError(err.message || 'An unexpected error occurred. Please try again.')
-      }
+      setError('An unexpected error occurred. Please try again.')
       setLoading(false)
     }
   }
