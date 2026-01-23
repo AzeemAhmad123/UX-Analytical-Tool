@@ -23,14 +23,14 @@ const getApiUrl = (): string => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
     
-    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
-    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
-      return 'https://api.enalyze.123fixit.com'
+    // Auto-detect backend for Vercel deployments
+    if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
+      return 'https://ux-analytical-tool-gzsn.vercel.app'
     }
   }
   
   // Default fallback
-  return typeof window !== 'undefined' ? window.location.origin : ''
+  return 'https://ux-analytical-tool-gzsn.vercel.app'
 }
 
 // Get SDK file URL
@@ -89,9 +89,8 @@ export function OnboardingContent() {
     let code = ''
     
     if (sdkVersion === 'rrweb') {
-      // Add cache-busting with timestamp
-      const timestamp = Date.now()
-      const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0&t=${timestamp}`
+      // Add static cache-busting version
+      const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
       code = `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
@@ -266,8 +265,7 @@ export function OnboardingContent() {
                         {(() => {
                           const apiUrl = getApiUrl()
                           const sdkFileUrl = getSdkFileUrl()
-                          const timestamp = Date.now()
-                          const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0&t=${timestamp}`
+                          const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
                           return sdkVersion === 'rrweb' ? `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 

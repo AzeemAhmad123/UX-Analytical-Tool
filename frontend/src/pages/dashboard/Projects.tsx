@@ -27,14 +27,19 @@ const getApiUrl = (): string => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
     
-    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
-    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
-      return 'https://api.enalyze.123fixit.com'
+    // Auto-detect backend for Vercel deployments
+    if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
+      return 'https://ux-analytical-tool-gzsn.vercel.app'
+    }
+    
+    // If we're on localhost, use local backend
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return 'http://localhost:3001'
     }
   }
   
   // Default fallback
-  return 'http://localhost/backend-php'
+  return 'https://ux-analytical-tool-gzsn.vercel.app'
 }
 
 const API_URL = getApiUrl()
@@ -246,14 +251,14 @@ export function Projects() {
     if (typeof window !== 'undefined') {
       const hostname = window.location.hostname
       
-      // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
-      if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
-        return 'https://api.enalyze.123fixit.com'
+      // Auto-detect backend for Vercel deployments
+      if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
+        return 'https://ux-analytical-tool-gzsn.vercel.app'
       }
     }
     
     // Default fallback
-    return API_URL || 'http://localhost/backend-php'
+    return API_URL || 'http://localhost:3001'
   }
 
   const getSdkFileUrl = (): string => {
@@ -284,9 +289,8 @@ export function Projects() {
   const getWebIntegrationCode = (sdkKey: string): string => {
     const apiUrl = getApiUrl()
     const sdkFileUrl = getSdkFileUrl()
-    // Add cache-busting with timestamp to force browser to reload SDK
-    const timestamp = Date.now()
-    const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.0.0&t=${timestamp}`
+    // Add static cache-busting version to force browser to reload SDK
+    const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
     
     return `<!-- UXCam Analytics SDK - Web (JavaScript) -->
 <!-- Copy and paste this code into the <head> section of your HTML -->

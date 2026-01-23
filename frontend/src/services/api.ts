@@ -11,11 +11,6 @@ const getApiUrl = (): string => {
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname
     
-    // If we're on enalyze.123fixit.com, use api.enalyze.123fixit.com
-    if (hostname === 'enalyze.123fixit.com' || hostname.includes('enalyze.123fixit.com')) {
-      return 'https://api.enalyze.123fixit.com'
-    }
-    
     // Auto-detect backend for Vercel deployments
     // If frontend is on ux-analytical-tool-*.vercel.app, use ux-analytical-tool-gzsn.vercel.app as backend
     if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
