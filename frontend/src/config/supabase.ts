@@ -1,11 +1,28 @@
 import { createClient } from '@supabase/supabase-js'
 
 // Supabase configuration
-const supabaseUrl = 'https://xrvmiyrsxwrruhdljkoz.supabase.co'
+// NEW PROJECT: kkgdxfencpyabcmizytn
+// Use environment variables with fallback to default values
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://kkgdxfencpyabcmizytn.supabase.co'
 
 // Anon key (public key) - Safe to use in frontend/client-side
-// This is the legacy anon key from Supabase API settings
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhydm1peXJzeHdycnVoZGxqa296Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0NTI0MjQsImV4cCI6MjA4MzAyODQyNH0.sMA-J-RFzvsVLbaf504jAYQ_zOmEMAwMnata7EscOqw'
+// Use environment variable with fallback
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtrZ2R4ZmVuY3B5YWJjbWl6eXRuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkxODIxNTMsImV4cCI6MjA4NDc1ODE1M30.6zx9s2QaGVZXAZgliwH3Uvrr9IkQQ9-uvpNG6y5inV0'
+
+// Debug: Log the Supabase URL being used (remove after fixing)
+if (typeof window !== 'undefined') {
+  console.log('🔍 Supabase Config Debug:', {
+    envUrl: import.meta.env.VITE_SUPABASE_URL,
+    usedUrl: supabaseUrl,
+    envKey: import.meta.env.VITE_SUPABASE_ANON_KEY ? 'SET' : 'NOT SET',
+    isNewProject: supabaseUrl.includes('kkgdxfencpyabcmizytn'),
+    isOldProject: supabaseUrl.includes('xrvmiyrsxwrruhdljkoz')
+  })
+  
+  if (supabaseUrl.includes('xrvmiyrsxwrruhdljkoz')) {
+    console.error('❌ ERROR: Still using OLD Supabase project! Check Vercel environment variables.')
+  }
+}
 
 // ⚠️ IMPORTANT: DO NOT use the secret key (sb_secret_...) in the frontend!
 // The secret key is ONLY for backend/server-side operations and should NEVER
