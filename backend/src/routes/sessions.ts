@@ -513,6 +513,12 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
     const projectId = req.params.projectId
     const { sessionIds } = req.body
 
+    console.log('🗑️ Delete sessions request:', {
+      projectId,
+      sessionIdsCount: sessionIds?.length || 0,
+      sessionIdsSample: sessionIds?.slice(0, 3) || []
+    })
+
     if (!projectId) {
       return res.status(400).json({
         error: 'Missing required parameter',
@@ -531,40 +537,77 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
     const isUUID = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
     const areUUIDs = sessionIds.length > 0 && sessionIds.every(id => isUUID(id))
 
+    console.log('🔍 Session ID type detection:', {
+      areUUIDs,
+      firstId: sessionIds[0],
+      firstIdIsUUID: isUUID(sessionIds[0])
+    })
+
     let sessions: any[] = []
 
     if (areUUIDs) {
-      // sessionIds are database IDs (UUIDs) - directly query by id
-      const { data: fetchedSessions, error: fetchError } = await supabase
+      // sessionIds are database IDs (UUIDs) - query by id (without project filter first to check if they exist)
+      console.log('📋 Querying sessions by database ID (UUID)')
+      
+      // First, check if sessions exist at all (without project filter)
+      const { data: allSessions, error: checkError } = await supabase
         .from('sessions')
-        .select('id, session_id')
-        .eq('project_id', projectId)
+        .select('id, session_id, project_id')
         .in('id', sessionIds)
 
-      if (fetchError) {
-        throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
+      if (checkError) {
+        console.error('❌ Error checking sessions:', checkError)
+        throw new Error(`Failed to check sessions: ${checkError.message}`)
       }
 
-      sessions = fetchedSessions || []
+      console.log('🔍 Sessions found in database:', {
+        requestedCount: sessionIds.length,
+        foundCount: allSessions?.length || 0,
+        foundSessions: allSessions?.map(s => ({ id: s.id, project_id: s.project_id })) || []
+      })
+
+      // Filter by project_id
+      sessions = (allSessions || []).filter(s => s.project_id === projectId)
+
+      if (sessions.length < (allSessions?.length || 0)) {
+        console.warn('⚠️ Some sessions belong to different project:', {
+          requestedProjectId: projectId,
+          foundSessions: allSessions?.map(s => s.project_id) || [],
+          matchingCount: sessions.length,
+          totalFound: allSessions?.length || 0
+        })
+      }
+
+      console.log('✅ Sessions matching project:', {
+        requestedCount: sessionIds.length,
+        foundCount: sessions.length,
+        foundIds: sessions.map(s => s.id)
+      })
     } else {
       // sessionIds are SDK session_ids (sess_...) - query by session_id
+      console.log('📋 Querying sessions by SDK session_id')
       const { data: fetchedSessions, error: fetchError } = await supabase
         .from('sessions')
-        .select('id, session_id')
+        .select('id, session_id, project_id')
         .eq('project_id', projectId)
         .in('session_id', sessionIds)
 
       if (fetchError) {
+        console.error('❌ Error fetching sessions:', fetchError)
         throw new Error(`Failed to fetch sessions: ${fetchError.message}`)
       }
 
       sessions = fetchedSessions || []
+      console.log('✅ Found sessions by session_id:', {
+        requestedCount: sessionIds.length,
+        foundCount: sessions.length
+      })
     }
 
     if (sessions.length === 0) {
       return res.status(404).json({
         error: 'No sessions found',
-        message: 'No matching sessions found for deletion'
+        message: `No matching sessions found for deletion. Requested ${sessionIds.length} session(s) for project ${projectId}. Sessions may not exist or may belong to a different project.`
       })
     }
 
