@@ -62,14 +62,8 @@ app.use((req, res, next) => {
   next()
 })
 
-// CORS Configuration for non-SDK endpoints only
-app.use((req, res, next) => {
-  // Skip CORS middleware if this is an SDK endpoint (already handled above)
-  if ((req as any).isSDKEndpoint) {
-    return next()
-  }
-  // Use cors middleware for non-SDK endpoints
-  cors({
+// CORS Configuration for non-SDK endpoints
+const corsOptions = {
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, Postman, or file://)
     if (!origin) return callback(null, true)
@@ -188,12 +182,21 @@ app.use((req, res, next) => {
     console.warn(`CORS blocked origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`)
     callback(new Error('Not allowed by CORS'))
   },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    exposedHeaders: ['Content-Length', 'Content-Type'],
-    maxAge: 86400 // 24 hours - cache preflight requests
-  })(req, res, next)
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86400 // 24 hours - cache preflight requests
+}
+
+// Apply CORS middleware only for non-SDK endpoints
+app.use((req, res, next) => {
+  // Skip CORS middleware if this is an SDK endpoint (already handled above)
+  if ((req as any).isSDKEndpoint) {
+    return next()
+  }
+  // Use cors middleware for non-SDK endpoints
+  cors(corsOptions)(req, res, next)
 })
 
 // Increase body size limit for large snapshots (Vercel limit is 4.5MB, but we'll set higher for Express)
