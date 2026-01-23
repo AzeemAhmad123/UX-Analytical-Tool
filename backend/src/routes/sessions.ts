@@ -253,6 +253,16 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     }
 
     console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`)
+    
+    // If no snapshots found, log warning but continue (session might be new or snapshots still uploading)
+    if (snapshots.length === 0) {
+      console.warn('⚠️ No snapshots found for session:', {
+        sessionId: session.id,
+        session_id: session.session_id,
+        projectId: session.project_id,
+        message: 'This might be normal if snapshots are still being uploaded or session just started'
+      })
+    }
 
     // Decompress and parse all snapshots
     const decompressedSnapshots: any[] = []
