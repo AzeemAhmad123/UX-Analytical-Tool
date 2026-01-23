@@ -227,21 +227,29 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     // Get all snapshots for this session with timeout handling
     let snapshots: any[]
     try {
+      // Use Promise.race to add timeout, but also catch Supabase query timeouts
       snapshots = await Promise.race([
-        getSessionSnapshots(session.id),
+        getSessionSnapshots(session.id).catch((err: any) => {
+          // Check if it's a Supabase timeout
+          if (err.message?.includes('timeout') || err.message?.includes('canceling statement')) {
+            throw new Error('Snapshot retrieval timeout')
+          }
+          throw err
+        }),
         new Promise<any[]>((_, reject) => 
           setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 45000) // 45 second timeout
         )
       ])
     } catch (error: any) {
-      if (error.message === 'Snapshot retrieval timeout') {
-        console.error('⏱️ Timeout retrieving snapshots for session:', session.id)
-        return res.status(504).json({
-          error: 'Request timeout',
-          message: 'Snapshot retrieval timed out. The session may have too many snapshots. Please try again later.'
-        })
+      if (error.message === 'Snapshot retrieval timeout' || error.message?.includes('timeout') || error.message?.includes('canceling statement')) {
+        console.error('⏱️ Timeout retrieving snapshots for session:', session.id, error.message)
+        // Return empty snapshots array instead of error - session exists but snapshots timed out
+        snapshots = []
+        console.warn('⚠️ Returning empty snapshots array due to timeout - session will show but no replay data')
+      } else {
+        console.error('❌ Error retrieving snapshots:', error)
+        throw error
       }
-      throw error
     }
 
     console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`)
