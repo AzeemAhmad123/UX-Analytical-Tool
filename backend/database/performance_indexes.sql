@@ -7,13 +7,13 @@
 -- ============================================
 
 -- Index for filtering sessions by project_id (most common query) - CRITICAL
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_id ON sessions(project_id);
 
 -- Index for finding sessions by session_id - CRITICAL
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 
 -- Composite index for finding sessions by project_id + session_id (very common) - CRITICAL
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_project_session ON sessions(project_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_session ON sessions(project_id, session_id);
 
 -- ============================================
 -- SESSION_SNAPSHOTS TABLE INDEXES
@@ -36,17 +36,17 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_session_created ON session_snapshots(se
 -- ============================================
 
 -- Index for finding videos by session_id
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_videos_session_id ON session_videos(session_id);
+CREATE INDEX IF NOT EXISTS idx_videos_session_id ON session_videos(session_id);
 
 -- ============================================
 -- PROJECTS TABLE INDEXES (CRITICAL)
 -- ============================================
 
 -- Index for filtering projects by user_id (very common) - CRITICAL
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projects_user_id ON projects(user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects(user_id);
 
 -- Index for SDK key lookup (authentication) - CRITICAL
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_projects_sdk_key ON projects(sdk_key);
+CREATE INDEX IF NOT EXISTS idx_projects_sdk_key ON projects(sdk_key);
 
 -- ============================================
 -- NOTES ON CONCURRENT INDEX CREATION:
