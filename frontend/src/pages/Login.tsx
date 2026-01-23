@@ -103,9 +103,27 @@ const Login = () => {
     setLoading(true)
     setError(null)
 
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!formData.email || !emailRegex.test(formData.email)) {
+      setError('Please enter a valid email address')
+      setLoading(false)
+      return
+    }
+
+    // Validate password
+    if (!formData.password || formData.password.length < 6) {
+      setError('Password must be at least 6 characters')
+      setLoading(false)
+      return
+    }
+
     try {
+      // Trim email to remove whitespace
+      const trimmedEmail = formData.email.trim().toLowerCase()
+      
       // Add timeout for login (10 seconds max)
-      const loginPromise = auth.signIn(formData.email, formData.password)
+      const loginPromise = auth.signIn(trimmedEmail, formData.password)
       const timeoutPromise = new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 10000)
       )
@@ -113,30 +131,41 @@ const Login = () => {
       const { data, error: signInError } = await Promise.race([loginPromise, timeoutPromise]) as any
 
       if (signInError) {
+        console.error('Supabase auth error:', signInError)
+        
         // Handle specific Supabase errors
-        if (signInError.message?.includes('Invalid login credentials')) {
-          setError('Invalid email or password')
+        if (signInError.message?.includes('Invalid login credentials') || 
+            signInError.message?.includes('invalid') ||
+            signInError.status === 400) {
+          setError('Invalid email or password. Please check your credentials and try again.')
         } else if (signInError.message?.includes('Email not confirmed')) {
           setError('Please verify your email before logging in')
+        } else if (signInError.status === 422) {
+          setError('Invalid email or password format. Please check your input.')
         } else {
-          setError(signInError.message || 'Failed to sign in')
+          setError(signInError.message || 'Failed to sign in. Please try again.')
         }
         setLoading(false)
         return
       }
 
-      if (data.user) {
+      if (data?.user) {
         // Successfully logged in - navigate immediately (don't wait for dashboard to load)
         // Dashboard will load data in background
         setLoading(false) // Stop loading spinner before navigation
         navigate('/dashboard', { replace: true }) // Use replace to avoid back button issues
+      } else {
+        setError('Login failed. Please try again.')
+        setLoading(false)
       }
     } catch (err: any) {
       console.error('Login error:', err)
       if (err.message?.includes('timeout')) {
         setError('Login is taking too long. Please check your internet connection and try again.')
+      } else if (err.message?.includes('Failed to fetch') || err.message?.includes('network')) {
+        setError('Network error. Please check your internet connection and try again.')
       } else {
-        setError(err.message || 'An unexpected error occurred')
+        setError(err.message || 'An unexpected error occurred. Please try again.')
       }
       setLoading(false)
     }
