@@ -392,6 +392,11 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     }
 
     console.log(`✅ Total decompressed events: ${decompressedSnapshots.length}`)
+    
+    // If no snapshots were loaded (due to timeout or other issues), return a helpful message
+    if (decompressedSnapshots.length === 0 && snapshots.length > 0) {
+      console.warn('⚠️ Snapshots exist but failed to decompress/load')
+    }
 
     // Get video information if available (for mobile sessions)
     const { data: videos } = await supabase
@@ -591,9 +596,12 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
       })
 
       if (!allSessions || allSessions.length === 0) {
-        return res.status(404).json({
-          error: 'No sessions found',
-          message: `None of the ${sessionIds.length} requested session(s) exist in the database. They may have already been deleted.`
+        // Sessions don't exist - return success (idempotent delete)
+        console.log('✅ Sessions already deleted or don\'t exist - returning success (idempotent)')
+        return res.json({
+          success: true,
+          deleted_count: 0,
+          message: 'Sessions already deleted or do not exist'
         })
       }
 

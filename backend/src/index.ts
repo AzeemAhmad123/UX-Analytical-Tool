@@ -45,19 +45,31 @@ app.use((req, res, next) => {
       res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type')
       res.setHeader('Access-Control-Max-Age', '86400')
       console.log('✅ CORS: SDK endpoint - allowing origin', { origin, path: req.path })
+    } else {
+      // No origin header (e.g., Postman, curl) - allow anyway
+      res.setHeader('Access-Control-Allow-Origin', '*')
     }
     
     // Handle preflight
     if (req.method === 'OPTIONS') {
       return res.status(200).end()
     }
+    
+    // Skip the cors() middleware for SDK endpoints
+    return next()
   }
   
   next()
 })
 
-// CORS Configuration for non-SDK endpoints
-app.use(cors({
+// CORS Configuration for non-SDK endpoints only
+app.use((req, res, next) => {
+  // Skip CORS middleware if this is an SDK endpoint (already handled above)
+  if ((req as any).isSDKEndpoint) {
+    return next()
+  }
+  // Use cors middleware for non-SDK endpoints
+  cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps, Postman, or file://)
     if (!origin) return callback(null, true)
@@ -176,12 +188,13 @@ app.use(cors({
     console.warn(`CORS blocked origin: ${origin}. Allowed origins: ${allowedOrigins.join(', ')}`)
     callback(new Error('Not allowed by CORS'))
   },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  exposedHeaders: ['Content-Length', 'Content-Type'],
-  maxAge: 86400 // 24 hours - cache preflight requests
-}))
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposedHeaders: ['Content-Length', 'Content-Type'],
+    maxAge: 86400 // 24 hours - cache preflight requests
+  })(req, res, next)
+})
 
 // Increase body size limit for large snapshots (Vercel limit is 4.5MB, but we'll set higher for Express)
 // Note: Vercel serverless functions have a 4.5MB request body limit, so we'll need to handle chunking
