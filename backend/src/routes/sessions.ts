@@ -657,31 +657,13 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
       })
     }
 
-    // If no sessions found, check if they were already deleted or don't exist
+    // If no sessions found, return success (idempotent delete)
     if (sessions.length === 0) {
-      // Check if any of the requested IDs exist at all (even in different projects)
-      if (areUUIDs) {
-        const { data: anySessions } = await supabase
-          .from('sessions')
-          .select('id')
-          .in('id', sessionIds)
-          .limit(1)
-        
-        if (!anySessions || anySessions.length === 0) {
-          // Sessions don't exist at all - return success (idempotent delete)
-          console.log('✅ Sessions already deleted or don\'t exist - returning success (idempotent)')
-          return res.json({
-            success: true,
-            deleted_count: 0,
-            message: 'Sessions already deleted or do not exist'
-          })
-        }
-      }
-      
-      // Sessions exist but belong to different project
-      return res.status(404).json({
-        error: 'No sessions found',
-        message: `No matching sessions found for deletion. Requested ${sessionIds.length} session(s) for project ${projectId}. Sessions may belong to a different project.`
+      console.log('✅ No matching sessions found - returning success (idempotent delete)')
+      return res.json({
+        success: true,
+        deleted_count: 0,
+        message: 'No matching sessions found for deletion. Sessions may have already been deleted or belong to a different project.'
       })
     }
 
