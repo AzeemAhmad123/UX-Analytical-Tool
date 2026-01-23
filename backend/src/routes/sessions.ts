@@ -566,16 +566,35 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
         foundSessions: allSessions?.map(s => ({ id: s.id, project_id: s.project_id })) || []
       })
 
-      // Filter by project_id
-      sessions = (allSessions || []).filter(s => s.project_id === projectId)
+      if (!allSessions || allSessions.length === 0) {
+        return res.status(404).json({
+          error: 'No sessions found',
+          message: `None of the ${sessionIds.length} requested session(s) exist in the database. They may have already been deleted.`
+        })
+      }
 
-      if (sessions.length < (allSessions?.length || 0)) {
+      // Filter by project_id
+      sessions = allSessions.filter(s => s.project_id === projectId)
+
+      if (sessions.length < allSessions.length) {
+        const wrongProjectSessions = allSessions.filter(s => s.project_id !== projectId)
         console.warn('⚠️ Some sessions belong to different project:', {
           requestedProjectId: projectId,
-          foundSessions: allSessions?.map(s => s.project_id) || [],
+          wrongProjectSessions: wrongProjectSessions.map(s => ({ id: s.id, project_id: s.project_id })),
           matchingCount: sessions.length,
-          totalFound: allSessions?.length || 0
+          totalFound: allSessions.length
         })
+        
+        // If ALL sessions belong to wrong project, return error
+        if (sessions.length === 0) {
+          return res.status(403).json({
+            error: 'Sessions belong to different project',
+            message: `All ${allSessions.length} session(s) belong to a different project. Requested project: ${projectId}, Actual projects: ${[...new Set(wrongProjectSessions.map(s => s.project_id))].join(', ')}`
+          })
+        }
+        
+        // If SOME sessions belong to wrong project, delete only the matching ones
+        console.log(`⚠️ Deleting ${sessions.length} of ${allSessions.length} sessions (${allSessions.length - sessions.length} belong to different project)`)
       }
 
       console.log('✅ Sessions matching project:', {
@@ -604,10 +623,31 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
       })
     }
 
+    // If no sessions found, check if they were already deleted or don't exist
     if (sessions.length === 0) {
+      // Check if any of the requested IDs exist at all (even in different projects)
+      if (areUUIDs) {
+        const { data: anySessions } = await supabase
+          .from('sessions')
+          .select('id')
+          .in('id', sessionIds)
+          .limit(1)
+        
+        if (!anySessions || anySessions.length === 0) {
+          // Sessions don't exist at all - return success (idempotent delete)
+          console.log('✅ Sessions already deleted or don\'t exist - returning success (idempotent)')
+          return res.json({
+            success: true,
+            deleted_count: 0,
+            message: 'Sessions already deleted or do not exist'
+          })
+        }
+      }
+      
+      // Sessions exist but belong to different project
       return res.status(404).json({
         error: 'No sessions found',
-        message: `No matching sessions found for deletion. Requested ${sessionIds.length} session(s) for project ${projectId}. Sessions may not exist or may belong to a different project.`
+        message: `No matching sessions found for deletion. Requested ${sessionIds.length} session(s) for project ${projectId}. Sessions may belong to a different project.`
       })
     }
 
