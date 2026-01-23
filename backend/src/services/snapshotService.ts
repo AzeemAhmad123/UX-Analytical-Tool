@@ -52,15 +52,26 @@ export async function storeSnapshot(
     // Get project_id from session if not provided
     let finalProjectId = projectId
     if (!finalProjectId) {
-      const { data: sessionData } = await supabase
-        .from('sessions')
-        .select('project_id')
-        .eq('id', sessionDbId)
-        .single()
-      
-      if (sessionData) {
-        finalProjectId = sessionData.project_id
-        console.log('✅ Fetched project_id from session:', finalProjectId)
+      try {
+        const { data: sessionData, error: sessionError } = await Promise.race([
+          supabase
+            .from('sessions')
+            .select('project_id')
+            .eq('id', sessionDbId)
+            .single(),
+          new Promise<{ data: any, error: any }>((_, reject) => 
+            setTimeout(() => reject(new Error('Session query timeout')), 10000) // 10 second timeout
+          )
+        ])
+        
+        if (sessionError) {
+          console.warn('⚠️ Error fetching project_id from session:', sessionError.message)
+        } else if (sessionData) {
+          finalProjectId = sessionData.project_id
+          console.log('✅ Fetched project_id from session:', finalProjectId)
+        }
+      } catch (timeoutError: any) {
+        console.warn('⚠️ Timeout fetching project_id from session, proceeding without it')
       }
     }
     
@@ -80,11 +91,20 @@ export async function storeSnapshot(
       console.warn('⚠️ No project_id available for snapshot insert')
     }
     
-    let { data: snapshot, error } = await supabase
-      .from('session_snapshots')
-      .insert(insertData)
-      .select()
-      .single()
+    // Insert with timeout handling
+    let { data: snapshot, error } = await Promise.race([
+      supabase
+        .from('session_snapshots')
+        .insert(insertData)
+        .select()
+        .single(),
+      new Promise<{ data: any, error: any }>((_, reject) => 
+        setTimeout(() => reject(new Error('upstream request timeout')), 30000) // 30 second timeout
+      )
+    ]).catch((timeoutError: any) => {
+      // If timeout, return error object
+      return { data: null, error: { message: timeoutError.message || 'upstream request timeout' } }
+    })
     
     // If error is about missing column, retry without optional columns
     if (error && error.message) {

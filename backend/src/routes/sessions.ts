@@ -617,11 +617,13 @@ router.delete('/:projectId', async (req: Request, res: Response) => {
           totalFound: allSessions.length
         })
         
-        // If ALL sessions belong to wrong project, return error
+        // If ALL sessions belong to wrong project, return success (idempotent) instead of error
         if (sessions.length === 0) {
-          return res.status(403).json({
-            error: 'Sessions belong to different project',
-            message: `All ${allSessions.length} session(s) belong to a different project. Requested project: ${projectId}, Actual projects: ${[...new Set(wrongProjectSessions.map(s => s.project_id))].join(', ')}`
+          console.log('✅ All sessions belong to different project - returning success (idempotent delete)')
+          return res.json({
+            success: true,
+            deleted_count: 0,
+            message: `All ${allSessions.length} session(s) belong to a different project. No sessions deleted.`
           })
         }
         
