@@ -22,7 +22,25 @@ export async function validateSDKKey(sdkKey: string): Promise<{
       .eq('sdk_key', sdkKey)
       .single()
 
-    if (error || !project) {
+    if (error) {
+      console.error('Supabase error validating SDK key:', {
+        error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        sdkKey: sdkKey.substring(0, 20) + '...'
+      })
+      
+      // Check if it's a connection error
+      if (error.message?.includes('520') || error.message?.includes('Web server') || error.code === 'PGRST116') {
+        return { valid: false, error: 'Database connection error. Please try again later.' }
+      }
+      
+      return { valid: false, error: 'Invalid SDK key' }
+    }
+    
+    if (!project) {
+      console.warn('SDK key not found in database:', sdkKey.substring(0, 20) + '...')
       return { valid: false, error: 'Invalid SDK key' }
     }
 
@@ -48,8 +66,23 @@ export async function validateSDKKey(sdkKey: string): Promise<{
       allowedDomains
     }
   } catch (err: any) {
-    console.error('Error validating SDK key:', err)
-    return { valid: false, error: 'Database error' }
+    console.error('Error validating SDK key:', {
+      error: err.message,
+      stack: err.stack,
+      name: err.name,
+      sdkKey: sdkKey ? sdkKey.substring(0, 20) + '...' : 'MISSING'
+    })
+    
+    // Check for specific error types
+    if (err.message?.includes('520') || err.message?.includes('Web server')) {
+      return { valid: false, error: 'Database connection error. Please try again later.' }
+    }
+    
+    if (err.message?.includes('timeout') || err.name === 'TimeoutError') {
+      return { valid: false, error: 'Database timeout. Please try again.' }
+    }
+    
+    return { valid: false, error: 'Database error: ' + (err.message || 'Unknown error') }
   }
 }
 

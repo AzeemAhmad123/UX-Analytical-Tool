@@ -67,7 +67,7 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       .select('session_id')
       .in('session_id', sessionIds)
     
-    // Count snapshots per session
+    // Count snapshots per session and filter out sessions without snapshots
     const snapshotCountMap = new Map<string, number>()
     if (snapshotCounts) {
       snapshotCounts.forEach((snapshot: any) => {
@@ -75,6 +75,16 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         snapshotCountMap.set(snapshot.session_id, count + 1)
       })
     }
+    
+    // Filter out sessions without snapshots (recording never started)
+    // Also filter out sessions with very short duration (< 2 seconds) as they're likely incomplete
+    const MIN_DURATION_MS = 2000 // 2 seconds minimum
+    const filteredSessions = (sessions || []).filter((session: any) => {
+      const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
+      const hasValidDuration = session.duration && session.duration >= MIN_DURATION_MS
+      // Keep session if it has snapshots OR has valid duration (some sessions might have events but no snapshots yet)
+      return hasSnapshots || hasValidDuration
+    })
 
     // Get video information for all sessions
     const { data: videos } = await supabase
@@ -102,7 +112,7 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     // This prevents showing 10 minutes when the actual video is only 10 seconds
     // Use Promise.allSettled to prevent one slow session from blocking all others
     const sessionsWithAccurateDuration = await Promise.allSettled(
-      (sessions || []).map(async (session: any) => {
+      filteredSessions.map(async (session: any) => {
         // Try to get duration from event timestamps (most accurate)
         // Add timeout to prevent hanging
         const durationPromise = getSessionDurationFromSnapshots(session.id)
@@ -161,7 +171,7 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       success: true,
       sessions: sessionsWithAccurateDuration,
       count: sessionsWithAccurateDuration.length,
-      total: count || 0,
+      total: filteredSessions.length, // Total filtered sessions (with snapshots or valid duration)
       limit,
       offset
     })

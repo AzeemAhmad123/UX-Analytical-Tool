@@ -158,11 +158,28 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       properties: userProperties
     }).catch(err => console.error('Error updating user properties:', err))
 
-    const { session } = await findOrCreateSession(
-      projectId,
-      sessionId,
-      sessionDeviceInfo
-    )
+    // Only find existing session - don't create new ones
+    // Sessions should only be created when Type 2 snapshot is uploaded (recording confirmed)
+    const { data: existingSession } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('project_id', projectId)
+      .eq('session_id', sessionId)
+      .single()
+
+    if (!existingSession) {
+      // Session doesn't exist yet - recording hasn't started
+      // Ignore events that arrive before recording starts
+      console.log('⚠️ Events received for session that doesn\'t exist yet (recording not started):', sessionId)
+      return res.json({
+        success: true,
+        message: 'Session not created yet - recording not started',
+        events_processed: 0,
+        skipped: true
+      })
+    }
+
+    const session = existingSession
 
     // Insert events into database
     // Use project_id from the session (session already has project_id)
