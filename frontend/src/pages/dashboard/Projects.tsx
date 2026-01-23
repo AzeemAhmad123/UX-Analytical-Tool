@@ -130,7 +130,14 @@ export function Projects() {
     try {
       setLoading(true)
       console.log('📥 Loading projects from API...')
-      const response = await projectsAPI.getAll()
+      
+      // Add timeout for projects loading (15 seconds)
+      const projectsPromise = projectsAPI.getAll()
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Request timeout')), 15000) // 15 second timeout
+      )
+      
+      const response = await Promise.race([projectsPromise, timeoutPromise]) as any
       console.log('📊 API Response:', response)
       console.log('📊 Response type:', typeof response)
       console.log('📊 Response.projects:', response.projects)
@@ -152,7 +159,16 @@ export function Projects() {
         stack: error.stack,
         name: error.name
       })
-      alert('Failed to load projects: ' + error.message)
+      
+      // Don't show alert for timeout - just log and show empty state
+      if (!error.message?.includes('timeout')) {
+        alert('Failed to load projects: ' + error.message)
+      } else {
+        console.warn('⚠️ Projects loading timed out - showing empty state')
+      }
+      
+      // Set empty array so UI doesn't hang
+      setProjects([])
     } finally {
       setLoading(false)
     }

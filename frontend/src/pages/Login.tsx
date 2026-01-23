@@ -104,7 +104,13 @@ const Login = () => {
     setError(null)
 
     try {
-      const { data, error: signInError } = await auth.signIn(formData.email, formData.password)
+      // Add timeout for login (10 seconds max)
+      const loginPromise = auth.signIn(formData.email, formData.password)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 10000)
+      )
+      
+      const { data, error: signInError } = await Promise.race([loginPromise, timeoutPromise]) as any
 
       if (signInError) {
         // Handle specific Supabase errors
@@ -115,17 +121,23 @@ const Login = () => {
         } else {
           setError(signInError.message || 'Failed to sign in')
         }
+        setLoading(false)
         return
       }
 
       if (data.user) {
-        // Successfully logged in
-        navigate('/dashboard') // Redirect to dashboard (you'll need to create this)
+        // Successfully logged in - navigate immediately (don't wait for dashboard to load)
+        // Dashboard will load data in background
+        setLoading(false) // Stop loading spinner before navigation
+        navigate('/dashboard', { replace: true }) // Use replace to avoid back button issues
       }
     } catch (err: any) {
       console.error('Login error:', err)
-      setError(err.message || 'An unexpected error occurred')
-    } finally {
+      if (err.message?.includes('timeout')) {
+        setError('Login is taking too long. Please check your internet connection and try again.')
+      } else {
+        setError(err.message || 'An unexpected error occurred')
+      }
       setLoading(false)
     }
   }
