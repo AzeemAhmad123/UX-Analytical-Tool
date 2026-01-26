@@ -12,9 +12,9 @@ const getApiUrl = (): string => {
     const hostname = window.location.hostname
     
     // Auto-detect backend for Vercel deployments
-    // If frontend is on ux-analytical-tool-*.vercel.app, use ux-analytical-tool-gzsn.vercel.app as backend
+    // If frontend is on ux-analytical-tool-*.vercel.app, use ux-analytical-tool-zbgu.vercel.app as backend
     if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
-      return 'https://ux-analytical-tool-gzsn.vercel.app'
+      return 'https://ux-analytical-tool-zbgu.vercel.app'
     }
     
     // If we're on localhost, use local backend
