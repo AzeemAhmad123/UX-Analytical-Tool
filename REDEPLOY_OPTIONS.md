@@ -30,7 +30,7 @@
 **IMPORTANT:** Before deleting, save these values:
 
 1. Go to **Settings** → **Environment Variables**
-2. **Write down or copy:**
+2. **Write down or copy:**V
    - `SUPABASE_URL` = `https://kkgdxfencpyabcmizytn.supabase.co`
    - `SUPABASE_SERVICE_KEY` = (your service key)
    - `CORS_ORIGINS` = (your CORS origins)
