@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
-import { supabase } from '../config/supabase'
+import { supabase, SUPABASE_URL } from '../config/supabase'
 
 /**
  * Validates SDK key and returns project information
@@ -16,6 +16,14 @@ export async function validateSDKKey(sdkKey: string): Promise<{
   }
 
   try {
+    // Log which Supabase instance we're querying
+    console.log('🔍 Validating SDK key:', {
+      sdkKeyPrefix: sdkKey.substring(0, 20) + '...',
+      supabaseUrl: SUPABASE_URL,
+      isNewProject: SUPABASE_URL.includes('kkgdxfencpyabcmizytn'),
+      isOldProject: SUPABASE_URL.includes('xrvmiyrsxwrruhdljkoz')
+    })
+
     const { data: project, error } = await supabase
       .from('projects')
       .select('id, name, sdk_key, allowed_domains')
@@ -23,12 +31,15 @@ export async function validateSDKKey(sdkKey: string): Promise<{
       .single()
 
     if (error) {
-      console.error('Supabase error validating SDK key:', {
+      console.error('❌ Supabase error validating SDK key:', {
         error: error.message,
         code: error.code,
         details: error.details,
         hint: error.hint,
-        sdkKey: sdkKey.substring(0, 20) + '...'
+        sdkKey: sdkKey.substring(0, 20) + '...',
+        supabaseUrl: SUPABASE_URL,
+        isNewProject: SUPABASE_URL.includes('kkgdxfencpyabcmizytn'),
+        isOldProject: SUPABASE_URL.includes('xrvmiyrsxwrruhdljkoz')
       })
       
       // Check if it's a connection error

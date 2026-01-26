@@ -38,7 +38,5 @@ async function testSupabaseConnection() {
   } catch (err: any) {
     console.error('❌ Supabase connection error:', err.message)
   }
-}
-
-// Test connection (non-blocking)
+}// Test connection (non-blocking)
 testSupabaseConnection().catch(() => {})
