@@ -64,7 +64,7 @@ app.use((req, res, next) => {
 
 // CORS Configuration for non-SDK endpoints
 const corsOptions = {
-  origin: (origin, callback) => {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps, Postman, or file://)
     if (!origin) return callback(null, true)
     
