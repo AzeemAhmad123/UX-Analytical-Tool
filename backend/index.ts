@@ -1,5 +1,6 @@
 // Root entrypoint for Vercel
-// This file imports and exports the Express app
+// Vercel needs to find an entrypoint that imports express
+import express from 'express'
 import app from './src/index'
 
 // Export the app for Vercel
