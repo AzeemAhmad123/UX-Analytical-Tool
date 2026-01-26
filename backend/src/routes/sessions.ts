@@ -279,20 +279,38 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           isInitial: snapshot.is_initial_snapshot
         })
 
-        // First, ensure we have a proper string (handle Buffer objects)
+        // First, ensure we have a proper string (handle Buffer objects and hex BYTEA from Supabase)
         let snapshotString = snapshot.snapshot_data
         if (typeof snapshotString === 'string') {
-          // Check if it's a JSON-serialized Buffer object
-          try {
-            const parsed = JSON.parse(snapshotString)
-            if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
-              // Convert Buffer object to actual string
-              const buffer = Buffer.from(parsed.data)
-              snapshotString = buffer.toString('utf8')
-              console.log(`✅ Converted Buffer object to string (${buffer.length} bytes)`)
+          // Check if it's hex BYTEA format from Supabase (\x...)
+          const isHexBYTEA = snapshotString.length >= 2 && 
+              snapshotString.charCodeAt(0) === 92 && // backslash
+              snapshotString.charCodeAt(1) === 120 && // x
+              /^[0-9a-fA-F]{2}/.test(snapshotString.substring(2))
+          
+          if (isHexBYTEA) {
+            // Convert hex BYTEA to UTF-8 string
+            const hexString = snapshotString.substring(2) // Remove \x prefix
+            try {
+              snapshotString = Buffer.from(hexString, 'hex').toString('utf8')
+              console.log(`✅ Converted hex BYTEA to string (${hexString.length / 2} bytes)`)
+            } catch (e) {
+              console.error('❌ Error converting hex BYTEA:', e)
+              throw e
             }
-          } catch (e) {
-            // Not a JSON Buffer object, use as-is
+          } else {
+            // Check if it's a JSON-serialized Buffer object
+            try {
+              const parsed = JSON.parse(snapshotString)
+              if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
+                // Convert Buffer object to actual string
+                const buffer = Buffer.from(parsed.data)
+                snapshotString = buffer.toString('utf8')
+                console.log(`✅ Converted Buffer object to string (${buffer.length} bytes)`)
+              }
+            } catch (e) {
+              // Not a JSON Buffer object, use as-is
+            }
           }
         }
 
@@ -805,5 +823,3 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
 
 export default router
 
-/ /   F o r c e   c o m m i t  
- 
