@@ -77,9 +77,9 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     }
     
     // Filter out sessions without snapshots (recording never started)
-    // Also filter out sessions with very short duration (< 2 seconds) as they're likely incomplete
+    // Also filter out sessions with very short duration (< 10 seconds) as they're likely incomplete or accidental
     // BUT: Don't filter when deleting - allow deletion of all sessions
-    const MIN_DURATION_MS = 2000 // 2 seconds minimum
+    const MIN_DURATION_MS = 10000 // 10 seconds minimum
     const filteredSessions = (sessions || []).filter((session: any) => {
       const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
       const hasValidDuration = session.duration && session.duration >= MIN_DURATION_MS
@@ -169,6 +169,14 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         .filter(result => result.status === 'fulfilled')
         .map(result => (result as PromiseFulfilledResult<any>).value)
         .filter(session => session && typeof session === 'object' && session.id)
+        // Filter out sessions with duration less than 10 seconds (after accurate duration calculation)
+        .filter(session => {
+          const duration = session.duration || 0
+          // Also check if session has snapshots (needed for replay)
+          // Sessions without snapshots can't be replayed, so filter them out
+          const hasSnapshots = (session.snapshot_count || 0) > 0
+          return duration >= MIN_DURATION_MS && hasSnapshots
+        })
     )
 
     res.json({

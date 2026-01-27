@@ -543,6 +543,17 @@ export function SessionReplayPlayer() {
         eventTypes: validSnapshots.map((e: any) => e.type)
       })
 
+      // CRITICAL: rrweb Replayer requires at least 2 events (Type 2 + at least one incremental event)
+      if (validSnapshots.length < 2) {
+        console.error('❌ Insufficient events for replay:', {
+          eventCount: validSnapshots.length,
+          eventTypes: validSnapshots.map((e: any) => e.type),
+          hasType2: validSnapshots.some((e: any) => e.type === 2)
+        })
+        setError(`This session cannot be replayed because it only has ${validSnapshots.length} event(s). rrweb requires at least 2 events (a full snapshot and at least one incremental event). This usually happens when the user left the page before incremental events were saved.`)
+        return
+      }
+
       // Create a wrapper div for the replay
       const wrapper = document.createElement('div')
       wrapper.className = 'replay-container'
@@ -571,8 +582,62 @@ export function SessionReplayPlayer() {
         wrapperInDOM: replayContainerRef.current.contains(wrapper)
       })
 
-      // Don't override setAttribute or createElement globally - it breaks other code
-      // We'll use MutationObserver to watch and remove sandbox after it's set
+      // Override createElement to intercept iframe creation BEFORE rrweb sets sandbox
+      // This is more aggressive but necessary to prevent sandbox restrictions
+      const originalCreateElement = document.createElement.bind(document)
+      const createElementOverride = function(tagName: string, options?: any) {
+        const element = originalCreateElement(tagName, options)
+        
+        if (tagName.toLowerCase() === 'iframe') {
+          const iframe = element as HTMLIFrameElement
+          
+          // Override setAttribute to prevent restrictive sandbox
+          const originalSetAttribute = iframe.setAttribute.bind(iframe)
+          iframe.setAttribute = function(name: string, value: string) {
+            if (name === 'sandbox') {
+              // Always ensure allow-scripts and allow-same-origin are present
+              const sandboxValue = value || ''
+              if (!sandboxValue.includes('allow-scripts') || !sandboxValue.includes('allow-same-origin')) {
+                const newValue = sandboxValue 
+                  ? `${sandboxValue} allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation`
+                  : 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
+                console.log('🔧 Intercepted sandbox setAttribute, ensuring allow-scripts:', newValue)
+                return originalSetAttribute(name, newValue)
+              }
+            }
+            return originalSetAttribute(name, value)
+          }
+          
+          // Also override sandbox property setter
+          let sandboxValue = ''
+          Object.defineProperty(iframe, 'sandbox', {
+            get() {
+              return sandboxValue
+            },
+            set(value: string) {
+              if (!value.includes('allow-scripts') || !value.includes('allow-same-origin')) {
+                const newValue = value 
+                  ? `${value} allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation`
+                  : 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
+                console.log('🔧 Intercepted sandbox property setter, ensuring allow-scripts:', newValue)
+                sandboxValue = newValue
+                iframe.setAttribute('sandbox', newValue)
+              } else {
+                sandboxValue = value
+              }
+            },
+            configurable: true,
+            enumerable: true
+          })
+          
+          console.log('🔧 Intercepted iframe creation, sandbox protection enabled')
+        }
+        
+        return element
+      }
+      
+      // Temporarily override createElement only for iframe creation
+      document.createElement = createElementOverride as any
 
       // Create Replayer instance with validated events
       // Enhanced cursor visualization like Hotjar/UXCam
@@ -597,6 +662,9 @@ export function SessionReplayPlayer() {
           return data
         },
       })
+      
+      // Restore original createElement after replayer is created
+      document.createElement = originalCreateElement
 
       // Add custom cursor overlay for better visibility
       // This creates a visible cursor element that follows mouse movements
@@ -933,15 +1001,17 @@ export function SessionReplayPlayer() {
       
       checkAndFixIframes() // Check immediately
       
-      // Also check periodically for the first 10 seconds (in case iframe is created very late or rrweb re-adds sandbox)
+      // Also check periodically for the first 15 seconds (increased to catch late iframe creation)
+      // Use a more frequent interval to catch sandbox changes immediately
       const checkInterval = setInterval(() => {
         checkAndFixIframes()
-      }, 100)
+      }, 50) // Check every 50ms for faster response
       
-      // Stop checking after 10 seconds (increased from 5 to catch late iframe creation)
+      // Stop checking after 15 seconds (increased to catch late iframe creation)
       setTimeout(() => {
         clearInterval(checkInterval)
-      }, 10000)
+        console.log('✅ Stopped sandbox monitoring (iframe should be created by now)')
+      }, 15000)
 
       // No need to restore - we're not overriding anything globally anymore
 
