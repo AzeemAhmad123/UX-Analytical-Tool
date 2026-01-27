@@ -250,7 +250,8 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         )
       }
       
-      // Build event object - project_id may not exist in older database schemas
+      // Build event object with all fields (including optional ones)
+      // These columns should exist after running the migration: add_user_id_and_variant_to_events.sql
       const eventObj: any = {
         session_id: session.id,
         type: String(event.type || 'unknown'),
@@ -258,44 +259,67 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         data: eventData
       }
       
-      // Add optional fields only if they exist
+      // Add optional fields if provided
       if (userId) {
         eventObj.user_id = userId
       }
       if (variant) {
         eventObj.variant = variant
       }
-      // Only add project_id if the column exists (check via try-catch or make it optional)
-      // For now, we'll try to add it - if it fails, the error will be caught
-      try {
+      // Add project_id from session (for better querying)
+      if (projectId || session.project_id) {
         eventObj.project_id = projectId || session.project_id
-      } catch (e) {
-        // project_id column might not exist - skip it
-        console.warn('project_id column may not exist in events table')
       }
       
       return eventObj
     })
 
-    // Try to insert events - handle case where project_id column might not exist
+    // Try to insert events - handle case where optional columns might not exist
     const { error: insertError } = await supabase
       .from('events')
       .insert(eventsToInsert)
 
     if (insertError) {
-      // Check if error is about missing project_id column
-      if (insertError.message && insertError.message.includes('project_id')) {
-        console.warn('⚠️ project_id column not found in events table, retrying without it')
-        const eventsWithoutProjectId = eventsToInsert.map((e: any) => {
-          const { project_id, ...rest } = e
+      // Check if error is about missing columns (project_id, user_id, variant, etc.)
+      const missingColumnMatch = insertError.message?.match(/Could not find the '(\w+)' column/)
+      if (missingColumnMatch) {
+        const missingColumn = missingColumnMatch[1]
+        console.warn(`⚠️ ${missingColumn} column not found in events table, retrying without it`)
+        
+        // Remove the missing column from all events and retry
+        const eventsWithoutColumn = eventsToInsert.map((e: any) => {
+          const { [missingColumn]: removed, ...rest } = e
           return rest
         })
+        
         const retryResult = await supabase
           .from('events')
-          .insert(eventsWithoutProjectId)
+          .insert(eventsWithoutColumn)
+        
         if (retryResult.error) {
-          console.error('Error inserting events (retry without project_id):', retryResult.error)
-          throw new Error(`Failed to insert events: ${retryResult.error.message}`)
+          // If retry also fails, check for another missing column and retry recursively
+          const nextMissingColumnMatch = retryResult.error.message?.match(/Could not find the '(\w+)' column/)
+          if (nextMissingColumnMatch) {
+            const nextMissingColumn = nextMissingColumnMatch[1]
+            console.warn(`⚠️ ${nextMissingColumn} column also not found, retrying without both ${missingColumn} and ${nextMissingColumn}`)
+            
+            const eventsWithoutBothColumns = eventsWithoutColumn.map((e: any) => {
+              const { [nextMissingColumn]: removed, ...rest } = e
+              return rest
+            })
+            
+            const finalRetryResult = await supabase
+              .from('events')
+              .insert(eventsWithoutBothColumns)
+            
+            if (finalRetryResult.error) {
+              console.error('Error inserting events (after removing multiple columns):', finalRetryResult.error)
+              throw new Error(`Failed to insert events: ${finalRetryResult.error.message}`)
+            }
+          } else {
+            console.error('Error inserting events (retry without column):', retryResult.error)
+            throw new Error(`Failed to insert events: ${retryResult.error.message}`)
+          }
         }
       } else {
         console.error('Error inserting events:', insertError)

@@ -452,9 +452,14 @@
               }
             },
             (error) => {
-              // User denied or error - backend will use IP-based geolocation
+              // User denied, timeout, or error - backend will use IP-based geolocation
+              // This is normal - browser geolocation requires explicit permission
+              // IP-based geolocation will still work and provide location data
               if (window.UXCamSDK && window.UXCamSDK.debug) {
-                console.log('UXCam SDK: Geolocation not available, backend will use IP-based location');
+                const errorMsg = error.code === 1 ? 'permission denied' : 
+                               error.code === 2 ? 'position unavailable' : 
+                               error.code === 3 ? 'timeout' : 'unknown error';
+                console.log(`UXCam SDK: Browser geolocation ${errorMsg} (this is normal). IP-based geolocation will be used instead.`);
               }
             },
             { timeout: 3000, maximumAge: 60000, enableHighAccuracy: false }
@@ -852,9 +857,10 @@
           startSession();
         }
         
-        // Block events until recording starts (Type 2 uploaded) - except session_start
-        // This prevents events from being sent before recording actually starts
-        if (!type2Uploaded && type !== 'session_start') {
+        // Block events until recording starts (Type 2 uploaded) - except session_start and network events
+        // Network events are useful even before recording starts (for debugging)
+        // This prevents most events from being sent before recording actually starts
+        if (!type2Uploaded && type !== 'session_start' && type !== 'network_request' && type !== 'network_response') {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.log('UXCam SDK: Event blocked - recording not started yet:', type);
           }
