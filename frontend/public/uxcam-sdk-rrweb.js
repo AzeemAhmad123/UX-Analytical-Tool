@@ -628,16 +628,26 @@
             events.push(event);
             snapshotQueue.push(event);
             
-            // UXCam-style behavior: Collect all snapshots during session
-            // Only flush Type 2 immediately, all incremental events are batched until page unload
-            // This prevents frequent flushing and ensures complete session recording
-            
-            // Only auto-flush if batch is extremely large (safety measure)
+            // Flush snapshots periodically to ensure they're saved even if user leaves quickly
+            // This is critical for mobile devices where beforeunload may not fire reliably
+            // Flush every 5 seconds or when batch size is reached, whichever comes first
             if (snapshotQueue.length >= config.batchSize) {
-              console.warn('UXCam SDK: Snapshot queue very large, flushing to prevent memory issues');
+              console.log('UXCam SDK: Snapshot queue reached batch size, flushing');
               flushSnapshots();
+            } else if (snapshotQueue.length > 0 && type2Uploaded) {
+              // Schedule periodic flush if not already scheduled
+              if (!snapshotFlushTimer) {
+                snapshotFlushTimer = setTimeout(() => {
+                  snapshotFlushTimer = null;
+                  if (snapshotQueue.length > 0 && type2Uploaded) {
+                    console.log('UXCam SDK: Periodic snapshot flush (every 5 seconds)', {
+                      snapshotCount: snapshotQueue.length
+                    });
+                    flushSnapshots();
+                  }
+                }, 5000); // Flush every 5 seconds
+              }
             }
-            // Otherwise, do nothing - snapshots will be flushed on page unload
           } catch (error) {
             // Silently catch errors from rrweb to prevent breaking the website
             if (window.UXCamSDK && window.UXCamSDK.debug) {
@@ -784,13 +794,13 @@
             timestamp: new Date().toISOString(),
             recording_started: true
           });
+          
+          // Start periodic flushing now that recording has started
+          scheduleSnapshotFlush();
         }
         
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
-        console.log('UXCam SDK: Incremental events will be collected and sent when user leaves the page');
-        
-        // Don't flush incremental events immediately - collect them during the session
-        // They will be flushed when the user leaves (beforeunload/pagehide)
+        console.log('UXCam SDK: Incremental events will be flushed periodically (every 5 seconds) and on page unload');
         
       } catch (error) {
         console.error('UXCam SDK: Type 2 failed:', error.message);
@@ -1089,10 +1099,35 @@
 
     // Schedule snapshot flush (separate timer for snapshots)
     let snapshotFlushTimer = null;
+    let periodicFlushInterval = null;
+    
     function scheduleSnapshotFlush() {
-      // Disabled - we only flush on page unload for UXCam-style behavior
-      // This function is kept for compatibility but does nothing
-      return;
+      // Start periodic flushing every 5 seconds to ensure snapshots are saved
+      // This is critical for mobile devices and when users navigate quickly
+      if (periodicFlushInterval) {
+        return; // Already scheduled
+      }
+      
+      periodicFlushInterval = setInterval(() => {
+        if (snapshotQueue.length > 0 && type2Uploaded && sessionId) {
+          console.log('UXCam SDK: Periodic snapshot flush', {
+            snapshotCount: snapshotQueue.length,
+            eventTypes: snapshotQueue.slice(0, 5).map(s => s?.type)
+          });
+          flushSnapshots();
+        }
+      }, 5000); // Flush every 5 seconds
+    }
+    
+    function stopPeriodicFlush() {
+      if (periodicFlushInterval) {
+        clearInterval(periodicFlushInterval);
+        periodicFlushInterval = null;
+      }
+      if (snapshotFlushTimer) {
+        clearTimeout(snapshotFlushTimer);
+        snapshotFlushTimer = null;
+      }
     }
 
     // End session (reusable function) - SAFE: Won't break website if it fails
@@ -1105,6 +1140,9 @@
           clearTimeout(inactivityTimer);
           inactivityTimer = null;
         }
+        
+        // Stop periodic flushing
+        stopPeriodicFlush();
         
         // Stop recording first
         if (stopRecording) {
@@ -1404,14 +1442,21 @@
           // Track route changes for SPAs
           trackRouteChange();
 
-          // Track page visibility changes - stop recording when user leaves
+          // Track page visibility changes - flush data when page becomes hidden
+          // This is more reliable than beforeunload, especially on mobile devices
           document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-              console.log('UXCam SDK: Page hidden, stopping recording');
+              console.log('UXCam SDK: Page hidden, flushing snapshots and events');
               trackEvent('page_hidden');
-              // Stop recording when user switches tabs or minimizes
-              if (stopRecording && sessionId) {
-                endSession();
+              // Flush snapshots and events when user switches tabs or minimizes
+              // Don't end session - user might come back
+              if (sessionId && type2Uploaded) {
+                if (snapshotQueue.length > 0) {
+                  flushSnapshots();
+                }
+                if (eventQueue.length > 0) {
+                  flushEvents();
+                }
               }
             } else {
               trackEvent('page_visible');
@@ -1512,23 +1557,56 @@
           
           // Also handle pagehide event (more reliable on mobile devices)
           window.addEventListener('pagehide', () => {
-            if (sessionId && snapshotQueue.length > 0) {
-              console.log('UXCam SDK: Page hiding, flushing snapshots');
-              const snapshots = [...snapshotQueue];
-              snapshotQueue = [];
-              const compressed = compressSnapshots(snapshots);
+            console.log('UXCam SDK: Page hiding, flushing all data');
+            stopPeriodicFlush();
+            
+            if (sessionId) {
+              // Flush remaining events
+              if (eventQueue.length > 0) {
+                const events = [...eventQueue];
+                eventQueue = [];
+                const blob = new Blob([JSON.stringify({
+                  sdk_key: config.sdkKey,
+                  session_id: sessionId,
+                  events: events,
+                  device_info: deviceInfo,
+                  user_properties: {}
+                })], { type: 'application/json' });
+                navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
+              }
               
-              const blob = new Blob([JSON.stringify({
-                sdk_key: config.sdkKey,
-                session_id: sessionId,
-                snapshots: compressed,
-                snapshot_count: snapshots.length,
-                is_initial_snapshot: false
-              })], { type: 'application/json' });
+              // Flush remaining snapshots
+              if (snapshotQueue.length > 0) {
+                console.log('UXCam SDK: Page hiding, flushing snapshots', {
+                  snapshotCount: snapshotQueue.length
+                });
+                const snapshots = [...snapshotQueue];
+                snapshotQueue = [];
+                const compressed = compressSnapshots(snapshots);
+                
+                const blob = new Blob([JSON.stringify({
+                  sdk_key: config.sdkKey,
+                  session_id: sessionId,
+                  snapshots: compressed,
+                  snapshot_count: snapshots.length,
+                  is_initial_snapshot: false
+                })], { type: 'application/json' });
+                
+                navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+              }
               
-              navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+              // End session
+              if (stopRecording) {
+                try {
+                  stopRecording();
+                } catch (e) {
+                  console.warn('Error stopping recording on pagehide:', e);
+                }
+              }
             }
           });
+          
+          // Note: visibilitychange handler is already set up above to flush data when page becomes hidden
           
           // Track errors/crashes
           window.addEventListener('error', (event) => {
