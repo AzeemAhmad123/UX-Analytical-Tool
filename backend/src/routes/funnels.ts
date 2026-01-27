@@ -454,6 +454,17 @@ router.post('/:projectId/form-field-events', validateProject, async (req: Reques
 
     if (error) {
       console.error('Error inserting form field event:', error)
+      
+      // Check if table doesn't exist
+      if (error.message && error.message.includes('form_field_events') && 
+          (error.message.includes('does not exist') || error.message.includes('schema cache'))) {
+        return res.status(500).json({
+          error: 'Form field events table not found',
+          message: 'The form_field_events table does not exist. Please run the migration: create_form_field_events_table.sql',
+          migration_required: true
+        })
+      }
+      
       return res.status(500).json({
         error: 'Failed to insert form field event',
         message: error.message
