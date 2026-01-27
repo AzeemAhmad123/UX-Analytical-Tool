@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye } from 'lucide-react'
+import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import '../../components/dashboard/Dashboard.css'
@@ -28,6 +28,7 @@ export function SessionReplayPlayer() {
   const [activeTab, setActiveTab] = useState<'activity' | 'info' | 'notes' | 'logs'>('activity')
   const [activeFilter, setActiveFilter] = useState<'events' | 'gestures' | 'screens'>('events')
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('web')
+  const [selectedEventIndex, setSelectedEventIndex] = useState<number | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -1199,8 +1200,14 @@ export function SessionReplayPlayer() {
     return date.toLocaleTimeString()
   }
 
-  // Convert raw events into user-friendly descriptions
-  const parseEventDescription = (event: any): { icon: any, title: string, description: string, category: 'events' | 'gestures' | 'screens' } => {
+  // Convert raw events into user-friendly descriptions with metadata
+  const parseEventDescription = (event: any): { 
+    icon: any, 
+    title: string, 
+    description: string, 
+    category: 'events' | 'gestures' | 'screens',
+    metadata?: { x?: number, y?: number, id?: number, elementId?: string }
+  } => {
     // rrweb event types: 0=DomContentLoaded, 2=FullSnapshot, 3=IncrementalSnapshot, 4=Meta, 5=Custom
     if (event.type === 2) {
       return {
@@ -1223,18 +1230,29 @@ export function SessionReplayPlayer() {
           icon: <MousePointer className="icon-small" style={{ color: '#3b82f6' }} />,
           title: 'Mouse Moved',
           description: `Cursor moved to (${lastPos?.x || 0}, ${lastPos?.y || 0})`,
-          category: 'gestures'
+          category: 'gestures',
+          metadata: { x: lastPos?.x, y: lastPos?.y }
         }
       }
 
-      // Mouse interactions (source: 2)
+      // Mouse interactions (source: 2) - type 0 = Click
       if (source === 2) {
+        if (data.type === 0) {
+          return {
+            icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
+            title: '🖱️ Click',
+            description: `User clicked at (${data.x || 0}, ${data.y || 0})`,
+            category: 'gestures',
+            metadata: { x: data.x, y: data.y, id: data.id }
+          }
+        }
         if (data.type === 1) {
           return {
             icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
             title: 'Click',
             description: `Clicked at (${data.x || 0}, ${data.y || 0})`,
-            category: 'gestures'
+            category: 'gestures',
+            metadata: { x: data.x, y: data.y, id: data.id }
           }
         }
         if (data.type === 2) {
@@ -1242,7 +1260,8 @@ export function SessionReplayPlayer() {
             icon: <MousePointerClick className="icon-small" style={{ color: '#f59e0b' }} />,
             title: 'Double Click',
             description: `Double clicked at (${data.x || 0}, ${data.y || 0})`,
-            category: 'gestures'
+            category: 'gestures',
+            metadata: { x: data.x, y: data.y, id: data.id }
           }
         }
         if (data.type === 3) {
@@ -1250,7 +1269,8 @@ export function SessionReplayPlayer() {
             icon: <MousePointerClick className="icon-small" style={{ color: '#ef4444' }} />,
             title: 'Right Click',
             description: `Right clicked at (${data.x || 0}, ${data.y || 0})`,
-            category: 'gestures'
+            category: 'gestures',
+            metadata: { x: data.x, y: data.y, id: data.id }
           }
         }
       }
@@ -1261,18 +1281,29 @@ export function SessionReplayPlayer() {
           icon: <Scroll className="icon-small" style={{ color: '#8b5cf6' }} />,
           title: 'Scrolled',
           description: `Scrolled to position (${data.x || 0}, ${data.y || 0})`,
-          category: 'gestures'
+          category: 'gestures',
+          metadata: { x: data.x, y: data.y }
         }
       }
 
-      // Input events (source: 5)
+      // Input events (source: 5) - type 5 = Input, type 6 = Focus
       if (source === 5) {
-        if (data.type === 0) {
+        if (data.type === 0 || data.type === 5) {
           return {
             icon: <Type className="icon-small" style={{ color: '#06b6d4' }} />,
-            title: 'Input Changed',
-            description: `Typed in field`,
-            category: 'events'
+            title: '⌨️ Input',
+            description: `User typed in field`,
+            category: 'events',
+            metadata: { id: data.id }
+          }
+        }
+        if (data.type === 6) {
+          return {
+            icon: <Focus className="icon-small" style={{ color: '#8b5cf6' }} />,
+            title: 'Focus',
+            description: `Field focused`,
+            category: 'events',
+            metadata: { id: data.id }
           }
         }
       }
@@ -1283,7 +1314,8 @@ export function SessionReplayPlayer() {
           icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
           title: 'Page Changed',
           description: 'DOM updated',
-          category: 'events'
+          category: 'events',
+          metadata: { id: data.id }
         }
       }
     }
@@ -1317,12 +1349,57 @@ export function SessionReplayPlayer() {
       }
     }
 
-    // Default fallback
+    // Default fallback - try to extract useful info from raw data
+    const metadata: any = {}
+    if (event.data) {
+      if (event.data.x !== undefined) metadata.x = event.data.x
+      if (event.data.y !== undefined) metadata.y = event.data.y
+      if (event.data.id !== undefined) metadata.id = event.data.id
+    }
+
     return {
       icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
       title: `Event Type ${event.type || 'Unknown'}`,
       description: event.data ? JSON.stringify(event.data).substring(0, 50) : 'No data',
-      category: 'events'
+      category: 'events',
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+    }
+  }
+
+  // Seek to a specific event timestamp
+  const seekToEvent = (event: any, index: number) => {
+    if (!event.timestamp) return
+    
+    setSelectedEventIndex(index)
+    
+    // Calculate time offset from first event
+    const firstEvent = snapshots.find((s: any) => s.timestamp)
+    if (!firstEvent) return
+    
+    const eventTime = event.timestamp
+    const firstTime = firstEvent.timestamp
+    const timeOffset = eventTime - firstTime
+    
+    // Pause playback first
+    if (playerRef.current && isPlaying) {
+      playerRef.current.pause()
+      setIsPlaying(false)
+    }
+    
+    // Seek to the event timestamp
+    if (playerRef.current) {
+      try {
+        playerRef.current.play(timeOffset)
+        setIsPlaying(true)
+        setCurrentTime(timeOffset)
+        console.log(`🎯 Seeking to event at ${timeOffset}ms`, { event, index })
+      } catch (error) {
+        console.error('Error seeking to event:', error)
+      }
+    } else if (hasVideo && videoPlayerRef.current) {
+      // Handle video player
+      videoPlayerRef.current.currentTime = timeOffset / 1000
+      setCurrentTime(timeOffset)
     }
   }
 
@@ -1853,40 +1930,111 @@ export function SessionReplayPlayer() {
                     {getFilteredEvents().slice(0, 50).map((event, index) => {
                       const parsed = parseEventDescription(event)
                       const eventTime = event.timestamp ? formatTime(event.timestamp) : `${Math.round((index * 100) / 1000)}s`
+                      const isSelected = selectedEventIndex === index
                       
                       return (
                         <div
                           key={index}
+                          onClick={() => seekToEvent(event, index)}
                           style={{
                             padding: '0.75rem',
-                            borderLeft: '2px solid #e5e7eb',
+                            borderLeft: `3px solid ${isSelected ? '#9333ea' : '#e5e7eb'}`,
                             marginLeft: '0.5rem',
                             marginBottom: '0.5rem',
                             fontSize: '0.875rem',
                             color: '#111827',
-                            backgroundColor: '#f9fafb',
+                            backgroundColor: isSelected ? '#f3f4f6' : '#f9fafb',
                             borderRadius: '6px',
-                            transition: 'all 0.2s'
+                            transition: 'all 0.2s',
+                            cursor: 'pointer',
+                            position: 'relative',
+                            boxShadow: isSelected ? '0 2px 4px rgba(147, 51, 234, 0.1)' : 'none'
                           }}
                           onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#f3f4f6'
-                            e.currentTarget.style.borderLeftColor = '#9333ea'
+                            if (!isSelected) {
+                              e.currentTarget.style.backgroundColor = '#f3f4f6'
+                              e.currentTarget.style.borderLeftColor = '#9333ea'
+                              e.currentTarget.style.transform = 'translateX(2px)'
+                            }
                           }}
                           onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#f9fafb'
-                            e.currentTarget.style.borderLeftColor = '#e5e7eb'
+                            if (!isSelected) {
+                              e.currentTarget.style.backgroundColor = '#f9fafb'
+                              e.currentTarget.style.borderLeftColor = '#e5e7eb'
+                              e.currentTarget.style.transform = 'translateX(0)'
+                            }
                           }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
                             {parsed.icon}
-                            <span style={{ fontWeight: '500', color: '#111827' }}>{parsed.title}</span>
-                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', marginLeft: 'auto' }}>
+                            <span style={{ fontWeight: '500', color: '#111827', flex: 1 }}>{parsed.title}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                seekToEvent(event, index)
+                              }}
+                              style={{
+                                padding: '0.25rem',
+                                backgroundColor: 'transparent',
+                                border: 'none',
+                                borderRadius: '4px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                color: '#9333ea',
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = '#ede9fe'
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = 'transparent'
+                              }}
+                              title="Play from this event"
+                            >
+                              <Play className="icon-small" style={{ width: '14px', height: '14px' }} />
+                            </button>
+                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', minWidth: '60px', textAlign: 'right' }}>
                               {eventTime}
                             </span>
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginLeft: '1.5rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginLeft: '1.5rem', marginBottom: parsed.metadata ? '0.5rem' : '0' }}>
                             {parsed.description}
                           </div>
+                          {parsed.metadata && (
+                            <div style={{ 
+                              display: 'flex', 
+                              gap: '0.5rem', 
+                              flexWrap: 'wrap',
+                              marginLeft: '1.5rem',
+                              marginTop: '0.25rem'
+                            }}>
+                              {parsed.metadata.x !== undefined && parsed.metadata.y !== undefined && (
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  padding: '0.125rem 0.375rem',
+                                  backgroundColor: '#e0e7ff',
+                                  color: '#4338ca',
+                                  borderRadius: '4px',
+                                  fontWeight: '500'
+                                }}>
+                                  ({parsed.metadata.x}, {parsed.metadata.y})
+                                </span>
+                              )}
+                              {parsed.metadata.id !== undefined && (
+                                <span style={{
+                                  fontSize: '0.7rem',
+                                  padding: '0.125rem 0.375rem',
+                                  backgroundColor: '#fce7f3',
+                                  color: '#be185d',
+                                  borderRadius: '4px',
+                                  fontWeight: '500'
+                                }}>
+                                  ID: {parsed.metadata.id}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })}
