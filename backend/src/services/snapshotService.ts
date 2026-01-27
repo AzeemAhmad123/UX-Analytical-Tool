@@ -234,8 +234,20 @@ export async function getSessionDurationFromSnapshots(sessionDbId: string): Prom
     try {
       let firstData: any = firstSnapshot.snapshot_data
       
-      // Handle Supabase BYTEA format (JSON-serialized Buffer)
-      if (firstData && typeof firstData === 'object' && firstData.type === 'Buffer' && Array.isArray(firstData.data)) {
+      // Handle Supabase BYTEA format - check for hex format first (\x...)
+      if (typeof firstData === 'string' && firstData.length >= 2 && 
+          firstData.charCodeAt(0) === 92 && firstData.charCodeAt(1) === 120) {
+        // Hex BYTEA format (\x...)
+        const hexString = firstData.substring(2) // Remove \x prefix
+        try {
+          firstData = Buffer.from(hexString, 'hex').toString('utf8')
+          console.log(`✅ Converted hex BYTEA to string for first snapshot (${hexString.length / 2} bytes)`)
+        } catch (e) {
+          console.warn('Error converting hex BYTEA:', e)
+          return null
+        }
+      } else if (firstData && typeof firstData === 'object' && firstData.type === 'Buffer' && Array.isArray(firstData.data)) {
+        // JSON-serialized Buffer object
         firstData = Buffer.from(firstData.data).toString('utf8')
       } else if (Buffer.isBuffer(firstData)) {
         firstData = firstData.toString('utf8')
@@ -274,8 +286,20 @@ export async function getSessionDurationFromSnapshots(sessionDbId: string): Prom
     try {
       let lastData: any = lastSnapshot.snapshot_data
       
-      // Handle Supabase BYTEA format (JSON-serialized Buffer)
-      if (lastData && typeof lastData === 'object' && lastData.type === 'Buffer' && Array.isArray(lastData.data)) {
+      // Handle Supabase BYTEA format - check for hex format first (\x...)
+      if (typeof lastData === 'string' && lastData.length >= 2 && 
+          lastData.charCodeAt(0) === 92 && lastData.charCodeAt(1) === 120) {
+        // Hex BYTEA format (\x...)
+        const hexString = lastData.substring(2) // Remove \x prefix
+        try {
+          lastData = Buffer.from(hexString, 'hex').toString('utf8')
+          console.log(`✅ Converted hex BYTEA to string for last snapshot (${hexString.length / 2} bytes)`)
+        } catch (e) {
+          console.warn('Error converting hex BYTEA:', e)
+          return null
+        }
+      } else if (lastData && typeof lastData === 'object' && lastData.type === 'Buffer' && Array.isArray(lastData.data)) {
+        // JSON-serialized Buffer object
         lastData = Buffer.from(lastData.data).toString('utf8')
       } else if (Buffer.isBuffer(lastData)) {
         lastData = lastData.toString('utf8')

@@ -30,6 +30,7 @@ app.use((req, res, next) => {
   const path = req.path || ''
   const isSDKEndpoint = path.includes('/api/snapshots/ingest') || 
                        path.includes('/api/events/ingest') ||
+                       path.includes('/api/funnels') && path.includes('/form-field-events') ||
                        (path.includes('/api/sessions') && (req.method === 'POST' || req.method === 'OPTIONS') && path.endsWith('/end'))
   
   // Store in request

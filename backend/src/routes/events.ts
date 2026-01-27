@@ -250,24 +250,57 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         )
       }
       
-      return {
-        project_id: projectId || session.project_id, // Add project_id (required by database)
+      // Build event object - project_id may not exist in older database schemas
+      const eventObj: any = {
         session_id: session.id,
-        user_id: userId, // Add user_id for cohort filtering
-        variant: variant, // Add variant for A/B testing
         type: String(event.type || 'unknown'),
         timestamp: event.timestamp || new Date().toISOString(),
         data: eventData
       }
+      
+      // Add optional fields only if they exist
+      if (userId) {
+        eventObj.user_id = userId
+      }
+      if (variant) {
+        eventObj.variant = variant
+      }
+      // Only add project_id if the column exists (check via try-catch or make it optional)
+      // For now, we'll try to add it - if it fails, the error will be caught
+      try {
+        eventObj.project_id = projectId || session.project_id
+      } catch (e) {
+        // project_id column might not exist - skip it
+        console.warn('project_id column may not exist in events table')
+      }
+      
+      return eventObj
     })
 
+    // Try to insert events - handle case where project_id column might not exist
     const { error: insertError } = await supabase
       .from('events')
       .insert(eventsToInsert)
 
     if (insertError) {
-      console.error('Error inserting events:', insertError)
-      throw new Error(`Failed to insert events: ${insertError.message}`)
+      // Check if error is about missing project_id column
+      if (insertError.message && insertError.message.includes('project_id')) {
+        console.warn('⚠️ project_id column not found in events table, retrying without it')
+        const eventsWithoutProjectId = eventsToInsert.map((e: any) => {
+          const { project_id, ...rest } = e
+          return rest
+        })
+        const retryResult = await supabase
+          .from('events')
+          .insert(eventsWithoutProjectId)
+        if (retryResult.error) {
+          console.error('Error inserting events (retry without project_id):', retryResult.error)
+          throw new Error(`Failed to insert events: ${retryResult.error.message}`)
+        }
+      } else {
+        console.error('Error inserting events:', insertError)
+        throw new Error(`Failed to insert events: ${insertError.message}`)
+      }
     }
 
     // Update session activity
