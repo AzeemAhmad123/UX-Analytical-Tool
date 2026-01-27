@@ -1206,7 +1206,7 @@ export function SessionReplayPlayer() {
     title: string, 
     description: string, 
     category: 'events' | 'gestures' | 'screens',
-    metadata?: { x?: number, y?: number, id?: number, elementId?: string }
+    metadata?: { x?: number, y?: number, id?: number, elementId?: string, text?: string }
   } => {
     // rrweb event types: 0=DomContentLoaded, 2=FullSnapshot, 3=IncrementalSnapshot, 4=Meta, 5=Custom
     if (event.type === 2) {
@@ -1237,20 +1237,11 @@ export function SessionReplayPlayer() {
 
       // Mouse interactions (source: 2) - type 0 = Click
       if (source === 2) {
-        if (data.type === 0) {
+        if (data.type === 0 || data.type === 1) {
           return {
             icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
-            title: '🖱️ Click',
-            description: `User clicked at (${data.x || 0}, ${data.y || 0})`,
-            category: 'gestures',
-            metadata: { x: data.x, y: data.y, id: data.id }
-          }
-        }
-        if (data.type === 1) {
-          return {
-            icon: <MousePointerClick className="icon-small" style={{ color: '#10b981' }} />,
-            title: 'Click',
-            description: `Clicked at (${data.x || 0}, ${data.y || 0})`,
+            title: 'Clicked Element',
+            description: '',
             category: 'gestures',
             metadata: { x: data.x, y: data.y, id: data.id }
           }
@@ -1258,8 +1249,8 @@ export function SessionReplayPlayer() {
         if (data.type === 2) {
           return {
             icon: <MousePointerClick className="icon-small" style={{ color: '#f59e0b' }} />,
-            title: 'Double Click',
-            description: `Double clicked at (${data.x || 0}, ${data.y || 0})`,
+            title: 'Double Clicked Element',
+            description: '',
             category: 'gestures',
             metadata: { x: data.x, y: data.y, id: data.id }
           }
@@ -1267,8 +1258,8 @@ export function SessionReplayPlayer() {
         if (data.type === 3) {
           return {
             icon: <MousePointerClick className="icon-small" style={{ color: '#ef4444' }} />,
-            title: 'Right Click',
-            description: `Right clicked at (${data.x || 0}, ${data.y || 0})`,
+            title: 'Right Clicked Element',
+            description: '',
             category: 'gestures',
             metadata: { x: data.x, y: data.y, id: data.id }
           }
@@ -1280,7 +1271,7 @@ export function SessionReplayPlayer() {
         return {
           icon: <Scroll className="icon-small" style={{ color: '#8b5cf6' }} />,
           title: 'Scrolled',
-          description: `Scrolled to position (${data.x || 0}, ${data.y || 0})`,
+          description: '',
           category: 'gestures',
           metadata: { x: data.x, y: data.y }
         }
@@ -1289,19 +1280,21 @@ export function SessionReplayPlayer() {
       // Input events (source: 5) - type 5 = Input, type 6 = Focus
       if (source === 5) {
         if (data.type === 0 || data.type === 5) {
+          // Check if there's text data (user typed)
+          const hasText = data.text !== undefined && data.text !== null && data.text !== ''
           return {
             icon: <Type className="icon-small" style={{ color: '#06b6d4' }} />,
-            title: '⌨️ Input',
-            description: `User typed in field`,
+            title: hasText ? 'User typed in input' : 'Input Changed',
+            description: '',
             category: 'events',
-            metadata: { id: data.id }
+            metadata: { id: data.id, text: data.text }
           }
         }
         if (data.type === 6) {
           return {
             icon: <Focus className="icon-small" style={{ color: '#8b5cf6' }} />,
-            title: 'Focus',
-            description: `Field focused`,
+            title: 'Element Focused',
+            description: '',
             category: 'events',
             metadata: { id: data.id }
           }
@@ -1313,7 +1306,7 @@ export function SessionReplayPlayer() {
         return {
           icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
           title: 'Page Changed',
-          description: 'DOM updated',
+          description: '',
           category: 'events',
           metadata: { id: data.id }
         }
@@ -1357,12 +1350,77 @@ export function SessionReplayPlayer() {
       if (event.data.id !== undefined) metadata.id = event.data.id
     }
 
+    // Try to determine event type from data structure
+    let title = 'Event'
+    if (event.type === 3 && event.data) {
+      if (event.data.source === 2 && (event.data.type === 0 || event.data.type === 1)) {
+        title = 'Clicked Element'
+      } else if (event.data.source === 5 && event.data.type === 6) {
+        title = 'Element Focused'
+      } else if (event.data.source === 5 && (event.data.type === 0 || event.data.type === 5)) {
+        title = event.data.text ? 'User typed in input' : 'Input Changed'
+      }
+    }
+
     return {
       icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
-      title: `Event Type ${event.type || 'Unknown'}`,
-      description: event.data ? JSON.stringify(event.data).substring(0, 50) : 'No data',
+      title: title,
+      description: '',
       category: 'events',
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+    }
+  }
+
+  // Highlight element in replay by ID
+  const highlightElement = (elementId: number) => {
+    if (!playerRef.current || !replayContainerRef.current) return
+    
+    try {
+      // Get the iframe containing the replay
+      const iframe = replayContainerRef.current.querySelector('iframe') as HTMLIFrameElement
+      if (!iframe || !iframe.contentWindow || !iframe.contentDocument) return
+      
+      const iframeDoc = iframe.contentDocument
+      
+      // Find element by ID (rrweb stores node IDs)
+      // rrweb uses data-rrweb-id attribute or we can search by node ID
+      const element = iframeDoc.querySelector(`[data-rrweb-id="${elementId}"]`) ||
+                     iframeDoc.querySelector(`[id="${elementId}"]`) ||
+                     Array.from(iframeDoc.querySelectorAll('*')).find((el: any) => {
+                       // Try to match by various attributes
+                       return el.getAttribute('data-rrweb-id') === String(elementId) ||
+                              el.id === String(elementId)
+                     })
+      
+      if (element) {
+        // Add pulse animation and red border
+        const htmlElement = element as HTMLElement
+        const originalBorder = htmlElement.style.border
+        const originalOutline = htmlElement.style.outline
+        const originalTransition = htmlElement.style.transition
+        
+        htmlElement.style.border = '3px solid #ef4444'
+        htmlElement.style.outline = '2px solid rgba(239, 68, 68, 0.3)'
+        htmlElement.style.transition = 'all 0.3s ease'
+        htmlElement.style.animation = 'pulse 1s ease-in-out 3'
+        
+        // Scroll element into view
+        htmlElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        
+        // Remove highlight after 3 seconds
+        setTimeout(() => {
+          htmlElement.style.border = originalBorder
+          htmlElement.style.outline = originalOutline
+          htmlElement.style.transition = originalTransition
+          htmlElement.style.animation = ''
+        }, 3000)
+        
+        console.log(`✨ Highlighted element with ID: ${elementId}`)
+      } else {
+        console.warn(`⚠️ Could not find element with ID: ${elementId}`)
+      }
+    } catch (error) {
+      console.error('Error highlighting element:', error)
     }
   }
 
@@ -1393,6 +1451,14 @@ export function SessionReplayPlayer() {
         setIsPlaying(true)
         setCurrentTime(timeOffset)
         console.log(`🎯 Seeking to event at ${timeOffset}ms`, { event, index })
+        
+        // Highlight element if ID is available
+        const parsed = parseEventDescription(event)
+        if (parsed.metadata?.id) {
+          setTimeout(() => {
+            highlightElement(parsed.metadata!.id!)
+          }, 500) // Wait a bit for replay to seek
+        }
       } catch (error) {
         console.error('Error seeking to event:', error)
       }
@@ -1639,31 +1705,82 @@ export function SessionReplayPlayer() {
           }}>
             <div style={{
               flex: 1,
-              height: '4px',
+              height: '8px',
               backgroundColor: '#e5e7eb',
-              borderRadius: '2px',
+              borderRadius: '4px',
               position: 'relative',
               cursor: 'pointer',
-              overflow: 'hidden'
+              overflow: 'visible'
             }}
-            onClick={(e) => {
-              if (duration > 0) {
+            onMouseDown={(e) => {
+              e.preventDefault()
+              const handleMouseMove = (moveEvent: MouseEvent) => {
                 const rect = e.currentTarget.getBoundingClientRect()
-                const clickX = e.clientX - rect.left
-                const percentage = clickX / rect.width
+                const clickX = moveEvent.clientX - rect.left
+                const percentage = Math.max(0, Math.min(1, clickX / rect.width))
                 const newTime = percentage * duration
                 
                 // Handle video player
                 if (hasVideo && videoPlayerRef.current) {
-                  videoPlayerRef.current.currentTime = newTime / 1000 // Convert to seconds
+                  videoPlayerRef.current.currentTime = newTime / 1000
                   setCurrentTime(newTime)
                   return
                 }
                 
                 // Handle rrweb replayer
                 if (playerRef.current) {
+                  playerRef.current.pause()
                   playerRef.current.play(newTime)
                   setCurrentTime(newTime)
+                  setIsPlaying(true)
+                }
+              }
+              
+              const handleMouseUp = () => {
+                document.removeEventListener('mousemove', handleMouseMove)
+                document.removeEventListener('mouseup', handleMouseUp)
+              }
+              
+              document.addEventListener('mousemove', handleMouseMove)
+              document.addEventListener('mouseup', handleMouseUp)
+              
+              // Also handle initial click
+              const rect = e.currentTarget.getBoundingClientRect()
+              const clickX = e.clientX - rect.left
+              const percentage = Math.max(0, Math.min(1, clickX / rect.width))
+              const newTime = percentage * duration
+              
+              if (hasVideo && videoPlayerRef.current) {
+                videoPlayerRef.current.currentTime = newTime / 1000
+                setCurrentTime(newTime)
+              } else if (playerRef.current) {
+                playerRef.current.pause()
+                playerRef.current.play(newTime)
+                setCurrentTime(newTime)
+                setIsPlaying(true)
+              }
+            }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (duration > 0) {
+                const rect = e.currentTarget.getBoundingClientRect()
+                const clickX = e.clientX - rect.left
+                const percentage = Math.max(0, Math.min(1, clickX / rect.width))
+                const newTime = percentage * duration
+                
+                // Handle video player
+                if (hasVideo && videoPlayerRef.current) {
+                  videoPlayerRef.current.currentTime = newTime / 1000
+                  setCurrentTime(newTime)
+                  return
+                }
+                
+                // Handle rrweb replayer
+                if (playerRef.current) {
+                  playerRef.current.pause()
+                  playerRef.current.play(newTime)
+                  setCurrentTime(newTime)
+                  setIsPlaying(true)
                 }
               }
             }}
@@ -1672,8 +1789,22 @@ export function SessionReplayPlayer() {
                 height: '100%',
                 width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
                 backgroundColor: '#9333ea',
-                borderRadius: '2px',
-                transition: 'width 0.1s linear'
+                borderRadius: '4px',
+                transition: 'width 0.05s linear'
+              }} />
+              <div style={{
+                position: 'absolute',
+                left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                top: '50%',
+                transform: 'translate(-50%, -50%)',
+                width: '16px',
+                height: '16px',
+                backgroundColor: '#9333ea',
+                borderRadius: '50%',
+                border: '2px solid white',
+                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                cursor: 'grab',
+                transition: 'left 0.05s linear'
               }} />
             </div>
             <div style={{
@@ -1998,41 +2129,23 @@ export function SessionReplayPlayer() {
                               {eventTime}
                             </span>
                           </div>
-                          <div style={{ fontSize: '0.75rem', color: '#6b7280', marginLeft: '1.5rem', marginBottom: parsed.metadata ? '0.5rem' : '0' }}>
-                            {parsed.description}
-                          </div>
-                          {parsed.metadata && (
+                          {parsed.metadata && parsed.metadata.id !== undefined && (
                             <div style={{ 
                               display: 'flex', 
                               gap: '0.5rem', 
                               flexWrap: 'wrap',
-                              marginLeft: '1.5rem',
                               marginTop: '0.25rem'
                             }}>
-                              {parsed.metadata.x !== undefined && parsed.metadata.y !== undefined && (
-                                <span style={{
-                                  fontSize: '0.7rem',
-                                  padding: '0.125rem 0.375rem',
-                                  backgroundColor: '#e0e7ff',
-                                  color: '#4338ca',
-                                  borderRadius: '4px',
-                                  fontWeight: '500'
-                                }}>
-                                  ({parsed.metadata.x}, {parsed.metadata.y})
-                                </span>
-                              )}
-                              {parsed.metadata.id !== undefined && (
-                                <span style={{
-                                  fontSize: '0.7rem',
-                                  padding: '0.125rem 0.375rem',
-                                  backgroundColor: '#fce7f3',
-                                  color: '#be185d',
-                                  borderRadius: '4px',
-                                  fontWeight: '500'
-                                }}>
-                                  ID: {parsed.metadata.id}
-                                </span>
-                              )}
+                              <span style={{
+                                fontSize: '0.7rem',
+                                padding: '0.125rem 0.375rem',
+                                backgroundColor: '#fce7f3',
+                                color: '#be185d',
+                                borderRadius: '4px',
+                                fontWeight: '500'
+                              }}>
+                                ID: {parsed.metadata.id}
+                              </span>
                             </div>
                           )}
                         </div>

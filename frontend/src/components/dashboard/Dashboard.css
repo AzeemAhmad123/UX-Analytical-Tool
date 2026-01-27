@@ -1380,6 +1380,17 @@ textarea.form-input {
 }
 
 /* Session Replay Player Styles */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.02);
+  }
+}
+
 @keyframes spin {
   from {
     transform: rotate(0deg);
