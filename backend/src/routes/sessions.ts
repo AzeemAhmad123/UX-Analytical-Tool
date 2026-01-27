@@ -441,6 +441,13 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     if (decompressedSnapshots.length === 0 && snapshots.length > 0) {
       console.warn('⚠️ Snapshots exist but failed to decompress/load')
     }
+    
+    // Warn if session has only 1 event (Type 2 snapshot only, no incremental events)
+    // This happens when user leaves page before incremental events are flushed
+    if (decompressedSnapshots.length === 1) {
+      console.warn('⚠️ Session has only 1 event (Type 2 snapshot). This session cannot be replayed because rrweb requires at least 2 events.')
+      console.warn('   This usually happens when the user left the page before incremental events were saved.')
+    }
 
     // Get video information if available (for mobile sessions)
     const { data: videos } = await supabase
