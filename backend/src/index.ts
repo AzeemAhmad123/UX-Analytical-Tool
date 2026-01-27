@@ -27,9 +27,10 @@ console.log('🔧 CORS Configuration:', {
 // Custom CORS middleware that can access request object
 app.use((req, res, next) => {
   // Check if this is an SDK endpoint
-  const isSDKEndpoint = req.path?.includes('/api/snapshots/ingest') || 
-                       req.path?.includes('/api/events/ingest') ||
-                       (req.path?.includes('/api/sessions') && req.method === 'POST' && req.path?.includes('/end'))
+  const path = req.path || ''
+  const isSDKEndpoint = path.includes('/api/snapshots/ingest') || 
+                       path.includes('/api/events/ingest') ||
+                       (path.includes('/api/sessions') && (req.method === 'POST' || req.method === 'OPTIONS') && path.endsWith('/end'))
   
   // Store in request
   ;(req as any).isSDKEndpoint = isSDKEndpoint
@@ -44,7 +45,7 @@ app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With')
       res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Type')
       res.setHeader('Access-Control-Max-Age', '86400')
-      console.log('✅ CORS: SDK endpoint - allowing origin', { origin, path: req.path })
+      console.log('✅ CORS: SDK endpoint - allowing origin', { origin, path: req.path, method: req.method })
     } else {
       // No origin header (e.g., Postman, curl) - allow anyway
       res.setHeader('Access-Control-Allow-Origin', '*')

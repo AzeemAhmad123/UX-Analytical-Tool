@@ -780,12 +780,29 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
     // Use the actual database ID for the update
     const sessionDbId = session.id
 
-    // Calculate duration if not provided
+    // Calculate duration - prefer provided duration (from SDK, calculated from events)
+    // If not provided, try to calculate from event timestamps (most accurate)
     let calculatedDuration = duration
+    
+    if (!calculatedDuration) {
+      // Try to get duration from event timestamps (most accurate)
+      try {
+        const eventBasedDuration = await getSessionDurationFromSnapshots(sessionDbId)
+        if (eventBasedDuration && eventBasedDuration > 0) {
+          calculatedDuration = eventBasedDuration
+          console.log(`✅ Using event-based duration: ${calculatedDuration}ms (${Math.round(calculatedDuration / 1000)}s)`)
+        }
+      } catch (error: any) {
+        console.warn('Failed to calculate duration from events, using fallback:', error.message)
+      }
+    }
+    
+    // Fallback: calculate from timestamps if still no duration
     if (!calculatedDuration && session.start_time) {
       const startTime = new Date(session.start_time).getTime()
       const endTime = end_time ? new Date(end_time).getTime() : Date.now()
       calculatedDuration = endTime - startTime
+      console.log(`⚠️ Using timestamp-based duration (less accurate): ${calculatedDuration}ms`)
     }
 
     // Update session

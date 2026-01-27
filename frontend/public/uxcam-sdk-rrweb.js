@@ -347,6 +347,7 @@
     // State
     let sessionId = null;
     let sessionStartTime = null;
+    let recordingStartTime = null; // Track when recording actually starts (Type 2 uploaded)
     let eventQueue = [];
     let snapshotQueue = [];
     let flushTimer = null;
@@ -420,27 +421,7 @@
           // Ignore
         }
         
-        // Try to get geolocation (with user permission)
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (position) => {
-              // Success - update deviceInfo with coordinates
-              if (deviceInfo) {
-                deviceInfo.latitude = position.coords.latitude;
-                deviceInfo.longitude = position.coords.longitude;
-                // Reverse geocoding would be done on backend, but we can store coords
-              }
-            },
-            (error) => {
-              // User denied or error - use timezone-based location
-              if (window.UXCamSDK && window.UXCamSDK.debug) {
-                console.log('UXCam SDK: Geolocation not available, using timezone-based location');
-              }
-            },
-            { timeout: 5000, maximumAge: 60000 }
-          );
-        }
-        
+        // Initialize deviceInfo with timezone-based location first
         deviceInfo = {
           userAgent: (navigator && navigator.userAgent) ? navigator.userAgent : 'unknown',
           platform: 'web', // Explicitly set to 'web' for web SDK
@@ -457,6 +438,28 @@
           city: city,
           country: country,
         };
+        
+        // Try to get geolocation (with user permission) - async, backend will use IP as fallback
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (position) => {
+              // Success - update deviceInfo with coordinates
+              // Note: This happens async, so backend IP geolocation will be primary source
+              deviceInfo.latitude = position.coords.latitude;
+              deviceInfo.longitude = position.coords.longitude;
+              if (window.UXCamSDK && window.UXCamSDK.debug) {
+                console.log('UXCam SDK: Geolocation obtained:', { lat: deviceInfo.latitude, lng: deviceInfo.longitude });
+              }
+            },
+            (error) => {
+              // User denied or error - backend will use IP-based geolocation
+              if (window.UXCamSDK && window.UXCamSDK.debug) {
+                console.log('UXCam SDK: Geolocation not available, backend will use IP-based location');
+              }
+            },
+            { timeout: 3000, maximumAge: 60000, enableHighAccuracy: false }
+          );
+        }
       } catch (error) {
         console.error('UXCam SDK: Error initializing device info:', error);
         // Fallback device info
@@ -647,6 +650,8 @@
         maskAllText: false, // Don't mask text to capture full content
         recordCanvas: true,
         recordCrossOriginIframes: false,
+        // Enable cursor recording - this ensures mouse cursor is visible in replay
+        recordCursor: true, // Explicitly enable cursor recording
         // Take full snapshots periodically for larger, more complete recordings
         // Note: checkoutEveryNms may not be available in all rrweb versions
         // The larger batch size and slower flush will naturally create larger snapshots
@@ -769,6 +774,18 @@
         
         // Step 10: Enable incremental events
         type2Uploaded = true;
+        
+        // Mark recording start time (when Type 2 is successfully uploaded)
+        // This is the actual start of recording, not when session was initialized
+        if (!recordingStartTime) {
+          recordingStartTime = Date.now();
+          // Track session_start event only AFTER recording actually starts
+          trackEvent('session_start', {
+            timestamp: new Date().toISOString(),
+            recording_started: true
+          });
+        }
+        
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
         console.log('UXCam SDK: Incremental events will be collected and sent when user leaves the page');
         
@@ -806,10 +823,8 @@
         // Reset inactivity timer
         resetInactivityTimer();
         
-        // Track session start
-        trackEvent('session_start', {
-          timestamp: new Date().toISOString()
-        });
+        // DON'T track session_start here - wait until recording actually starts (Type 2 uploaded)
+        // This prevents events from being sent before recording starts
       }, null, null, 'startSession failed');
     }
 
@@ -825,6 +840,15 @@
 
         if (!sessionId) {
           startSession();
+        }
+        
+        // Block events until recording starts (Type 2 uploaded) - except session_start
+        // This prevents events from being sent before recording actually starts
+        if (!type2Uploaded && type !== 'session_start') {
+          if (window.UXCamSDK && window.UXCamSDK.debug) {
+            console.log('UXCam SDK: Event blocked - recording not started yet:', type);
+          }
+          return;
         }
 
         const event = {
@@ -1094,12 +1118,35 @@
           }
         }
         
-        // Calculate session duration
-        const sessionDuration = Date.now() - sessionStartTime;
+        // Calculate session duration from actual recording time (not session initialization time)
+        // Use recordingStartTime if available, otherwise fallback to sessionStartTime
+        const recordingDuration = recordingStartTime 
+          ? Date.now() - recordingStartTime 
+          : (sessionStartTime ? Date.now() - sessionStartTime : 0);
+        
+        // Also calculate duration from actual event timestamps (most accurate)
+        let eventBasedDuration = 0;
+        if (events.length > 0) {
+          const timestamps = events
+            .map(e => e.timestamp)
+            .filter(ts => ts && typeof ts === 'number')
+            .sort((a, b) => a - b);
+          
+          if (timestamps.length >= 2) {
+            eventBasedDuration = timestamps[timestamps.length - 1] - timestamps[0];
+          } else if (timestamps.length === 1) {
+            eventBasedDuration = Date.now() - timestamps[0];
+          }
+        }
+        
+        // Use event-based duration if available (most accurate), otherwise use recording duration
+        const finalDuration = eventBasedDuration > 0 ? eventBasedDuration : recordingDuration;
         
         // Track session end with duration
         trackEvent('session_end', {
-          duration: sessionDuration
+          duration: finalDuration,
+          recording_duration: recordingDuration,
+          event_duration: eventBasedDuration
         });
         
         // Send session duration update to backend
@@ -1110,7 +1157,7 @@
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              duration: sessionDuration,
+              duration: finalDuration, // Use event-based duration (most accurate)
               end_time: new Date().toISOString()
             })
           }).catch(err => {

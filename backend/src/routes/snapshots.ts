@@ -4,6 +4,7 @@ import { authenticateSDK } from '../middleware/auth'
 import { findOrCreateSession, updateSessionActivity } from '../services/sessionService'
 import { storeSnapshot } from '../services/snapshotService'
 import { supabase } from '../config/supabase'
+import { getLocationFromIP, extractDeviceInfo } from '../utils/ipGeolocation'
 
 const router = Router()
 
@@ -67,10 +68,49 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     // Get device info from request (if available)
+    const userAgent = req.get('user-agent') || ''
+    let ipAddress = req.ip || req.socket.remoteAddress || ''
+    
+    // Handle X-Forwarded-For header (for proxies/load balancers)
+    const forwardedFor = req.get('x-forwarded-for')
+    if (forwardedFor) {
+      // Take the first IP in the chain (original client)
+      ipAddress = forwardedFor.split(',')[0].trim()
+    }
+
+    // Get location from IP address (async, don't block if it fails)
+    let locationData: any = {}
+    if (ipAddress && ipAddress !== '::1' && ipAddress !== '127.0.0.1') {
+      try {
+        locationData = await getLocationFromIP(ipAddress)
+      } catch (error: any) {
+        console.warn('Failed to get location from IP:', error.message)
+        // Continue without location data
+      }
+    }
+
+    // Extract device information from user agent
+    const extractedDeviceInfo = extractDeviceInfo(userAgent)
+
+    // Combine all device information with location from IP
     const deviceInfo = {
-      userAgent: req.get('user-agent'),
-      ip: req.ip,
-      ...(req.body.device_info || {})
+      userAgent,
+      ip: ipAddress,
+      // Location from IP geolocation (preferred)
+      country: locationData.country || req.body.device_info?.country || undefined,
+      city: locationData.city || req.body.device_info?.city || undefined,
+      region: locationData.region || req.body.device_info?.region || undefined,
+      countryCode: locationData.countryCode || req.body.device_info?.countryCode || undefined,
+      latitude: locationData.latitude || req.body.device_info?.latitude || undefined,
+      longitude: locationData.longitude || req.body.device_info?.longitude || undefined,
+      // Device info from user agent extraction
+      deviceType: extractedDeviceInfo.deviceType || req.body.device_info?.deviceType || req.body.device_info?.device_type || undefined,
+      deviceModel: extractedDeviceInfo.deviceModel || req.body.device_info?.deviceModel || req.body.device_info?.device_model || undefined,
+      os: extractedDeviceInfo.os || req.body.device_info?.os || req.body.device_info?.osPlatform || undefined,
+      browser: extractedDeviceInfo.browser || req.body.device_info?.browser || undefined,
+      // Other device info from SDK
+      ...(req.body.device_info || {}),
+      platform: req.body.device_info?.platform || 'web'
     }
 
     // Find or create session
@@ -79,6 +119,29 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       sessionId,
       deviceInfo
     )
+
+    // If session already existed, update device_info with location if we got new location data
+    if (!created && (locationData.country || locationData.city)) {
+      try {
+        const updatedDeviceInfo = {
+          ...(session.device_info || {}),
+          country: locationData.country || session.device_info?.country,
+          city: locationData.city || session.device_info?.city,
+          region: locationData.region || session.device_info?.region,
+          countryCode: locationData.countryCode || session.device_info?.countryCode,
+          latitude: locationData.latitude || session.device_info?.latitude,
+          longitude: locationData.longitude || session.device_info?.longitude,
+        }
+        
+        await supabase
+          .from('sessions')
+          .update({ device_info: updatedDeviceInfo })
+          .eq('id', session.id)
+      } catch (error: any) {
+        console.warn('Failed to update session device_info with location:', error.message)
+        // Continue - location update is not critical
+      }
+    }
     
     if (created) {
       console.log('✅ New session created:', { sessionId: session.session_id, dbId: session.id })

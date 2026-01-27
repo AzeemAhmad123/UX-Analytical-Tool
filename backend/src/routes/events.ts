@@ -160,12 +160,19 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
 
     // Only find existing session - don't create new ones
     // Sessions should only be created when Type 2 snapshot is uploaded (recording confirmed)
-    const { data: existingSession } = await supabase
+    const { data: existingSession, error: sessionError } = await supabase
       .from('sessions')
       .select('*')
       .eq('project_id', projectId)
       .eq('session_id', sessionId)
       .single()
+
+    if (sessionError && sessionError.code !== 'PGRST116') {
+      // PGRST116 means no rows found, which is expected if session doesn't exist yet
+      // Other errors are actual problems
+      console.error('Error fetching session:', sessionError)
+      throw new Error(`Failed to fetch session: ${sessionError.message}`)
+    }
 
     if (!existingSession) {
       // Session doesn't exist yet - recording hasn't started
@@ -180,6 +187,44 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     const session = existingSession
+
+    // Update session device_info with location if we have new location data
+    if ((locationData.country || locationData.city) && session.device_info) {
+      try {
+        const currentDeviceInfo = typeof session.device_info === 'object' ? session.device_info : {}
+        const updatedDeviceInfo = {
+          ...currentDeviceInfo,
+          // Only update if we have new data and current data is missing or 'Unknown'
+          country: (locationData.country && (!currentDeviceInfo.country || currentDeviceInfo.country === 'Unknown')) 
+            ? locationData.country 
+            : currentDeviceInfo.country,
+          city: (locationData.city && (!currentDeviceInfo.city || currentDeviceInfo.city === 'Unknown')) 
+            ? locationData.city 
+            : currentDeviceInfo.city,
+          region: locationData.region || currentDeviceInfo.region,
+          countryCode: locationData.countryCode || currentDeviceInfo.countryCode,
+          latitude: locationData.latitude || currentDeviceInfo.latitude,
+          longitude: locationData.longitude || currentDeviceInfo.longitude,
+        }
+        
+        // Only update if location data changed
+        if (updatedDeviceInfo.country !== currentDeviceInfo.country || 
+            updatedDeviceInfo.city !== currentDeviceInfo.city) {
+          await supabase
+            .from('sessions')
+            .update({ device_info: updatedDeviceInfo })
+            .eq('id', session.id)
+          console.log('✅ Updated session device_info with location:', { 
+            sessionId: session.session_id, 
+            country: updatedDeviceInfo.country, 
+            city: updatedDeviceInfo.city 
+          })
+        }
+      } catch (error: any) {
+        console.warn('Failed to update session device_info with location:', error.message)
+        // Continue - location update is not critical
+      }
+    }
 
     // Insert events into database
     // Use project_id from the session (session already has project_id)
