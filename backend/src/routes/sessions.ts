@@ -112,6 +112,30 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       })
     }
 
+    // Get page_view event counts for all sessions (for screen visits metric)
+    const sessionIdsForPageViews = filteredSessions.map(s => s.id)
+    let pageViewCounts = new Map<string, number>()
+    
+    if (sessionIdsForPageViews.length > 0) {
+      try {
+        const { data: pageViewEvents } = await supabase
+          .from('events')
+          .select('session_id')
+          .eq('project_id', projectId)
+          .eq('type', 'page_view')
+          .in('session_id', sessionIdsForPageViews)
+        
+        // Count page views per session
+        pageViewEvents?.forEach((event: any) => {
+          const count = pageViewCounts.get(event.session_id) || 0
+          pageViewCounts.set(event.session_id, count + 1)
+        })
+      } catch (error: any) {
+        console.warn('Failed to get page_view counts:', error.message)
+        // Continue without page view counts - will use fallback
+      }
+    }
+
     // Calculate accurate duration for each session from actual event timestamps
     // This prevents showing 10 minutes when the actual video is only 10 seconds
     // Use Promise.allSettled to prevent one slow session from blocking all others
@@ -129,10 +153,12 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         if (eventBasedDuration && eventBasedDuration > 0) {
           // Use event-based duration (most accurate)
           const videoInfo = videoMap.get(session.id) || {}
+          const pageViewCount = pageViewCounts.get(session.id) || 0
           return {
             ...session,
             duration: eventBasedDuration,
             snapshot_count: snapshotCountMap.get(session.id) || 0,
+            page_view_count: pageViewCount, // Add page_view count for accurate screen visits
             ...videoInfo
           }
         }
@@ -157,10 +183,14 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         // Get video info for this session
         const videoInfo = videoMap.get(session.id) || {}
         
+        // Get page_view count for this session (for screen visits metric)
+        const pageViewCount = pageViewCounts.get(session.id) || 0
+        
         return {
           ...session,
           duration: finalDuration,
           snapshot_count: snapshotCountMap.get(session.id) || 0,
+          page_view_count: pageViewCount, // Add page_view count for accurate screen visits
           ...videoInfo
         }
       })

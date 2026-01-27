@@ -458,8 +458,17 @@ export function SessionsList() {
       ? (sessionsToCalculate.length > 0 ? totalTime / sessionsToCalculate.length : 0)
       : mobileAverageTime
 
-    // Screen visits (page views)
-    const screenVisits = sessionsToCalculate.reduce((sum, s) => sum + (s.event_count || 0), 0)
+    // Screen visits (page views) - use page_view_count if available, otherwise estimate from event_count
+    // page_view_count is more accurate as it only counts actual page views, not all events
+    const screenVisits = sessionsToCalculate.reduce((sum, s) => {
+      // Prefer page_view_count if available (from backend), otherwise estimate
+      if (s.page_view_count !== undefined && s.page_view_count !== null) {
+        return sum + s.page_view_count
+      }
+      // Fallback: estimate 1 page view per session (minimum) if no page_view_count
+      // This is better than counting all events, but still not perfect
+      return sum + 1
+    }, 0)
     const averageScreenVisits = sessionsToCalculate.length > 0 
       ? screenVisits / sessionsToCalculate.length 
       : 0
