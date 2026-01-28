@@ -14,7 +14,7 @@ import {
   funnelsAPI, projectsAPI, anomaliesAPI, advancedAnalyticsAPI, 
   alertsAPI, shareLinksAPI, scheduledReportsAPI 
 } from '../../services/api'
-import { FunnelBuilder } from '../../components/funnel/FunnelBuilder'
+import { FunnelBuilderUserFriendly as FunnelBuilder } from '../../components/funnel/FunnelBuilderUserFriendly'
 import { FunnelChart } from '../../components/funnel/FunnelChart'
 import { GeographicBreakdown } from '../../components/funnel/GeographicBreakdown'
 import '../../components/dashboard/Dashboard.css'
