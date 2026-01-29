@@ -551,7 +551,11 @@ export function SessionReplayPlayer() {
           eventTypes: validSnapshots.map((e: any) => e.type),
           hasType2: validSnapshots.some((e: any) => e.type === 2)
         })
-        setError(`This session cannot be replayed because it only has ${validSnapshots.length} event(s). rrweb requires at least 2 events (a full snapshot and at least one incremental event). This usually happens when the user left the page before incremental events were saved.`)
+        // Redirect back to sessions list instead of showing error
+        // This session should have been filtered out, but if it wasn't, redirect gracefully
+        setTimeout(() => {
+          navigate(`/dashboard/sessions/${projectId}`)
+        }, 1000)
         return
       }
 
@@ -652,12 +656,10 @@ export function SessionReplayPlayer() {
         mouseTail: {
           strokeStyle: '#9333ea',
           lineWidth: 3,
-          duration: 1500, // Show cursor trail for 1.5 seconds
+          duration: 2000, // Show cursor trail for 2 seconds
         },
-        // Cursor configuration for better visibility
-        plugins: [
-          // Add custom cursor plugin if available
-        ],
+        // Enable cursor plugin for better visibility
+        plugins: [],
         // Unpack function
         unpackFn: (data: any) => {
           return data
@@ -671,28 +673,44 @@ export function SessionReplayPlayer() {
       // This creates a visible cursor element that follows mouse movements
       const cursorOverlay = document.createElement('div')
       cursorOverlay.id = 'rrweb-cursor-overlay'
-      cursorOverlay.innerHTML = '👆' // Add emoji for better visibility
+      cursorOverlay.innerHTML = '●' // Simple dot for cursor
       cursorOverlay.style.cssText = `
         position: absolute;
-        width: 32px;
-        height: 32px;
-        border: 3px solid #9333ea;
+        width: 20px;
+        height: 20px;
+        border: 2px solid #9333ea;
         border-radius: 50%;
-        background: rgba(147, 51, 234, 0.6);
+        background: rgba(147, 51, 234, 0.8);
         pointer-events: none;
         z-index: 999999;
         transform: translate(-50%, -50%);
         display: none;
-        transition: all 0.1s ease;
-        box-shadow: 0 0 15px rgba(147, 51, 234, 0.8);
-        font-size: 16px;
+        transition: left 0.05s linear, top 0.05s linear;
+        box-shadow: 0 0 10px rgba(147, 51, 234, 1), 0 0 20px rgba(147, 51, 234, 0.5);
+        font-size: 8px;
         text-align: center;
-        line-height: 26px;
+        line-height: 16px;
         color: white;
         font-weight: bold;
       `
       wrapper.style.position = 'relative'
       wrapper.appendChild(cursorOverlay)
+      
+      // Also add cursor trail element
+      const cursorTrail = document.createElement('div')
+      cursorTrail.id = 'rrweb-cursor-trail'
+      cursorTrail.style.cssText = `
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        border-radius: 50%;
+        background: rgba(147, 51, 234, 0.4);
+        pointer-events: none;
+        z-index: 999998;
+        transform: translate(-50%, -50%);
+        display: none;
+      `
+      wrapper.appendChild(cursorTrail)
       
       // Make cursor overlay globally accessible for debugging
       ;(window as any).cursorOverlay = cursorOverlay
@@ -710,18 +728,7 @@ export function SessionReplayPlayer() {
         }
       })
       
-      // Test cursor visibility immediately
-      setTimeout(() => {
-        cursorOverlay.style.display = 'block'
-        cursorOverlay.style.left = '100px'
-        cursorOverlay.style.top = '100px'
-        cursorOverlay.style.opacity = '1'
-        console.log('🧪 Test: Cursor overlay should be visible at (100, 100) for 2 seconds')
-        setTimeout(() => {
-          cursorOverlay.style.display = 'none'
-          console.log('🧪 Test: Cursor overlay hidden')
-        }, 2000)
-      }, 1000)
+      // Cursor will be shown when mouse events are detected
 
       // Track mouse movements and clicks from replay events
       // Use a more direct approach - iterate through events and track mouse positions
@@ -741,22 +748,29 @@ export function SessionReplayPlayer() {
           const events = service.state.events || validSnapshots
           
           // Search backwards from current position to find most recent mouse event
-          for (let i = Math.min(currentIndex, events.length - 1); i >= Math.max(0, currentIndex - 100); i--) {
+          // Check up to 200 events back for better coverage
+          for (let i = Math.min(currentIndex, events.length - 1); i >= Math.max(0, currentIndex - 200); i--) {
             const event = events[i]
             if (!event || event.type !== 3 || !event.data) continue
             
             const data = event.data
             
-            // Mouse move events (source: 1)
-            if (data.source === 1 && data.positions) {
-              const positions = Array.isArray(data.positions) ? data.positions : [data.positions]
-              if (positions.length > 0) {
-                const lastPos = positions[positions.length - 1]
+            // Mouse move events (source: 1) - most common
+            if (data.source === 1) {
+              // Check positions array
+              if (data.positions && Array.isArray(data.positions) && data.positions.length > 0) {
+                const lastPos = data.positions[data.positions.length - 1]
                 if (lastPos && typeof lastPos.x === 'number' && typeof lastPos.y === 'number' && !isNaN(lastPos.x) && !isNaN(lastPos.y)) {
                   lastKnownMouseX = lastPos.x
                   lastKnownMouseY = lastPos.y
                   return { x: lastPos.x, y: lastPos.y, found: true }
                 }
+              }
+              // Check x/y directly
+              if (typeof data.x === 'number' && typeof data.y === 'number' && !isNaN(data.x) && !isNaN(data.y)) {
+                lastKnownMouseX = data.x
+                lastKnownMouseY = data.y
+                return { x: data.x, y: data.y, found: true }
               }
             }
             
@@ -850,10 +864,10 @@ export function SessionReplayPlayer() {
         clearInterval(mouseMoveInterval)
       }
       mouseMoveInterval = setInterval(() => {
-        if (isPlaying && playerRef.current) {
+        if (playerRef.current) {
           updateCursorPosition()
         }
-      }, 50) // Update every 50ms for smooth cursor movement
+      }, 16) // Update every 16ms (~60fps) for smooth cursor movement
       
       // Store interval for cleanup
       ;(replayer as any)._mouseMoveInterval = mouseMoveInterval
@@ -1494,32 +1508,16 @@ export function SessionReplayPlayer() {
 
   // Removed loading spinner - data loads in background
 
+  // If error, redirect to sessions list (session should have been filtered out)
+  useEffect(() => {
+    if (error) {
+      // Redirect immediately instead of showing error
+      navigate(`/dashboard/sessions/${projectId}`)
+    }
+  }, [error, navigate, projectId])
+  
   if (error) {
-    return (
-      <div className="dashboard-page-content" style={{ padding: '2rem' }}>
-        <button 
-          onClick={() => navigate(`/dashboard/sessions/list`)}
-          style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.5rem', 
-            padding: '0.5rem 1rem', 
-            backgroundColor: 'white', 
-            border: '1px solid #e5e7eb', 
-            borderRadius: '6px',
-            cursor: 'pointer',
-            marginBottom: '1rem'
-          }}
-        >
-          <ChevronLeft className="icon-small" />
-          Back to Sessions
-        </button>
-        <div className="empty-state">
-          <h3>Unable to Load Replay</h3>
-          <p>{error}</p>
-        </div>
-      </div>
-    )
+    return null // Don't render anything while redirecting
   }
 
   return (

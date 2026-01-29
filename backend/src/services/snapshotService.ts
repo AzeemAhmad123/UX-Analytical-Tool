@@ -211,6 +211,82 @@ export async function storeSnapshot(
  * Get first and last event timestamps from snapshots (for duration calculation)
  * This is faster than decompressing all snapshots
  */
+/**
+ * Check if a session has at least 2 events (replayable)
+ * rrweb requires at least 2 events: a full snapshot (type 2) + at least one incremental event
+ */
+export async function isSessionReplayable(sessionDbId: string): Promise<boolean> {
+  try {
+    const { data: snapshots, error } = await supabase
+      .from('session_snapshots')
+      .select('snapshot_data, snapshot_count')
+      .eq('session_id', sessionDbId)
+      .order('created_at', { ascending: true })
+      .limit(5) // Only check first few snapshots for performance
+
+    if (error || !snapshots || snapshots.length === 0) {
+      return false
+    }
+
+    let totalEventCount = 0
+    let hasType2 = false
+
+    // Check snapshots for event count
+    for (const snapshot of snapshots) {
+      try {
+        let snapshotData: any = snapshot.snapshot_data
+        
+        // Handle Supabase BYTEA format
+        if (typeof snapshotData === 'string' && snapshotData.length >= 2 && 
+            snapshotData.charCodeAt(0) === 92 && snapshotData.charCodeAt(1) === 120) {
+          const hexString = snapshotData.substring(2)
+          snapshotData = Buffer.from(hexString, 'hex').toString('utf8')
+        } else if (Buffer.isBuffer(snapshotData)) {
+          snapshotData = snapshotData.toString('utf8')
+        }
+
+        // Try decompression
+        const decompressed = LZString.decompress(snapshotData)
+        const parsed = decompressed && decompressed.length > 0 ? JSON.parse(decompressed) : JSON.parse(snapshotData)
+        
+        let events: any[] = []
+        if (Array.isArray(parsed)) {
+          events = parsed
+          if (events.length === 1 && Array.isArray(events[0])) {
+            events = events[0]
+          }
+        } else if (parsed && typeof parsed === 'object') {
+          events = [parsed]
+        }
+
+        // Count valid events
+        for (const event of events) {
+          if (event && typeof event.type === 'number') {
+            totalEventCount++
+            if (event.type === 2) {
+              hasType2 = true
+            }
+          }
+        }
+
+        // If we already found enough events, stop checking
+        if (totalEventCount >= 2 && hasType2) {
+          return true
+        }
+      } catch (e) {
+        // Skip this snapshot if it can't be parsed
+        continue
+      }
+    }
+
+    // Need at least 2 events AND a type 2 (full snapshot)
+    return totalEventCount >= 2 && hasType2
+  } catch (error) {
+    console.warn('Error checking if session is replayable:', error)
+    return false
+  }
+}
+
 export async function getSessionDurationFromSnapshots(sessionDbId: string): Promise<number | null> {
   try {
     const { data: snapshots, error } = await supabase

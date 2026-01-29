@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express'
 import * as LZString from 'lz-string'
 import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById } from '../services/sessionService'
-import { getSessionSnapshots, getSessionDurationFromSnapshots } from '../services/snapshotService'
+import { getSessionSnapshots, getSessionDurationFromSnapshots, isSessionReplayable } from '../services/snapshotService'
 import { supabase } from '../config/supabase'
 
 const router = Router()
@@ -141,6 +141,18 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     // Use Promise.allSettled to prevent one slow session from blocking all others
     const sessionsWithAccurateDuration = await Promise.allSettled(
       filteredSessions.map(async (session: any) => {
+        // Check if session is replayable (has at least 2 events) - quick check with timeout
+        const replayablePromise = isSessionReplayable(session.id)
+        const replayableTimeout = new Promise<boolean>((resolve) => 
+          setTimeout(() => resolve(false), 1500) // 1.5 second timeout
+        )
+        const isReplayable = await Promise.race([replayablePromise, replayableTimeout])
+        
+        // Skip sessions that can't be replayed
+        if (!isReplayable) {
+          return null
+        }
+
         // Try to get duration from event timestamps (most accurate)
         // Add timeout to prevent hanging
         const durationPromise = getSessionDurationFromSnapshots(session.id)
@@ -198,14 +210,12 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       results
         .filter(result => result.status === 'fulfilled')
         .map(result => (result as PromiseFulfilledResult<any>).value)
-        .filter(session => session && typeof session === 'object' && session.id)
+        .filter(session => session && typeof session === 'object' && session.id && session !== null)
         // Filter out sessions with duration less than 10 seconds (after accurate duration calculation)
+        // Note: We already filtered out non-replayable sessions above, so all sessions here should be replayable
         .filter(session => {
           const duration = session.duration || 0
-          // Also check if session has snapshots (needed for replay)
-          // Sessions without snapshots can't be replayed, so filter them out
-          const hasSnapshots = (session.snapshot_count || 0) > 0
-          return duration >= MIN_DURATION_MS && hasSnapshots
+          return duration >= MIN_DURATION_MS
         })
     )
 
