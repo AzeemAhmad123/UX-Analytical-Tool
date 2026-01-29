@@ -1209,7 +1209,26 @@ export function SessionReplayPlayer() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`
   }
 
+  // Format time relative to session start (MM:SS.ms format like picture 1)
   const formatTime = (timestamp: number) => {
+    if (!timestamp || snapshots.length === 0) return '00:00.0'
+    
+    // Get first event timestamp as session start
+    const firstEvent = snapshots.find((s: any) => s.timestamp)
+    if (!firstEvent || !firstEvent.timestamp) return '00:00.0'
+    
+    // Calculate time offset from session start
+    const timeOffset = timestamp - firstEvent.timestamp
+    const totalSeconds = Math.floor(timeOffset / 1000)
+    const minutes = Math.floor(totalSeconds / 60)
+    const seconds = totalSeconds % 60
+    const milliseconds = Math.floor((timeOffset % 1000) / 100) // First decimal of milliseconds
+    
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${milliseconds}`
+  }
+  
+  // Old formatTime function (kept for backward compatibility)
+  const formatTimeOld = (timestamp: number) => {
     const date = new Date(timestamp)
     return date.toLocaleTimeString()
   }
@@ -1461,10 +1480,20 @@ export function SessionReplayPlayer() {
     // Seek to the event timestamp
     if (playerRef.current) {
       try {
-        playerRef.current.play(timeOffset)
-        setIsPlaying(true)
-        setCurrentTime(timeOffset)
-        console.log(`🎯 Seeking to event at ${timeOffset}ms`, { event, index })
+        playerRef.current.pause()
+        setIsPlaying(false)
+        // Use goto method for precise seeking
+        try {
+          (playerRef.current as any).goto(timeOffset)
+          setCurrentTime(timeOffset)
+          console.log(`🎯 Seeking to event at ${timeOffset}ms (${formatDuration(timeOffset)})`, { event, index })
+        } catch (error) {
+          // Fallback to play if goto doesn't work
+          console.warn('goto() not available, using play():', error)
+          playerRef.current.play(timeOffset)
+          setIsPlaying(true)
+          setCurrentTime(timeOffset)
+        }
         
         // Highlight element if ID is available
         const parsed = parseEventDescription(event)
@@ -1725,12 +1754,22 @@ export function SessionReplayPlayer() {
                   return
                 }
                 
-                // Handle rrweb replayer
+                // Handle rrweb replayer - use goto method for seeking
                 if (playerRef.current) {
                   playerRef.current.pause()
-                  playerRef.current.play(newTime)
-                  setCurrentTime(newTime)
-                  setIsPlaying(true)
+                  setIsPlaying(false)
+                  // Use goto to seek to specific time (in milliseconds)
+                  try {
+                    (playerRef.current as any).goto(newTime)
+                    setCurrentTime(newTime)
+                    console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
+                  } catch (error) {
+                    // Fallback to play if goto doesn't work
+                    console.warn('goto() not available, using play():', error)
+                    playerRef.current.play(newTime)
+                    setCurrentTime(newTime)
+                    setIsPlaying(true)
+                  }
                 }
               }
               
@@ -1753,9 +1792,19 @@ export function SessionReplayPlayer() {
                 setCurrentTime(newTime)
               } else if (playerRef.current) {
                 playerRef.current.pause()
-                playerRef.current.play(newTime)
-                setCurrentTime(newTime)
-                setIsPlaying(true)
+                setIsPlaying(false)
+                // Use goto to seek to specific time (in milliseconds)
+                try {
+                  (playerRef.current as any).goto(newTime)
+                  setCurrentTime(newTime)
+                  console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
+                } catch (error) {
+                  // Fallback to play if goto doesn't work
+                  console.warn('goto() not available, using play():', error)
+                  playerRef.current.play(newTime)
+                  setCurrentTime(newTime)
+                  setIsPlaying(true)
+                }
               }
             }}
             onClick={(e) => {
@@ -1773,12 +1822,22 @@ export function SessionReplayPlayer() {
                   return
                 }
                 
-                // Handle rrweb replayer
+                // Handle rrweb replayer - use goto method for seeking
                 if (playerRef.current) {
                   playerRef.current.pause()
-                  playerRef.current.play(newTime)
-                  setCurrentTime(newTime)
-                  setIsPlaying(true)
+                  setIsPlaying(false)
+                  // Use goto to seek to specific time (in milliseconds)
+                  try {
+                    (playerRef.current as any).goto(newTime)
+                    setCurrentTime(newTime)
+                    console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
+                  } catch (error) {
+                    // Fallback to play if goto doesn't work
+                    console.warn('goto() not available, using play():', error)
+                    playerRef.current.play(newTime)
+                    setCurrentTime(newTime)
+                    setIsPlaying(true)
+                  }
                 }
               }
             }}
@@ -2094,38 +2153,44 @@ export function SessionReplayPlayer() {
                             }
                           }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                            {parsed.icon}
-                            <span style={{ fontWeight: '500', color: '#111827', flex: 1 }}>{parsed.title}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#6b7280', minWidth: '70px', textAlign: 'left', fontFamily: 'monospace' }}>
+                              {eventTime}
+                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1 }}>
+                              {parsed.icon}
+                              <span style={{ fontWeight: '500', color: '#111827', flex: 1 }}>{parsed.title}</span>
+                            </div>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
                                 seekToEvent(event, index)
                               }}
                               style={{
-                                padding: '0.25rem',
+                                padding: '0.25rem 0.5rem',
                                 backgroundColor: 'transparent',
-                                border: 'none',
+                                border: '1px solid #e5e7eb',
                                 borderRadius: '4px',
                                 cursor: 'pointer',
                                 display: 'flex',
                                 alignItems: 'center',
+                                gap: '0.25rem',
                                 color: '#9333ea',
-                                transition: 'all 0.2s'
+                                transition: 'all 0.2s',
+                                fontSize: '0.75rem'
                               }}
                               onMouseEnter={(e) => {
                                 e.currentTarget.style.backgroundColor = '#ede9fe'
+                                e.currentTarget.style.borderColor = '#9333ea'
                               }}
                               onMouseLeave={(e) => {
                                 e.currentTarget.style.backgroundColor = 'transparent'
+                                e.currentTarget.style.borderColor = '#e5e7eb'
                               }}
                               title="Play from this event"
                             >
-                              <Play className="icon-small" style={{ width: '14px', height: '14px' }} />
+                              <Play className="icon-small" style={{ width: '12px', height: '12px' }} />
                             </button>
-                            <span style={{ fontSize: '0.75rem', color: '#9ca3af', minWidth: '60px', textAlign: 'right' }}>
-                              {eventTime}
-                            </span>
                           </div>
                           {parsed.metadata && parsed.metadata.id !== undefined && (
                             <div style={{ 

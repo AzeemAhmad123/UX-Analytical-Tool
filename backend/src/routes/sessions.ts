@@ -118,18 +118,44 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     
     if (sessionIdsForPageViews.length > 0) {
       try {
-        const { data: pageViewEvents } = await supabase
+        // Try to get page_view events - check both 'page_view' type and custom events with page_view tag
+        // First get events with type='page_view'
+        const { data: pageViewEventsType } = await supabase
           .from('events')
-          .select('session_id')
+          .select('session_id, type, data')
           .eq('project_id', projectId)
           .eq('type', 'page_view')
           .in('session_id', sessionIdsForPageViews)
         
+        // Also get custom events with tag='page_view' (stored in data JSONB)
+        const { data: pageViewEventsCustom } = await supabase
+          .from('events')
+          .select('session_id, type, data')
+          .eq('project_id', projectId)
+          .in('session_id', sessionIdsForPageViews)
+          .not('data', 'is', null)
+        
+        // Combine both results
+        const pageViewEvents = [
+          ...(pageViewEventsType || []),
+          ...(pageViewEventsCustom?.filter((e: any) => 
+            e.data && typeof e.data === 'object' && e.data.tag === 'page_view'
+          ) || [])
+        ]
+        
         // Count page views per session
         pageViewEvents?.forEach((event: any) => {
-          const count = pageViewCounts.get(event.session_id) || 0
-          pageViewCounts.set(event.session_id, count + 1)
+          // Check if it's a page_view event (either type='page_view' or custom event with tag='page_view')
+          const isPageView = event.type === 'page_view' || 
+                            (event.data && typeof event.data === 'object' && event.data.tag === 'page_view')
+          
+          if (isPageView) {
+            const count = pageViewCounts.get(event.session_id) || 0
+            pageViewCounts.set(event.session_id, count + 1)
+          }
         })
+        
+        console.log(`✅ Found ${pageViewCounts.size} sessions with page views, total page views: ${Array.from(pageViewCounts.values()).reduce((a, b) => a + b, 0)}`)
       } catch (error: any) {
         console.warn('Failed to get page_view counts:', error.message)
         // Continue without page view counts - will use fallback
