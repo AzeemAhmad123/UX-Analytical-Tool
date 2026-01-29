@@ -89,8 +89,8 @@ export function OnboardingContent() {
     let code = ''
     
     if (sdkVersion === 'rrweb') {
-      // Add static cache-busting version
-      const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
+      // No version parameter - always gets the latest SDK version automatically
+      const sdkFileUrlWithVersion = sdkFileUrl
       code = `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
@@ -265,12 +265,12 @@ export function OnboardingContent() {
                         {(() => {
                           const apiUrl = getApiUrl()
                           const sdkFileUrl = getSdkFileUrl()
-                          const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
+                          // No version parameter - always gets the latest SDK version automatically
                           return sdkVersion === 'rrweb' ? `<!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
 <!-- UXCam SDK Configuration - MUST be set BEFORE SDK loads -->
-<!-- IMPORTANT: Clear browser cache (Ctrl+Shift+Delete) if you see old URLs -->
+<!-- This will always load the latest SDK version automatically -->
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
@@ -280,8 +280,8 @@ export function OnboardingContent() {
   console.log('UXCam SDK Config:', window.UXCamSDK);
 </script>
 
-<!-- Load UXCam SDK with DOM recording -->
-<script src="${sdkFileUrlWithVersion}" async></script>` : `<script>
+<!-- Load UXCam SDK with DOM recording (always gets latest version) -->
+<script src="${sdkFileUrl}" async></script>` : `<script>
   (function() {
     window.UXCamSDK = {
       key: '${sdkKey}',

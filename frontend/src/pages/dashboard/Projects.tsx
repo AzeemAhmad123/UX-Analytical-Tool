@@ -305,12 +305,11 @@ export function Projects() {
   const getWebIntegrationCode = (sdkKey: string): string => {
     const apiUrl = getApiUrl()
     const sdkFileUrl = getSdkFileUrl()
-    // Add static cache-busting version to force browser to reload SDK
-    const sdkFileUrlWithVersion = `${sdkFileUrl}?v=2.1.0`
+    // No version parameter - always gets the latest SDK version automatically
     
     return `<!-- UXCam Analytics SDK - Web (JavaScript) -->
 <!-- Copy and paste this code into the <head> section of your HTML -->
-<!-- IMPORTANT: Clear browser cache (Ctrl+Shift+Delete) if you see old URLs in console -->
+<!-- This will always load the latest SDK version automatically -->
 
 <!-- Load rrweb for visual session replay -->
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
@@ -325,8 +324,8 @@ export function Projects() {
   console.log('UXCam SDK Config:', window.UXCamSDK);
 </script>
 
-<!-- Load UXCam SDK with cache-busting -->
-<script src="${sdkFileUrlWithVersion}" async></script>`
+<!-- Load UXCam SDK (always gets latest version) -->
+<script src="${sdkFileUrl}" async></script>`
   }
 
   const getAndroidIntegrationCode = (sdkKey: string): string => {
