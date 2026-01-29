@@ -95,7 +95,7 @@ export function OnboardingContent() {
 <script src="https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb.min.js"></script>
 
 <!-- UXCam SDK Configuration - MUST be set BEFORE SDK loads -->
-<!-- IMPORTANT: Clear browser cache (Ctrl+Shift+Delete) if you see old URLs -->
+<!-- This will always load the latest SDK version automatically -->
 <script>
   window.UXCamSDK = {
     key: '${sdkKey}',
