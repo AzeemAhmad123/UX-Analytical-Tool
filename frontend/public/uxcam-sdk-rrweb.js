@@ -633,26 +633,13 @@
             events.push(event);
             snapshotQueue.push(event);
             
-            // Flush snapshots periodically to ensure they're saved even if user leaves quickly
-            // This is critical for mobile devices where beforeunload may not fire reliably
-            // Flush every 5 seconds or when batch size is reached, whichever comes first
+            // Flush snapshots only when batch size is reached
+            // Don't flush periodically - only flush on page unload/visibility change (UXCam style)
             if (snapshotQueue.length >= config.batchSize) {
               console.log('UXCam SDK: Snapshot queue reached batch size, flushing');
               flushSnapshots();
-            } else if (snapshotQueue.length > 0 && type2Uploaded) {
-              // Schedule periodic flush if not already scheduled
-              if (!snapshotFlushTimer) {
-                snapshotFlushTimer = setTimeout(() => {
-                  snapshotFlushTimer = null;
-                  if (snapshotQueue.length > 0 && type2Uploaded) {
-                    console.log('UXCam SDK: Periodic snapshot flush (every 5 seconds)', {
-                      snapshotCount: snapshotQueue.length
-                    });
-                    flushSnapshots();
-                  }
-                }, 5000); // Flush every 5 seconds
-              }
             }
+            // Removed periodic 5-second flush - snapshots will be flushed on page unload
           } catch (error) {
             // Silently catch errors from rrweb to prevent breaking the website
             if (window.UXCamSDK && window.UXCamSDK.debug) {
@@ -801,11 +788,11 @@
           });
           
           // Start periodic flushing now that recording has started
-          scheduleSnapshotFlush();
+          // Removed: scheduleSnapshotFlush() - no periodic flushing, only on page unload
         }
         
         console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
-        console.log('UXCam SDK: Incremental events will be flushed periodically (every 5 seconds) and on page unload');
+        console.log('UXCam SDK: Snapshots will be flushed on page unload/visibility change (UXCam-style behavior)');
         
       } catch (error) {
         console.error('UXCam SDK: Type 2 failed:', error.message);
@@ -1108,21 +1095,13 @@
     let periodicFlushInterval = null;
     
     function scheduleSnapshotFlush() {
-      // Start periodic flushing every 5 seconds to ensure snapshots are saved
-      // This is critical for mobile devices and when users navigate quickly
-      if (periodicFlushInterval) {
-        return; // Already scheduled
-      }
-      
-      periodicFlushInterval = setInterval(() => {
-        if (snapshotQueue.length > 0 && type2Uploaded && sessionId) {
-          console.log('UXCam SDK: Periodic snapshot flush', {
-            snapshotCount: snapshotQueue.length,
-            eventTypes: snapshotQueue.slice(0, 5).map(s => s?.type)
-          });
-          flushSnapshots();
-        }
-      }, 5000); // Flush every 5 seconds
+      // DISABLED: Periodic flushing removed
+      // Snapshots will only be flushed on:
+      // 1. Page unload (beforeunload event)
+      // 2. Page visibility change (when user switches tabs/minimizes)
+      // 3. Batch size reached
+      // This matches UXCam behavior - collect during session, send on exit
+      return; // Do nothing - no periodic flushing
     }
     
     function stopPeriodicFlush() {
@@ -1491,6 +1470,8 @@
                   snapshotCount: snapshotQueue.length,
                   eventTypes: snapshotQueue.map(s => s?.type)
                 });
+                // Flush via regular method first (faster)
+                flushSnapshots();
               }
               
               // Flush remaining events

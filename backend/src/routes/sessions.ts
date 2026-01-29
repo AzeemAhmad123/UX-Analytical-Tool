@@ -141,16 +141,11 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     // Use Promise.allSettled to prevent one slow session from blocking all others
     const sessionsWithAccurateDuration = await Promise.allSettled(
       filteredSessions.map(async (session: any) => {
-        // Check if session is replayable (has at least 2 events) - quick check with timeout
-        const replayablePromise = isSessionReplayable(session.id)
-        const replayableTimeout = new Promise<boolean>((resolve) => 
-          setTimeout(() => resolve(false), 1500) // 1.5 second timeout
-        )
-        const isReplayable = await Promise.race([replayablePromise, replayableTimeout])
-        
-        // Skip sessions that can't be replayed
-        if (!isReplayable) {
-          return null
+        // Only check if session has snapshots (basic check)
+        // Detailed replayability check is done when user tries to view the session
+        const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
+        if (!hasSnapshots) {
+          return null // Skip sessions without snapshots
         }
 
         // Try to get duration from event timestamps (most accurate)
