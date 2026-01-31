@@ -350,14 +350,46 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         })
         
         // Pass snapshot_data directly to decodeSnapshot - it handles all conversion internally
+        // Log detailed info about the input data
+        const inputType = typeof snapshot.snapshot_data
+        const isBuffer = Buffer.isBuffer(snapshot.snapshot_data)
+        const isUint8Array = snapshot.snapshot_data instanceof Uint8Array
+        let inputPreview = 'N/A'
+        
+        if (typeof snapshot.snapshot_data === 'string') {
+          inputPreview = snapshot.snapshot_data.substring(0, 50)
+          if (snapshot.snapshot_data.length >= 2 && 
+              snapshot.snapshot_data.charCodeAt(0) === 92 && 
+              snapshot.snapshot_data.charCodeAt(1) === 120) {
+            inputPreview = `\\x${snapshot.snapshot_data.substring(2, 52)}... (hex BYTEA)`
+          }
+        } else if (isBuffer || isUint8Array) {
+          const buffer = isBuffer ? snapshot.snapshot_data : Buffer.from(snapshot.snapshot_data)
+          inputPreview = buffer.slice(0, 25).toString('hex')
+        }
+        
+        console.log(`🔍 Decoding snapshot ${snapshot.id}:`, {
+          inputType,
+          isBuffer,
+          isUint8Array,
+          inputLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
+                      Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 
+                      snapshot.snapshot_data instanceof Uint8Array ? snapshot.snapshot_data.length : 'unknown',
+          inputPreview
+        })
+        
         const decoded = decodeSnapshot(snapshot.snapshot_data)
         
         if (decoded === null || decoded.length === 0) {
           console.error(`❌ Failed to decode snapshot ${snapshot.id}`, {
             snapshotId: snapshot.id,
-            inputType: typeof snapshot.snapshot_data,
+            inputType,
+            isBuffer,
+            isUint8Array,
             inputLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
-                        Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 'unknown'
+                        Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 
+                        snapshot.snapshot_data instanceof Uint8Array ? snapshot.snapshot_data.length : 'unknown',
+            inputPreview
           })
           continue
         }

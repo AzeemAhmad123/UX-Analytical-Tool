@@ -120,7 +120,9 @@ export function decodeSnapshot(snapshotData: Buffer | Uint8Array | string): any[
       console.error('❌ Failed to decode snapshot with all methods:', {
         bufferLength: buffer.length,
         bufferStartHex: buffer.slice(0, 20).toString('hex'),
-        bufferStartUTF8: buffer.slice(0, 100).toString('latin1').replace(/[^\x20-\x7E]/g, '.')
+        bufferStartLatin1: buffer.slice(0, 100).toString('latin1').replace(/[^\x20-\x7E]/g, '.'),
+        bufferStartUTF8: buffer.slice(0, 100).toString('utf8').replace(/[^\x20-\x7E]/g, '.'),
+        error: jsonError.message
       })
       return null
     }
