@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express'
-import * as LZString from 'lz-string'
 import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById } from '../services/sessionService'
 import { getSessionSnapshots, getSessionDurationFromSnapshots, isSessionReplayable } from '../services/snapshotService'
+import { decodeSnapshot } from '../utils/decodeSnapshot'
 import { supabase } from '../config/supabase'
 
 const router = Router()
@@ -333,182 +333,86 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })
     }
 
-    // Decompress and parse all snapshots
-    const decompressedSnapshots: any[] = []
+    // Decode all snapshots using decodeSnapshot utility
+    const allEvents: any[] = []
+    
+    console.log(`📦 Starting to decode ${snapshots.length} snapshot batches`)
     
     for (const snapshot of snapshots) {
       try {
-        let events: any
-
-        // Log snapshot info for debugging
         console.log(`📄 Processing snapshot ${snapshot.id}`, {
-          dataLength: snapshot.snapshot_data?.length || 0,
-          dataType: typeof snapshot.snapshot_data,
           snapshotCount: snapshot.snapshot_count,
-          isInitial: snapshot.is_initial_snapshot
+          isInitial: snapshot.is_initial_snapshot,
+          dataType: typeof snapshot.snapshot_data,
+          isBuffer: Buffer.isBuffer(snapshot.snapshot_data),
+          dataLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
+                     Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 'unknown'
         })
-
-        // First, ensure we have a proper string (handle Buffer objects and hex BYTEA from Supabase)
-        let snapshotString = snapshot.snapshot_data
-        if (typeof snapshotString === 'string') {
-          // Check if it's hex BYTEA format from Supabase (\x...)
-          const isHexBYTEA = snapshotString.length >= 2 && 
-              snapshotString.charCodeAt(0) === 92 && // backslash
-              snapshotString.charCodeAt(1) === 120 && // x
-              /^[0-9a-fA-F]{2}/.test(snapshotString.substring(2))
-          
-          if (isHexBYTEA) {
-            // Convert hex BYTEA to UTF-8 string
-            const hexString = snapshotString.substring(2) // Remove \x prefix
-            try {
-              snapshotString = Buffer.from(hexString, 'hex').toString('utf8')
-              console.log(`✅ Converted hex BYTEA to string (${hexString.length / 2} bytes)`)
-            } catch (e) {
-              console.error('❌ Error converting hex BYTEA:', e)
-              throw e
-            }
-          } else {
-            // Check if it's a JSON-serialized Buffer object
-            try {
-              const parsed = JSON.parse(snapshotString)
-              if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
-                // Convert Buffer object to actual string
-                const buffer = Buffer.from(parsed.data)
-                snapshotString = buffer.toString('utf8')
-                console.log(`✅ Converted Buffer object to string (${buffer.length} bytes)`)
-              }
-            } catch (e) {
-              // Not a JSON Buffer object, use as-is
-            }
-          }
+        
+        // Pass snapshot_data directly to decodeSnapshot - it handles all conversion internally
+        const decoded = decodeSnapshot(snapshot.snapshot_data)
+        
+        if (decoded === null || decoded.length === 0) {
+          console.error(`❌ Failed to decode snapshot ${snapshot.id}`, {
+            snapshotId: snapshot.id,
+            inputType: typeof snapshot.snapshot_data,
+            inputLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
+                        Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 'unknown'
+          })
+          continue
         }
-
-        // Try to decompress with LZString first (SDK sends compressed data)
-        const decompressed = LZString.decompress(snapshotString)
-        if (decompressed && decompressed.length > 0) {
-          // Successfully decompressed
-          events = JSON.parse(decompressed)
-          console.log(`✅ Decompressed snapshot ${snapshot.id}`, {
-            decompressedLength: decompressed.length,
-            isArray: Array.isArray(events),
-            eventCount: Array.isArray(events) ? events.length : 1,
-            expectedCount: snapshot.snapshot_count,
-            firstEventType: Array.isArray(events) ? events[0]?.type : events?.type,
-            // Debug: Check if first element is an array (double-wrapped)
-            firstElementIsArray: Array.isArray(events) && events.length > 0 ? Array.isArray(events[0]) : false
+        
+        // decodeSnapshot returns a flat array - filter valid events and push directly
+        const validEvents = decoded.filter((e: any) => 
+          e && typeof e.type === 'number' && typeof e.timestamp === 'number' && e.data !== undefined
+        )
+        
+        if (validEvents.length > 0) {
+          allEvents.push(...validEvents) // Push flat array of events directly
+          console.log(`✅ Extracted ${validEvents.length} valid events from snapshot ${snapshot.id}`, {
+            type2Count: validEvents.filter((e: any) => e.type === 2).length,
+            eventTypes: [...new Set(validEvents.map((e: any) => e.type))]
           })
         } else {
-          // Try parsing as JSON directly (might already be decompressed)
-          try {
-            events = JSON.parse(snapshotString)
-            
-            // Check if parsed result is a Buffer object (shouldn't happen, but handle it)
-            if (events && typeof events === 'object' && events.type === 'Buffer' && Array.isArray(events.data)) {
-              const buffer = Buffer.from(events.data)
-              const bufferString = buffer.toString('utf8')
-              events = JSON.parse(bufferString)
-              console.log(`✅ Parsed Buffer object and extracted JSON (${buffer.length} bytes)`)
-            }
-            
-            console.log(`✅ Parsed snapshot ${snapshot.id} as JSON`, {
-              dataLength: snapshotString.length,
-              isArray: Array.isArray(events),
-              eventCount: Array.isArray(events) ? events.length : 1,
-              expectedCount: snapshot.snapshot_count,
-              firstEventType: Array.isArray(events) ? events[0]?.type : events?.type,
-              // Debug: Check if first element is an array (double-wrapped)
-              firstElementIsArray: Array.isArray(events) && events.length > 0 ? Array.isArray(events[0]) : false,
-              // Debug: Show first 200 chars of parsed data to understand structure
-              parsedPreview: JSON.stringify(events).substring(0, 200)
-            })
-          } catch (parseError: any) {
-            console.error(`❌ Failed to parse snapshot ${snapshot.id}:`, parseError.message)
-            throw new Error(`Failed to parse snapshot: ${parseError.message}`)
-          }
+          console.warn(`⚠️ No valid events extracted from snapshot ${snapshot.id}`, {
+            decodedLength: decoded.length
+          })
         }
-
-        // Ensure events is an array - CRITICAL: SDK sends arrays of events
-        // Handle different data structures that might come from decompression
-        let eventsToAdd: any[] = []
-        
-        if (Array.isArray(events)) {
-          // Check if array length matches expected count
-          if (events.length === snapshot.snapshot_count) {
-            // Perfect match - use as-is
-            eventsToAdd = events
-            console.log(`✅ Array length matches: ${events.length} events (expected ${snapshot.snapshot_count})`)
-          } else if (events.length === 1 && Array.isArray(events[0])) {
-            // Double-wrapped array: [[event1, event2, ...]]
-            console.log(`📦 Unwrapping double-wrapped array: outer length=${events.length}, inner length=${events[0].length}`)
-            eventsToAdd = events[0]
-          } else if (events.length === 1 && events[0] && typeof events[0] === 'object' && events[0].type) {
-            // Single event in array - might be correct if snapshot_count is 1
-            if (snapshot.snapshot_count === 1) {
-              eventsToAdd = events
-              console.log(`✅ Single event in array (expected)`)
-            } else {
-              // Unexpected: should have more events
-              console.warn(`⚠️ Array has 1 element but expected ${snapshot.snapshot_count} events`)
-              console.warn(`   First element structure:`, {
-                type: events[0].type,
-                hasData: !!events[0].data,
-                keys: Object.keys(events[0]),
-                dataKeys: events[0].data ? Object.keys(events[0].data) : []
-              })
-              eventsToAdd = events // Add what we have
-            }
-          } else {
-            // Array length doesn't match - use what we have
-            console.warn(`⚠️ Array length mismatch: got ${events.length}, expected ${snapshot.snapshot_count}`)
-            eventsToAdd = events
-          }
-        } else if (events && typeof events === 'object') {
-          // Check if it's an object that might contain an array
-          if (events.events && Array.isArray(events.events)) {
-            console.log(`📦 Found events array in object, got ${events.events.length} events`)
-            eventsToAdd = events.events
-          } else if (events.data && Array.isArray(events.data)) {
-            console.log(`📦 Found data array in object, got ${events.data.length} events`)
-            eventsToAdd = events.data
-          } else if (events.type !== undefined) {
-            // Single event object
-            eventsToAdd = [events]
-            console.warn(`⚠️ Snapshot ${snapshot.id} returned single event object instead of array (expected ${snapshot.snapshot_count} events)`)
-            console.warn(`   Event structure:`, { type: events.type, hasData: !!events.data, keys: Object.keys(events) })
-          } else {
-            // Unknown object structure
-            console.warn(`⚠️ Unknown object structure:`, Object.keys(events))
-            eventsToAdd = [events]
-          }
-        } else {
-          // Fallback: add as-is
-          console.warn(`⚠️ Snapshot ${snapshot.id} returned unexpected format:`, typeof events)
-          eventsToAdd = [events]
-        }
-        
-        // Add all events to the decompressed snapshots
-        decompressedSnapshots.push(...eventsToAdd)
-        console.log(`📦 Added ${eventsToAdd.length} events from snapshot ${snapshot.id} (expected ${snapshot.snapshot_count}, total so far: ${decompressedSnapshots.length})`)
       } catch (error: any) {
-        console.error(`❌ Error processing snapshot ${snapshot.id}:`, error.message)
-        console.error('Snapshot data preview:', snapshot.snapshot_data?.substring(0, 100))
-        // Skip this snapshot if decompression fails
+        console.error(`❌ Error decoding snapshot ${snapshot.id}:`, error.message, error.stack)
+        // Skip this snapshot if decode fails
       }
     }
+    
+    console.log(`✅ Total decoded events: ${allEvents.length}`)
+    
+    if (allEvents.length === 0 && snapshots.length > 0) {
+      console.error('❌ Failed to decode snapshots for session:', {
+        sessionId: session.id,
+        snapshotBatches: snapshots.length,
+        snapshotIds: snapshots.map((s: any) => s.id),
+        possibleCauses: [
+          'Snapshots stored in unexpected format',
+          'Encoding mismatch (latin1 vs utf8)',
+          'Compression format not recognized'
+        ]
+      })
+    }
+    
+    // Sort all events by timestamp
+    allEvents.sort((a: any, b: any) => {
+      const timeA = a.timestamp || 0
+      const timeB = b.timestamp || 0
+      return timeA - timeB
+    })
 
-    console.log(`✅ Total decompressed events: ${decompressedSnapshots.length}`)
-    
-    // If no snapshots were loaded (due to timeout or other issues), return a helpful message
-    if (decompressedSnapshots.length === 0 && snapshots.length > 0) {
-      console.warn('⚠️ Snapshots exist but failed to decompress/load')
-    }
-    
-    // Warn if session has only 1 event (Type 2 snapshot only, no incremental events)
-    // This happens when user leaves page before incremental events are flushed
-    if (decompressedSnapshots.length === 1) {
-      console.warn('⚠️ Session has only 1 event (Type 2 snapshot). This session cannot be replayed because rrweb requires at least 2 events.')
-      console.warn('   This usually happens when the user left the page before incremental events were saved.')
-    }
+    // Check for Type-2 snapshot
+    const hasType2 = allEvents.some((e: any) => e && e.type === 2)
+    console.log('Replay events summary:', {
+      total: allEvents.length,
+      hasType2,
+      eventTypes: [...new Set(allEvents.map((e: any) => e.type))]
+    })
 
     // Get video information if available (for mobile sessions)
     const { data: videos } = await supabase
@@ -527,9 +431,9 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     if (video && video.duration) {
       calculatedDuration = video.duration
       console.log(`📹 Using video duration: ${calculatedDuration}ms (${Math.round(calculatedDuration / 1000)}s)`)
-    } else if (decompressedSnapshots.length > 0) {
+    } else if (allEvents.length > 0) {
       // For web sessions with snapshots, calculate from event timestamps
-      const timestamps = decompressedSnapshots
+      const timestamps = allEvents
         .map((e: any) => e.timestamp)
         .filter((ts: any) => ts && typeof ts === 'number')
         .sort((a: number, b: number) => a - b)
@@ -578,8 +482,9 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           has_video: false
         })
       },
-      snapshots: decompressedSnapshots,
-      total_snapshots: decompressedSnapshots.length,
+      snapshots: allEvents, // Flat array of decoded events (frontend expects 'snapshots')
+      events: allEvents, // Also include as 'events' for compatibility
+      total_snapshots: allEvents.length,
       snapshot_batches: snapshots.length
     })
   } catch (error: any) {

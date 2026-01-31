@@ -424,7 +424,7 @@ export async function getSessionDurationFromSnapshots(sessionDbId: string): Prom
 
 export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
   id: string
-  snapshot_data: string
+  snapshot_data: Buffer | Uint8Array | string // Return raw data to preserve binary format
   snapshot_count: number
   is_initial_snapshot: boolean
   created_at: string
@@ -444,74 +444,46 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
       return []
     }
 
-    // Convert BYTEA to string
-    // Supabase returns BYTEA as a hex string, Buffer, or Uint8Array
+    // Return raw snapshot data - let decodeSnapshot handle conversion
+    // Supabase returns BYTEA as hex string (\x...), Buffer, or Uint8Array
+    // We preserve the raw format to avoid corrupting binary data (LZString-compressed)
     const processedSnapshots = snapshots.map((snapshot: any) => {
-      let snapshotData: string
+      let snapshotData: Buffer | Uint8Array | string
 
       if (Buffer.isBuffer(snapshot.snapshot_data)) {
-        snapshotData = snapshot.snapshot_data.toString('utf8')
-      } else if (snapshot.snapshot_data instanceof Uint8Array) {
-        // Convert Uint8Array to string
-        snapshotData = Buffer.from(snapshot.snapshot_data).toString('utf8')
-      } else if (typeof snapshot.snapshot_data === 'string') {
-        // If it's already a string, use it directly
+        // Keep as Buffer - decodeSnapshot will handle it
         snapshotData = snapshot.snapshot_data
-      } else if (snapshot.snapshot_data && typeof snapshot.snapshot_data === 'object') {
-        // Handle Buffer object format: {type: "Buffer", data: [array of bytes]}
-        try {
-          if (snapshot.snapshot_data.type === 'Buffer' && Array.isArray(snapshot.snapshot_data.data)) {
-            // This is a JSON-serialized Buffer object
-            // Convert the byte array back to a Buffer, then to string
-            const buffer = Buffer.from(snapshot.snapshot_data.data)
-            snapshotData = buffer.toString('utf8')
-            console.log(`✅ Converted Buffer object to string (${buffer.length} bytes)`)
-          } else if (snapshot.snapshot_data.data) {
-            // Handle Supabase's hex format
-            const hexString = snapshot.snapshot_data.data
-            if (typeof hexString === 'string' && hexString.startsWith('\\x')) {
-              // PostgreSQL hex format: \x...
-              const hex = hexString.slice(2) // Remove \x prefix
-              snapshotData = Buffer.from(hex, 'hex').toString('utf8')
-            } else if (Array.isArray(hexString)) {
-              // If data is an array of numbers (bytes), convert to Buffer
-              snapshotData = Buffer.from(hexString).toString('utf8')
-            } else {
-              snapshotData = Buffer.from(hexString, 'hex').toString('utf8')
-            }
-          } else {
-            // Try to stringify and parse
-            snapshotData = JSON.stringify(snapshot.snapshot_data)
-          }
-        } catch (e) {
-          console.error('Error converting snapshot data:', e)
-          snapshotData = String(snapshot.snapshot_data)
-        }
+      } else if (snapshot.snapshot_data instanceof Uint8Array) {
+        // Keep as Uint8Array - decodeSnapshot will handle it
+        snapshotData = snapshot.snapshot_data
       } else if (typeof snapshot.snapshot_data === 'string') {
-        // Check if string is a JSON-serialized Buffer object
-        try {
-          const parsed = JSON.parse(snapshot.snapshot_data)
-          if (parsed && parsed.type === 'Buffer' && Array.isArray(parsed.data)) {
-            // This is a JSON string containing a Buffer object
-            const buffer = Buffer.from(parsed.data)
-            snapshotData = buffer.toString('utf8')
-            console.log(`✅ Converted JSON Buffer string to actual string (${buffer.length} bytes)`)
-          } else {
-            // Not a Buffer object, use as-is
-            snapshotData = snapshot.snapshot_data
-          }
-        } catch (e) {
-          // Not valid JSON, use as-is
+        // If it's already a string, check if it's hex BYTEA format
+        // Keep hex BYTEA as-is (don't convert to UTF-8 - it corrupts binary data)
+        if (snapshot.snapshot_data.length >= 2 && 
+            snapshot.snapshot_data.charCodeAt(0) === 92 && // backslash
+            snapshot.snapshot_data.charCodeAt(1) === 120) { // x
+          // Hex BYTEA format - keep as-is
+          snapshotData = snapshot.snapshot_data
+        } else {
+          // Regular string - might be JSON or need decompression
           snapshotData = snapshot.snapshot_data
         }
+      } else if (snapshot.snapshot_data && typeof snapshot.snapshot_data === 'object') {
+        // Handle Buffer object format: {type: "Buffer", data: [array of bytes]}
+        if (snapshot.snapshot_data.type === 'Buffer' && Array.isArray(snapshot.snapshot_data.data)) {
+          snapshotData = Buffer.from(snapshot.snapshot_data.data)
+        } else {
+          // Unknown object format - convert to string
+          snapshotData = JSON.stringify(snapshot.snapshot_data)
+        }
       } else {
-        // Try to convert from hex or other formats
+        // Fallback: convert to string
         snapshotData = String(snapshot.snapshot_data)
       }
 
       return {
         id: snapshot.id,
-        snapshot_data: snapshotData,
+        snapshot_data: snapshotData as any, // Return raw data (Buffer, Uint8Array, or string)
         snapshot_count: snapshot.snapshot_count,
         is_initial_snapshot: snapshot.is_initial_snapshot,
         created_at: snapshot.created_at
