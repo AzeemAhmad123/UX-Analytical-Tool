@@ -340,26 +340,54 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         let events: any[] = []
         const snapshotString = snapshot.snapshot_data
         
+        // Log what we're trying to decode
+        console.log(`🔍 Attempting to decode snapshot ${snapshot.id}:`, {
+          stringLength: snapshotString.length,
+          firstChars: snapshotString.substring(0, 100),
+          startsWithBracket: snapshotString.trim().startsWith('[') || snapshotString.trim().startsWith('{'),
+          charCodes: Array.from(snapshotString.substring(0, 10)).map(c => c.charCodeAt(0))
+        })
+        
         try {
           // Try LZString decompression first (SDK sends compressed data)
           const decompressed = LZString.decompress(snapshotString)
           if (decompressed && decompressed.length > 0) {
-            events = JSON.parse(decompressed)
-            console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
-              decompressedLength: decompressed.length,
-              eventCount: Array.isArray(events) ? events.length : 1
-            })
+            try {
+              events = JSON.parse(decompressed)
+              console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+                decompressedLength: decompressed.length,
+                eventCount: Array.isArray(events) ? events.length : 1
+              })
+            } catch (parseError: any) {
+              console.error(`❌ Failed to parse LZString decompressed data for snapshot ${snapshot.id}:`, parseError.message)
+              throw parseError
+            }
           } else {
-            // Try parsing as JSON directly (might already be decompressed)
-            events = JSON.parse(snapshotString)
-            console.log(`✅ Parsed snapshot ${snapshot.id} as JSON`, {
-              dataLength: snapshotString.length,
-              eventCount: Array.isArray(events) ? events.length : 1
-            })
+            // LZString returned null/empty - try parsing as JSON directly
+            try {
+              events = JSON.parse(snapshotString)
+              console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (not LZString compressed)`, {
+                dataLength: snapshotString.length,
+                eventCount: Array.isArray(events) ? events.length : 1
+              })
+            } catch (jsonError: any) {
+              console.error(`❌ Failed to parse snapshot ${snapshot.id} as JSON:`, {
+                error: jsonError.message,
+                stringLength: snapshotString.length,
+                firstChars: snapshotString.substring(0, 200),
+                isLZString: snapshotString.length > 0 && !snapshotString.trim().startsWith('[') && !snapshotString.trim().startsWith('{')
+              })
+              throw jsonError
+            }
           }
         } catch (error: any) {
-          console.error(`❌ Failed to decode snapshot ${snapshot.id}:`, error.message)
-          continue
+          console.error(`❌ Failed to decode snapshot ${snapshot.id}:`, {
+            error: error.message,
+            stringLength: snapshotString.length,
+            firstChars: snapshotString.substring(0, 200),
+            errorStack: error.stack
+          })
+          continue // Skip this snapshot
         }
         
         // Flatten events array (handle nested arrays)
@@ -502,10 +530,22 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           has_video: false
         })
       },
-      snapshots: allEvents, // Flat array of decoded events (frontend expects 'snapshots')
-      events: allEvents, // Also include as 'events' for compatibility
+      snapshots: allEvents.length > 0 ? allEvents : [], // Always return array (empty if decoding failed)
+      events: allEvents.length > 0 ? allEvents : [], // Also include as 'events' for compatibility
       total_snapshots: allEvents.length,
-      snapshot_batches: snapshots.length
+      snapshot_batches: snapshots.length,
+      // Include debug info if decoding failed
+      ...(allEvents.length === 0 && snapshots.length > 0 ? {
+        _debug: {
+          message: 'Snapshots exist but failed to decode',
+          snapshotCount: snapshots.length,
+          possibleCauses: [
+            'Data format mismatch',
+            'Compression format not recognized',
+            'Encoding issue during conversion'
+          ]
+        }
+      } : {})
     })
   } catch (error: any) {
     console.error('Error in /api/sessions/:projectId/:sessionId:', error)
