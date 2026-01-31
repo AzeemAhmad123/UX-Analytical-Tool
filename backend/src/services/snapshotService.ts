@@ -424,7 +424,7 @@ export async function getSessionDurationFromSnapshots(sessionDbId: string): Prom
 
 export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
   id: string
-  snapshot_data: Buffer | Uint8Array | string // Return raw data to preserve binary format
+  snapshot_data: string // Return as string (converted from BYTEA, ready for decompression)
   snapshot_count: number
   is_initial_snapshot: boolean
   created_at: string
@@ -444,46 +444,40 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
       return []
     }
 
-    // Return raw snapshot data - let decodeSnapshot handle conversion
-    // Supabase returns BYTEA as hex string (\x...), Buffer, or Uint8Array
-    // We preserve the raw format to avoid corrupting binary data (LZString-compressed)
+    // Convert BYTEA to string using the same approach as getSessionDurationFromSnapshots (which works!)
+    // This converts hex BYTEA to string, preserving the data format for LZString decompression
     const processedSnapshots = snapshots.map((snapshot: any) => {
-      let snapshotData: Buffer | Uint8Array | string
+      let snapshotData: string
 
-      if (Buffer.isBuffer(snapshot.snapshot_data)) {
-        // Keep as Buffer - decodeSnapshot will handle it
-        snapshotData = snapshot.snapshot_data
-      } else if (snapshot.snapshot_data instanceof Uint8Array) {
-        // Keep as Uint8Array - decodeSnapshot will handle it
-        snapshotData = snapshot.snapshot_data
-      } else if (typeof snapshot.snapshot_data === 'string') {
-        // If it's already a string, check if it's hex BYTEA format
-        // Keep hex BYTEA as-is (don't convert to UTF-8 - it corrupts binary data)
-        if (snapshot.snapshot_data.length >= 2 && 
-            snapshot.snapshot_data.charCodeAt(0) === 92 && // backslash
-            snapshot.snapshot_data.charCodeAt(1) === 120) { // x
-          // Hex BYTEA format - keep as-is
-          snapshotData = snapshot.snapshot_data
-        } else {
-          // Regular string - might be JSON or need decompression
-          snapshotData = snapshot.snapshot_data
+      // Handle Supabase BYTEA format - same logic as getSessionDurationFromSnapshots
+      let rawData: any = snapshot.snapshot_data
+      
+      if (typeof rawData === 'string' && rawData.length >= 2 && 
+          rawData.charCodeAt(0) === 92 && rawData.charCodeAt(1) === 120) {
+        // Hex BYTEA format (\x...)
+        const hexString = rawData.substring(2) // Remove \x prefix
+        try {
+          // Convert hex to Buffer, then to string using latin1 (preserves binary data for LZString)
+          snapshotData = Buffer.from(hexString, 'hex').toString('latin1')
+          console.log(`✅ Converted hex BYTEA to string for snapshot ${snapshot.id} (${hexString.length / 2} bytes)`)
+        } catch (e) {
+          console.error(`❌ Error converting hex BYTEA for snapshot ${snapshot.id}:`, e)
+          snapshotData = rawData // Fallback to original
         }
-      } else if (snapshot.snapshot_data && typeof snapshot.snapshot_data === 'object') {
-        // Handle Buffer object format: {type: "Buffer", data: [array of bytes]}
-        if (snapshot.snapshot_data.type === 'Buffer' && Array.isArray(snapshot.snapshot_data.data)) {
-          snapshotData = Buffer.from(snapshot.snapshot_data.data)
-        } else {
-          // Unknown object format - convert to string
-          snapshotData = JSON.stringify(snapshot.snapshot_data)
-        }
+      } else if (rawData && typeof rawData === 'object' && rawData.type === 'Buffer' && Array.isArray(rawData.data)) {
+        // JSON-serialized Buffer object
+        snapshotData = Buffer.from(rawData.data).toString('latin1')
+      } else if (Buffer.isBuffer(rawData)) {
+        snapshotData = rawData.toString('latin1')
+      } else if (typeof rawData === 'string') {
+        snapshotData = rawData
       } else {
-        // Fallback: convert to string
-        snapshotData = String(snapshot.snapshot_data)
+        snapshotData = String(rawData)
       }
 
       return {
         id: snapshot.id,
-        snapshot_data: snapshotData as any, // Return raw data (Buffer, Uint8Array, or string)
+        snapshot_data: snapshotData, // Return as string (ready for LZString or JSON parse)
         snapshot_count: snapshot.snapshot_count,
         is_initial_snapshot: snapshot.is_initial_snapshot,
         created_at: snapshot.created_at

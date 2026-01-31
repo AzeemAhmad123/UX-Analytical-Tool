@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express'
+import * as LZString from 'lz-string'
 import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById } from '../services/sessionService'
 import { getSessionSnapshots, getSessionDurationFromSnapshots, isSessionReplayable } from '../services/snapshotService'
-import { decodeSnapshot } from '../utils/decodeSnapshot'
 import { supabase } from '../config/supabase'
 
 const router = Router()
@@ -78,14 +78,9 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     
     // Filter out sessions without snapshots (recording never started)
     // Also filter out sessions with very short duration (< 10 seconds) as they're likely incomplete or accidental
-    // BUT: Don't filter when deleting - allow deletion of all sessions
-    const MIN_DURATION_MS = 10000 // 10 seconds minimum
-    const filteredSessions = (sessions || []).filter((session: any) => {
-      const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
-      const hasValidDuration = session.duration && session.duration >= MIN_DURATION_MS
-      // Keep session if it has snapshots OR has valid duration (some sessions might have events but no snapshots yet)
-      return hasSnapshots || hasValidDuration
-    })
+    // REMOVED STRICT FILTERING: Show all sessions (including videos, new sessions, etc.)
+    // Previously filtered by MIN_DURATION_MS and snapshot count - this was too strict
+    const filteredSessions = sessions || []
     
     // Store all session IDs (including filtered ones) for deletion purposes
     const allSessionIds = (sessions || []).map((s: any) => s.id)
@@ -163,16 +158,12 @@ router.get('/:projectId', async (req: Request, res: Response) => {
     }
 
     // Calculate accurate duration for each session from actual event timestamps
-    // This prevents showing 10 minutes when the actual video is only 10 seconds
+    // REMOVED STRICT FILTER: Show ALL sessions (including videos without snapshots)
     // Use Promise.allSettled to prevent one slow session from blocking all others
     const sessionsWithAccurateDuration = await Promise.allSettled(
       filteredSessions.map(async (session: any) => {
-        // Only check if session has snapshots (basic check)
-        // Detailed replayability check is done when user tries to view the session
-        const hasSnapshots = (snapshotCountMap.get(session.id) || 0) > 0
-        if (!hasSnapshots) {
-          return null // Skip sessions without snapshots
-        }
+        // REMOVED: No longer filtering out sessions without snapshots
+        // Videos and other session types should be visible
 
         // Try to get duration from event timestamps (most accurate)
         // Add timeout to prevent hanging
@@ -232,12 +223,7 @@ router.get('/:projectId', async (req: Request, res: Response) => {
         .filter(result => result.status === 'fulfilled')
         .map(result => (result as PromiseFulfilledResult<any>).value)
         .filter(session => session && typeof session === 'object' && session.id && session !== null)
-        // Filter out sessions with duration less than 10 seconds (after accurate duration calculation)
-        // Note: We already filtered out non-replayable sessions above, so all sessions here should be replayable
-        .filter(session => {
-          const duration = session.duration || 0
-          return duration >= MIN_DURATION_MS
-        })
+        // REMOVED: No duration filtering - show all sessions including videos
     )
 
     res.json({
@@ -349,47 +335,49 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
                      Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 'unknown'
         })
         
-        // Pass snapshot_data directly to decodeSnapshot - it handles all conversion internally
-        // Log detailed info about the input data
-        const inputType = typeof snapshot.snapshot_data
-        const isBuffer = Buffer.isBuffer(snapshot.snapshot_data)
-        const isUint8Array = snapshot.snapshot_data instanceof Uint8Array
-        let inputPreview = 'N/A'
+        // getSessionSnapshots now returns strings (converted from hex BYTEA)
+        // Use the same approach as getSessionDurationFromSnapshots: try LZString, then JSON
+        let events: any[] = []
+        const snapshotString = snapshot.snapshot_data
         
-        if (typeof snapshot.snapshot_data === 'string') {
-          inputPreview = snapshot.snapshot_data.substring(0, 50)
-          if (snapshot.snapshot_data.length >= 2 && 
-              snapshot.snapshot_data.charCodeAt(0) === 92 && 
-              snapshot.snapshot_data.charCodeAt(1) === 120) {
-            inputPreview = `\\x${snapshot.snapshot_data.substring(2, 52)}... (hex BYTEA)`
+        try {
+          // Try LZString decompression first (SDK sends compressed data)
+          const decompressed = LZString.decompress(snapshotString)
+          if (decompressed && decompressed.length > 0) {
+            events = JSON.parse(decompressed)
+            console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+              decompressedLength: decompressed.length,
+              eventCount: Array.isArray(events) ? events.length : 1
+            })
+          } else {
+            // Try parsing as JSON directly (might already be decompressed)
+            events = JSON.parse(snapshotString)
+            console.log(`✅ Parsed snapshot ${snapshot.id} as JSON`, {
+              dataLength: snapshotString.length,
+              eventCount: Array.isArray(events) ? events.length : 1
+            })
           }
-        } else if (isBuffer || isUint8Array) {
-          const buffer = isBuffer ? snapshot.snapshot_data : Buffer.from(snapshot.snapshot_data)
-          inputPreview = buffer.slice(0, 25).toString('hex')
+        } catch (error: any) {
+          console.error(`❌ Failed to decode snapshot ${snapshot.id}:`, error.message)
+          continue
         }
         
-        console.log(`🔍 Decoding snapshot ${snapshot.id}:`, {
-          inputType,
-          isBuffer,
-          isUint8Array,
-          inputLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
-                      Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 
-                      snapshot.snapshot_data instanceof Uint8Array ? snapshot.snapshot_data.length : 'unknown',
-          inputPreview
-        })
-        
-        const decoded = decodeSnapshot(snapshot.snapshot_data)
+        // Flatten events array (handle nested arrays)
+        let decoded: any[] = []
+        if (Array.isArray(events)) {
+          if (events.length === 1 && Array.isArray(events[0])) {
+            decoded = events[0] // Unwrap double-wrapped array
+          } else {
+            decoded = events
+          }
+        } else if (events && typeof events === 'object') {
+          decoded = [events] // Single event object
+        }
         
         if (decoded === null || decoded.length === 0) {
           console.error(`❌ Failed to decode snapshot ${snapshot.id}`, {
             snapshotId: snapshot.id,
-            inputType,
-            isBuffer,
-            isUint8Array,
-            inputLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
-                        Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 
-                        snapshot.snapshot_data instanceof Uint8Array ? snapshot.snapshot_data.length : 'unknown',
-            inputPreview
+            inputLength: snapshotString.length
           })
           continue
         }
