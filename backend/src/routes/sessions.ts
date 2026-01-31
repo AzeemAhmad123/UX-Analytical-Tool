@@ -345,7 +345,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           stringLength: snapshotString.length,
           firstChars: snapshotString.substring(0, 100),
           startsWithBracket: snapshotString.trim().startsWith('[') || snapshotString.trim().startsWith('{'),
-          charCodes: Array.from(snapshotString.substring(0, 10) as string[]).map((c: string) => c.charCodeAt(0))
+          charCodes: snapshotString.substring(0, 10).split('').map((c: string) => c.charCodeAt(0))
         })
         
         try {
