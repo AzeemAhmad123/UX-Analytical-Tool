@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus, GripVertical, Edit2, Trash2, HelpCircle, Sparkles } from 'lucide-react'
 import {
   DndContext,
@@ -132,10 +132,10 @@ export function FunnelBuilderUserFriendly({ onSave, onCancel, initialData }: Fun
   const [name, setName] = useState(initialData?.name || '')
   const [description, setDescription] = useState(initialData?.description || '')
   const [steps, setSteps] = useState<FunnelStep[]>(initialData?.steps || [])
-  const [isFormFunnel, setIsFormFunnel] = useState(initialData?.is_form_funnel || false)
-  const [formUrl, setFormUrl] = useState(initialData?.form_url || '')
-  const [timeWindowHours, setTimeWindowHours] = useState<number | undefined>(initialData?.time_window_hours)
-  const [trackFirstTimeUsers, setTrackFirstTimeUsers] = useState(initialData?.track_first_time_users || false)
+  const [isFormFunnel] = useState(initialData?.is_form_funnel || false)
+  const [formUrl] = useState(initialData?.form_url || '')
+  const [timeWindowHours] = useState<number | undefined>(initialData?.time_window_hours)
+  const [trackFirstTimeUsers] = useState(initialData?.track_first_time_users || false)
   const [calculationMode, setCalculationMode] = useState<'sessions' | 'users'>(initialData?.calculation_mode || 'sessions')
   const [editingStep, setEditingStep] = useState<number | null>(null)
   const [showHelp, setShowHelp] = useState<Record<number, boolean>>({})
@@ -169,7 +169,7 @@ export function FunnelBuilderUserFriendly({ onSave, onCancel, initialData }: Fun
     if (template) {
       setName(template.name)
       setDescription(template.description)
-      setSteps(template.steps.map(s => ({ ...s })))
+      setSteps(template.steps.map(s => ({ ...s })) as FunnelStep[])
       setSelectedTemplate(templateKey)
       setShowTemplates(false)
     }
@@ -569,8 +569,8 @@ function StepEditor({ step, index: _index, isEditing, onEdit, onSave, onCancel, 
   const [name, setName] = useState(step.name)
   const [conditionType, setConditionType] = useState(step.condition.type)
   const [eventType, setEventType] = useState(step.condition.event_type || '')
-  const [fieldName, setFieldName] = useState(step.condition.field_name || '')
-  const [formId, setFormId] = useState(step.condition.form_id || '')
+  const [fieldName] = useState(step.condition.field_name || '')
+  const [formId] = useState(step.condition.form_id || '')
   const existingData = step.condition.data || {}
   const existingDataEntries = Object.entries(existingData)
   const [dataKey, setDataKey] = useState(existingDataEntries.length > 0 ? existingDataEntries[0][0] : '')

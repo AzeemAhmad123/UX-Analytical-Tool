@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronLeft, ChevronRight, FastForward, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
+import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import '../../components/dashboard/Dashboard.css'
@@ -1433,11 +1433,6 @@ export function SessionReplayPlayer() {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${milliseconds}`
   }
   
-  // Old formatTime function (kept for backward compatibility)
-  const formatTimeOld = (timestamp: number) => {
-    const date = new Date(timestamp)
-    return date.toLocaleTimeString()
-  }
 
   // Convert raw events into user-friendly descriptions with metadata
   const parseEventDescription = (event: any): { 
