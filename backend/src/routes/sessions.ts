@@ -279,9 +279,41 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })
     }
 
+    console.log(`✅ Session found:`, {
+      sessionDbId: session.id,
+      sessionId: session.session_id,
+      projectId: session.project_id,
+      startTime: session.start_time
+    })
+
+    // Debug: Check if snapshots exist with direct query
+    const { data: directSnapshots, error: directError } = await supabase
+      .from('session_snapshots')
+      .select('id, session_id, snapshot_count, created_at')
+      .eq('session_id', session.id)
+      .limit(5)
+    
+    console.log(`🔍 Direct snapshot query result:`, {
+      sessionDbId: session.id,
+      snapshotCount: directSnapshots?.length || 0,
+      hasError: !!directError,
+      errorMessage: directError?.message,
+      snapshotIds: directSnapshots?.map((s: any) => ({
+        id: s.id,
+        session_id: s.session_id,
+        count: s.snapshot_count
+      })) || []
+    })
+
     // Get all snapshots for this session with timeout handling
     let snapshots: any[]
     try {
+      console.log(`🔍 Looking up snapshots for session:`, {
+        sessionDbId: session.id,
+        sessionId: session.session_id,
+        projectId: session.project_id
+      })
+      
       // Use Promise.race to add timeout, but also catch Supabase query timeouts
       snapshots = await Promise.race([
         getSessionSnapshots(session.id).catch((err: any) => {
@@ -307,7 +339,11 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       }
     }
 
-    console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`)
+    console.log(`📦 Retrieved ${snapshots.length} snapshot batches for session ${session.id}`, {
+      sessionDbId: session.id,
+      sessionId: session.session_id,
+      snapshotIds: snapshots.map((s: any) => s.id)
+    })
     
     // If no snapshots found, log warning but continue (session might be new or snapshots still uploading)
     if (snapshots.length === 0) {
@@ -326,13 +362,18 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     
     for (const snapshot of snapshots) {
       try {
+        const rawData = snapshot.snapshot_data
         console.log(`📄 Processing snapshot ${snapshot.id}`, {
           snapshotCount: snapshot.snapshot_count,
           isInitial: snapshot.is_initial_snapshot,
-          dataType: typeof snapshot.snapshot_data,
-          isBuffer: Buffer.isBuffer(snapshot.snapshot_data),
-          dataLength: typeof snapshot.snapshot_data === 'string' ? snapshot.snapshot_data.length : 
-                     Buffer.isBuffer(snapshot.snapshot_data) ? snapshot.snapshot_data.length : 'unknown'
+          dataType: typeof rawData,
+          isBuffer: Buffer.isBuffer(rawData),
+          dataLength: typeof rawData === 'string' ? rawData.length : 
+                     Buffer.isBuffer(rawData) ? rawData.length : 'unknown',
+          firstChars: typeof rawData === 'string' ? rawData.substring(0, 50) : 'not string',
+          firstBytes: typeof rawData === 'string' && rawData.length > 0 ? 
+                     Array.from(Buffer.from(rawData.substring(0, Math.min(20, rawData.length)), 'latin1'))
+                       .map(b => b.toString(16).padStart(2, '0')).join(' ') : 'N/A'
         })
         
         // getSessionSnapshots now returns strings (converted from hex BYTEA)
@@ -340,54 +381,149 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         let events: any[] = []
         const snapshotString = snapshot.snapshot_data
         
+        // Validate snapshot string
+        if (!snapshotString || typeof snapshotString !== 'string' || snapshotString.length === 0) {
+          console.error(`❌ Invalid snapshot data for ${snapshot.id}:`, {
+            type: typeof snapshotString,
+            length: snapshotString?.length || 0,
+            isNull: snapshotString === null,
+            isUndefined: snapshotString === undefined
+          })
+          continue
+        }
+        
         // Log what we're trying to decode
+        const firstChars = snapshotString.substring(0, Math.min(100, snapshotString.length))
+        const charCodes = snapshotString.substring(0, Math.min(20, snapshotString.length))
+          .split('').map((c: string) => c.charCodeAt(0))
+        const firstBytes = Array.from(Buffer.from(snapshotString.substring(0, Math.min(20, snapshotString.length)), 'latin1'))
+          .map(b => b.toString(16).padStart(2, '0')).join(' ')
+        
         console.log(`🔍 Attempting to decode snapshot ${snapshot.id}:`, {
           stringLength: snapshotString.length,
-          firstChars: snapshotString.substring(0, 100),
+          firstChars: firstChars,
           startsWithBracket: snapshotString.trim().startsWith('[') || snapshotString.trim().startsWith('{'),
-          charCodes: snapshotString.substring(0, 10).split('').map((c: string) => c.charCodeAt(0))
+          charCodes: charCodes,
+          firstBytes: firstBytes,
+          looksLikeHex: /^[0-9a-fA-F\s]+$/.test(firstChars),
+          hasNullBytes: charCodes.includes(0)
         })
         
         try {
-          // Try LZString decompression first (SDK sends compressed data)
-          const decompressed = LZString.decompress(snapshotString)
-          if (decompressed && decompressed.length > 0) {
-            try {
-              events = JSON.parse(decompressed)
-              console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
-                decompressedLength: decompressed.length,
-                eventCount: Array.isArray(events) ? events.length : 1
-              })
-            } catch (parseError: any) {
-              console.error(`❌ Failed to parse LZString decompressed data for snapshot ${snapshot.id}:`, parseError.message)
-              throw parseError
-            }
-          } else {
-            // LZString returned null/empty - try parsing as JSON directly
+          // Check if it's already valid JSON (not compressed)
+          const trimmed = snapshotString.trim()
+          const isJsonLike = trimmed.startsWith('[') || trimmed.startsWith('{')
+          
+          if (isJsonLike) {
+            // Try parsing as JSON first (might be stored as uncompressed JSON)
             try {
               events = JSON.parse(snapshotString)
-              console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (not LZString compressed)`, {
+              console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (uncompressed)`, {
                 dataLength: snapshotString.length,
                 eventCount: Array.isArray(events) ? events.length : 1
               })
             } catch (jsonError: any) {
-              console.error(`❌ Failed to parse snapshot ${snapshot.id} as JSON:`, {
-                error: jsonError.message,
-                stringLength: snapshotString.length,
-                firstChars: snapshotString.substring(0, 200),
-                isLZString: snapshotString.length > 0 && !snapshotString.trim().startsWith('[') && !snapshotString.trim().startsWith('{')
-              })
-              throw jsonError
+              // JSON parse failed, try LZString decompression
+              console.log(`⚠️ JSON parse failed, trying LZString decompression for snapshot ${snapshot.id}`)
+              const decompressed = LZString.decompress(snapshotString)
+              if (decompressed && decompressed.length > 0) {
+                events = JSON.parse(decompressed)
+                console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+                  decompressedLength: decompressed.length,
+                  eventCount: Array.isArray(events) ? events.length : 1
+                })
+              } else {
+                throw new Error('Both JSON parse and LZString decompression failed')
+              }
+            }
+          } else {
+            // Doesn't look like JSON, try LZString decompression first (SDK sends compressed data)
+            const decompressed = LZString.decompress(snapshotString)
+            if (decompressed && decompressed.length > 0) {
+              try {
+                events = JSON.parse(decompressed)
+                console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+                  decompressedLength: decompressed.length,
+                  eventCount: Array.isArray(events) ? events.length : 1
+                })
+              } catch (parseError: any) {
+                console.error(`❌ Failed to parse LZString decompressed data for snapshot ${snapshot.id}:`, parseError.message)
+                // Last resort: try parsing original string as JSON
+                try {
+                  events = JSON.parse(snapshotString)
+                  console.log(`✅ Fallback: Parsed original string as JSON for snapshot ${snapshot.id}`)
+                } catch {
+                  throw parseError
+                }
+              }
+            } else {
+              // LZString returned null/empty - try parsing as JSON directly (might be corrupted or different format)
+              try {
+                events = JSON.parse(snapshotString)
+                console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (LZString returned null)`, {
+                  dataLength: snapshotString.length,
+                  eventCount: Array.isArray(events) ? events.length : 1
+                })
+              } catch (jsonError: any) {
+                console.error(`❌ Failed to parse snapshot ${snapshot.id} as JSON:`, {
+                  error: jsonError.message,
+                  stringLength: snapshotString.length,
+                  firstChars: snapshotString.substring(0, 200),
+                  firstBytes: Array.from(Buffer.from(snapshotString.substring(0, 50), 'latin1')).map(b => b.toString(16).padStart(2, '0')).join(' ')
+                })
+                throw jsonError
+              }
             }
           }
         } catch (error: any) {
           console.error(`❌ Failed to decode snapshot ${snapshot.id}:`, {
             error: error.message,
+            errorName: error.name,
             stringLength: snapshotString.length,
-            firstChars: snapshotString.substring(0, 200),
-            errorStack: error.stack
+            firstChars: snapshotString.substring(0, Math.min(200, snapshotString.length)),
+            firstBytes: snapshotString.length > 0 ? Array.from(Buffer.from(snapshotString.substring(0, Math.min(50, snapshotString.length)), 'latin1')).map(b => b.toString(16).padStart(2, '0')).join(' ') : 'empty',
+            lastChars: snapshotString.length > 50 ? snapshotString.substring(snapshotString.length - 50) : snapshotString,
+            errorStack: error.stack?.substring(0, 500)
           })
-          continue // Skip this snapshot
+          
+          // Try one more fallback: maybe the data is base64 encoded?
+          try {
+            const base64Decoded = Buffer.from(snapshotString, 'base64').toString('latin1')
+            const decompressed = LZString.decompress(base64Decoded)
+            if (decompressed && decompressed.length > 0) {
+              events = JSON.parse(decompressed)
+              console.log(`✅ Fallback: Base64 decoded and LZString decompressed snapshot ${snapshot.id}`)
+            } else {
+              events = JSON.parse(base64Decoded)
+              console.log(`✅ Fallback: Base64 decoded and parsed as JSON snapshot ${snapshot.id}`)
+            }
+          } catch (fallbackError: any) {
+            console.error(`❌ All decoding strategies failed for snapshot ${snapshot.id}`)
+            continue // Skip this snapshot
+          }
+        }
+        
+        // Handle Buffer object format (Supabase serializes Buffers as JSON)
+        // If events is a Buffer object, convert it back to actual data
+        if (events && typeof events === 'object' && events.type === 'Buffer' && Array.isArray(events.data)) {
+          console.log(`🔧 Detected Buffer object format, converting to actual data for snapshot ${snapshot.id}`)
+          try {
+            // Convert Buffer data array back to string
+            const bufferString = Buffer.from(events.data).toString('latin1')
+            // Now try to decompress/parse the actual data
+            const decompressed = LZString.decompress(bufferString)
+            if (decompressed && decompressed.length > 0) {
+              events = JSON.parse(decompressed)
+              console.log(`✅ Decompressed Buffer data for snapshot ${snapshot.id}`)
+            } else {
+              // Try parsing as JSON directly
+              events = JSON.parse(bufferString)
+              console.log(`✅ Parsed Buffer data as JSON for snapshot ${snapshot.id}`)
+            }
+          } catch (bufferError: any) {
+            console.error(`❌ Failed to convert Buffer object for snapshot ${snapshot.id}:`, bufferError.message)
+            continue
+          }
         }
         
         // Flatten events array (handle nested arrays)
@@ -399,13 +535,21 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             decoded = events
           }
         } else if (events && typeof events === 'object') {
+          // Check if it's still a Buffer object (shouldn't happen after conversion above, but just in case)
+          if (events.type === 'Buffer' && Array.isArray(events.data)) {
+            console.error(`❌ Still have Buffer object after conversion for snapshot ${snapshot.id}`)
+            continue
+          }
           decoded = [events] // Single event object
         }
         
         if (decoded === null || decoded.length === 0) {
           console.error(`❌ Failed to decode snapshot ${snapshot.id}`, {
             snapshotId: snapshot.id,
-            inputLength: snapshotString.length
+            inputLength: snapshotString.length,
+            eventsType: typeof events,
+            isArray: Array.isArray(events),
+            eventsKeys: events && typeof events === 'object' ? Object.keys(events) : []
           })
           continue
         }
@@ -534,9 +678,14 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       events: allEvents.length > 0 ? allEvents : [], // Also include as 'events' for compatibility
       total_snapshots: allEvents.length,
       snapshot_batches: snapshots.length,
-      // Include debug info if decoding failed
-      ...(allEvents.length === 0 && snapshots.length > 0 ? {
-        _debug: {
+      // Include debug info for troubleshooting
+      _debug: {
+        sessionDbId: session.id,
+        sessionId: session.session_id,
+        rawSnapshotBatches: snapshots.length,
+        decodedEvents: allEvents.length,
+        directQueryResult: directSnapshots?.length || 0,
+        ...(allEvents.length === 0 && snapshots.length > 0 ? {
           message: 'Snapshots exist but failed to decode',
           snapshotCount: snapshots.length,
           possibleCauses: [
@@ -544,8 +693,15 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             'Compression format not recognized',
             'Encoding issue during conversion'
           ]
-        }
-      } : {})
+        } : allEvents.length === 0 && snapshots.length === 0 ? {
+          message: 'No snapshots found in database',
+          possibleCauses: [
+            'Snapshots not yet uploaded',
+            'Session ID mismatch',
+            'Snapshots stored with different session_id'
+          ]
+        } : {})
+      }
     })
   } catch (error: any) {
     console.error('Error in /api/sessions/:projectId/:sessionId:', error)

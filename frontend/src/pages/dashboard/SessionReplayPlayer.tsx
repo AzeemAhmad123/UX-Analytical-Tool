@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronLeft, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus } from 'lucide-react'
+import { Play, Pause, ChevronLeft, ChevronRight, FastForward, User, MapPin, Calendar, Tag, Clock, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import '../../components/dashboard/Dashboard.css'
@@ -21,6 +21,10 @@ export function SessionReplayPlayer() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
+  const [skipInactivity, setSkipInactivity] = useState(false)
+  const [isSkippingInactivity, setIsSkippingInactivity] = useState(false)
+  const basePlaybackSpeedRef = useRef(1) // Use ref to avoid stale closures
+  const inactivityCheckIntervalRef = useRef<number | null>(null)
   const playerRef = useRef<Replayer | null>(null)
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
@@ -29,6 +33,7 @@ export function SessionReplayPlayer() {
   const [activeFilter, setActiveFilter] = useState<'events' | 'gestures' | 'screens'>('events')
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('web')
   const [selectedEventIndex, setSelectedEventIndex] = useState<number | null>(null)
+  const [bookmarkedSessions, setBookmarkedSessions] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     let isMounted = true
@@ -71,7 +76,8 @@ export function SessionReplayPlayer() {
         snapshotsCount: snapshots.length,
         hasContainer: !!replayContainerRef.current,
         containerReady: replayContainerRef.current.offsetWidth > 0,
-        platform: selectedPlatform
+        platform: selectedPlatform,
+        skipInactivity: skipInactivity
       })
       // Small delay to ensure DOM is ready
       const timer = setTimeout(() => {
@@ -105,6 +111,18 @@ export function SessionReplayPlayer() {
             if ((playerRef.current as any)._mouseMoveInterval) {
               clearInterval((playerRef.current as any)._mouseMoveInterval)
             }
+            // Clean up inactivity check interval
+            if ((playerRef.current as any)._inactivityCheckInterval) {
+              clearInterval((playerRef.current as any)._inactivityCheckInterval)
+            }
+            if (inactivityCheckIntervalRef.current) {
+              clearInterval(inactivityCheckIntervalRef.current)
+              inactivityCheckIntervalRef.current = null
+            }
+            // Clean up visibility check interval
+            if ((playerRef.current as any)._visibilityCheckInterval) {
+              clearInterval((playerRef.current as any)._visibilityCheckInterval)
+            }
             // No need to restore - we're not overriding anything globally anymore
             playerRef.current.pause()
             playerRef.current = null
@@ -117,7 +135,7 @@ export function SessionReplayPlayer() {
         }
       }
     }
-  }, [snapshots.length, loading, selectedPlatform]) // Re-initialize when platform changes
+  }, [snapshots.length, loading, selectedPlatform, skipInactivity]) // Re-initialize when platform or skipInactivity changes
 
   const loadAllSessions = async () => {
     if (!projectId) return
@@ -261,8 +279,14 @@ export function SessionReplayPlayer() {
         totalSnapshots: data.total_snapshots,
         snapshotBatches: data.snapshot_batches,
         dataKeys: Object.keys(data),
+        debugInfo: data._debug, // Log debug info from backend
         fullData: data // Log full response for debugging
       })
+      
+      // Log debug info if available
+      if (data._debug) {
+        console.log('🔍 Backend Debug Info:', data._debug)
+      }
       
       let events: any[] = []
       
@@ -646,11 +670,12 @@ export function SessionReplayPlayer() {
 
       // Create Replayer instance with validated events
       // Enhanced cursor visualization like Hotjar/UXCam
+      // Note: We don't use skipInactive from rrweb - we implement our own dynamic speed control
       const replayer = new Replayer(validSnapshots, {
         root: wrapper,
         liveMode: false,
-        speed: playbackSpeed,
-        skipInactive: false,
+        speed: basePlaybackSpeedRef.current, // Use base speed, we'll dynamically adjust
+        skipInactive: false, // We handle this ourselves
         showWarning: true,
         // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
@@ -668,6 +693,15 @@ export function SessionReplayPlayer() {
       
       // Restore original createElement after replayer is created
       document.createElement = originalCreateElement
+
+      // Ensure iframe doesn't cover controls - set lower z-index
+      setTimeout(() => {
+        const iframe = wrapper.querySelector('iframe')
+        if (iframe) {
+          (iframe as any).style.zIndex = '1'
+          console.log('✅ Set iframe z-index to 1 to keep controls visible')
+        }
+      }, 500)
 
       // Add custom cursor overlay for better visibility
       // This creates a visible cursor element that follows mouse movements
@@ -1101,6 +1135,121 @@ export function SessionReplayPlayer() {
       // Store interval for cleanup
       ;(replayer as any)._timeUpdateInterval = timeUpdateInterval
 
+      // Skip Inactivity Detection and Speed Control
+      // This implements UXCam-style skip inactivity by dynamically changing playback speed
+      if (skipInactivity) {
+        const INACTIVITY_THRESHOLD = 3000 // 3 seconds in milliseconds
+        const SKIP_SPEED = 12 // 12x speed during inactivity
+        
+        const checkInactivity = () => {
+          if (!playerRef.current || !isPlaying || validSnapshots.length === 0) {
+            // If not playing or no snapshots, ensure we're at normal speed
+            if (isSkippingInactivity) {
+              try {
+                replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                setIsSkippingInactivity(false)
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+            return
+          }
+          
+          try {
+            // Get current time from replayer timer (more accurate than state)
+            let currentTimestamp = 0
+            try {
+              const timer = (playerRef.current as any).timer
+              if (timer && timer.timeOffset !== undefined) {
+                currentTimestamp = timer.timeOffset
+              } else {
+                // Fallback to state if timer access fails
+                currentTimestamp = currentTime
+              }
+            } catch (e) {
+              // Fallback to state if timer access fails
+              currentTimestamp = currentTime
+            }
+            
+            // Find the last event that has occurred (timestamp <= currentTime)
+            let lastEventIndex = -1
+            let lastEventTimestamp = 0
+            for (let i = validSnapshots.length - 1; i >= 0; i--) {
+              const event = validSnapshots[i]
+              if (event && event.timestamp && event.timestamp <= currentTimestamp) {
+                lastEventIndex = i
+                lastEventTimestamp = event.timestamp
+                break
+              }
+            }
+            
+            // Find the next event that will occur (timestamp > currentTime)
+            let nextEventIndex = -1
+            let nextEventTimestamp = Infinity
+            for (let i = 0; i < validSnapshots.length; i++) {
+              const event = validSnapshots[i]
+              if (event && event.timestamp && event.timestamp > currentTimestamp) {
+                nextEventIndex = i
+                nextEventTimestamp = event.timestamp
+                break
+              }
+            }
+            
+            // Calculate time gap between last and next event
+            if (lastEventIndex >= 0 && nextEventIndex >= 0) {
+              const timeGap = nextEventTimestamp - lastEventTimestamp
+              const timeSinceLastEvent = currentTimestamp - lastEventTimestamp
+              const timeUntilNextEvent = nextEventTimestamp - currentTimestamp
+              
+              // Check if we're in an inactivity period (gap > 3 seconds and we're between events)
+              if (timeGap > INACTIVITY_THRESHOLD && timeUntilNextEvent > 100) {
+                // We're in an inactive period - speed up
+                if (!isSkippingInactivity) {
+                  try {
+                    replayer.setConfig({ speed: SKIP_SPEED })
+                    setIsSkippingInactivity(true)
+                    console.log('⏩ Skipping inactivity period', {
+                      gap: timeGap,
+                      timeSinceLast: timeSinceLastEvent,
+                      timeUntilNext: timeUntilNextEvent
+                    })
+                  } catch (e) {
+                    console.warn('Error setting skip speed:', e)
+                  }
+                }
+              } else {
+                // We're in an active period or near an event - normal speed
+                if (isSkippingInactivity) {
+                  try {
+                    replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                    setIsSkippingInactivity(false)
+                    console.log('▶️ Resuming normal speed')
+                  } catch (e) {
+                    console.warn('Error resetting speed:', e)
+                  }
+                }
+              }
+            } else if (nextEventIndex === -1) {
+              // No more events, return to normal speed
+              if (isSkippingInactivity) {
+                try {
+                  replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                  setIsSkippingInactivity(false)
+                } catch (e) {
+                  // Ignore errors
+                }
+              }
+            }
+          } catch (error) {
+            console.warn('Error checking inactivity:', error)
+          }
+        }
+        
+        // Check inactivity every 200ms for responsive speed changes
+        inactivityCheckIntervalRef.current = setInterval(checkInactivity, 200)
+        ;(replayer as any)._inactivityCheckInterval = inactivityCheckIntervalRef.current
+      }
+
       // Auto-play to show the replay immediately
       // Small delay to ensure container is ready
       setTimeout(() => {
@@ -1122,6 +1271,59 @@ export function SessionReplayPlayer() {
           replayer.play()
           setIsPlaying(true)
           console.log('✅ Auto-playing replay')
+          
+          // Ensure controls remain visible after playback starts
+          const ensureControlsVisible = () => {
+            const controls = document.getElementById('session-replay-controls')
+            if (controls) {
+              const controlEl = controls as HTMLElement
+              controlEl.style.display = 'flex'
+              controlEl.style.visibility = 'visible'
+              controlEl.style.opacity = '1'
+              controlEl.style.zIndex = '99999'
+              controlEl.style.position = 'absolute'
+              console.log('✅ Ensured controls are visible')
+            }
+            // Also ensure iframe doesn't cover controls - set very low z-index
+            const iframe = wrapper.querySelector('iframe')
+            if (iframe) {
+              const iframeEl = iframe as HTMLElement
+              iframeEl.style.zIndex = '1'
+              iframeEl.style.pointerEvents = 'auto'
+              console.log('✅ Set iframe z-index to 1')
+            }
+            // Ensure wrapper doesn't cover controls
+            if (wrapper) {
+              (wrapper as HTMLElement).style.zIndex = '1'
+              console.log('✅ Set wrapper z-index to 1')
+            }
+          }
+          
+          // Check immediately and after delays
+          ensureControlsVisible()
+          setTimeout(ensureControlsVisible, 100)
+          setTimeout(ensureControlsVisible, 500)
+          setTimeout(ensureControlsVisible, 1000)
+          
+          // Also check periodically to ensure controls stay visible
+          const visibilityCheckInterval = setInterval(() => {
+            const controls = document.getElementById('session-replay-controls')
+            if (controls) {
+              const controlEl = controls as HTMLElement
+              const computedStyle = window.getComputedStyle(controlEl)
+              if (computedStyle.display === 'none' || computedStyle.visibility === 'hidden' || parseFloat(computedStyle.opacity) < 0.1) {
+                controlEl.style.display = 'flex'
+                controlEl.style.visibility = 'visible'
+                controlEl.style.opacity = '1'
+                controlEl.style.zIndex = '99999'
+                controlEl.style.position = 'absolute'
+                console.log('⚠️ Controls were hidden, restored visibility')
+              }
+            }
+          }, 500)
+          
+          // Store interval for cleanup
+          ;(replayer as any)._visibilityCheckInterval = visibilityCheckInterval
           
           // Log wrapper content after delays to verify rendering
           setTimeout(() => {
@@ -1190,6 +1392,7 @@ export function SessionReplayPlayer() {
 
   const handleSpeedChange = (speed: number) => {
     setPlaybackSpeed(speed)
+    basePlaybackSpeedRef.current = speed // Update base speed ref
     
     // Handle video player
     if (hasVideo && videoPlayerRef.current) {
@@ -1198,8 +1401,11 @@ export function SessionReplayPlayer() {
     }
     
     // Handle rrweb replayer
+    // Only update if not currently skipping inactivity (skip speed takes priority)
     if (playerRef.current) {
-      playerRef.current.setConfig({ speed })
+      if (!isSkippingInactivity || !skipInactivity) {
+        playerRef.current.setConfig({ speed })
+      }
     }
   }
 
@@ -1563,37 +1769,31 @@ export function SessionReplayPlayer() {
         <div style={{ 
           padding: '1rem', 
           borderBottom: '1px solid #e5e7eb',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem'
+          fontWeight: '500',
+          color: '#111827',
+          fontSize: '0.875rem'
         }}>
-          <button 
-            onClick={() => navigate('/dashboard/sessions/list')}
-            style={{
-              padding: '0.5rem',
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
-            <ChevronLeft className="icon-small" />
-          </button>
-          <span style={{ fontWeight: '500', color: '#111827' }}>Session list</span>
+          Session
         </div>
         
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {sessions.map((s) => {
-            const isSelected = s.id === sessionId
+            const isSelected = s.id === sessionId || s.session_id === sessionId
             const duration = s.duration ? Math.round(s.duration / 1000) : 0
             const mins = Math.floor(duration / 60)
             const secs = duration % 60
+            const sessionKey = s.session_id || s.id
+            const isBookmarked = bookmarkedSessions.has(sessionKey)
             
             return (
               <div
                 key={s.id}
-                onClick={() => {
+                onClick={(e) => {
+                  // Don't navigate if clicking checkbox or bookmark
+                  if ((e.target as HTMLElement).closest('input[type="checkbox"]') || 
+                      (e.target as HTMLElement).closest('button')) {
+                    return
+                  }
                   // Use session_id (SDK session ID) for navigation, not database id
                   const sessionIdForNav = s.session_id || s.id
                   navigate(`/dashboard/sessions/${projectId}/${sessionIdForNav}`)
@@ -1602,25 +1802,70 @@ export function SessionReplayPlayer() {
                   padding: '0.75rem 1rem',
                   borderBottom: '1px solid #e5e7eb',
                   cursor: 'pointer',
-                  backgroundColor: isSelected ? '#f3f4f6' : 'white',
+                  backgroundColor: isSelected ? '#eff6ff' : 'white',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '0.75rem'
+                  gap: '0.5rem',
+                  transition: 'background-color 0.2s'
                 }}
                 onMouseEnter={(e) => !isSelected && (e.currentTarget.style.backgroundColor = '#f9fafb')}
                 onMouseLeave={(e) => !isSelected && (e.currentTarget.style.backgroundColor = 'white')}
               >
+                <input 
+                  type="checkbox" 
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                />
+                <Circle 
+                  className="icon-small" 
+                  style={{ 
+                    width: '8px', 
+                    height: '8px', 
+                    fill: isSelected ? '#3b82f6' : '#ef4444',
+                    color: isSelected ? '#3b82f6' : '#ef4444'
+                  }} 
+                />
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    const newBookmarked = new Set(bookmarkedSessions)
+                    if (isBookmarked) {
+                      newBookmarked.delete(sessionKey)
+                    } else {
+                      newBookmarked.add(sessionKey)
+                    }
+                    setBookmarkedSessions(newBookmarked)
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '0.25rem',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                >
+                  <Bookmark 
+                    className="icon-small" 
+                    style={{ 
+                      width: '14px', 
+                      height: '14px',
+                      fill: isBookmarked ? '#ef4444' : 'none',
+                      color: isBookmarked ? '#ef4444' : '#9ca3af'
+                    }} 
+                  />
+                </button>
                 {isSelected ? (
-                  <Pause className="icon-small" style={{ color: '#9333ea' }} />
+                  <Pause className="icon-small" style={{ color: '#3b82f6', width: '16px', height: '16px' }} />
                 ) : (
-                  <Play className="icon-small" style={{ color: '#6b7280' }} />
+                  <Play className="icon-small" style={{ color: '#6b7280', width: '16px', height: '16px' }} />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
                     {mins}:{secs.toString().padStart(2, '0')}
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {s.session_id?.substring(0, 20) || s.id.substring(0, 20)}...
+                    {s.session_id?.substring(0, 15) || s.id.substring(0, 15)}...
                   </div>
                   <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
                     Session {s.session_number || 'N/A'}
@@ -1629,6 +1874,58 @@ export function SessionReplayPlayer() {
               </div>
             )
           })}
+        </div>
+        
+        {/* Pagination */}
+        <div style={{ 
+          padding: '1rem', 
+          borderTop: '1px solid #e5e7eb',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '0.5rem'
+        }}>
+          <button style={{ 
+            padding: '0.25rem 0.5rem',
+            border: '1px solid #e5e7eb',
+            borderRadius: '4px',
+            background: 'white',
+            cursor: 'pointer',
+            fontSize: '0.875rem'
+          }}>
+            &lt;
+          </button>
+          <button style={{ 
+            padding: '0.25rem 0.5rem',
+            border: '1px solid #9333ea',
+            borderRadius: '4px',
+            background: '#9333ea',
+            color: 'white',
+            cursor: 'pointer',
+            fontSize: '0.875rem'
+          }}>
+            1
+          </button>
+          <button style={{ 
+            padding: '0.25rem 0.5rem',
+            border: '1px solid #e5e7eb',
+            borderRadius: '4px',
+            background: 'white',
+            cursor: 'pointer',
+            fontSize: '0.875rem'
+          }}>
+            2
+          </button>
+          <button style={{ 
+            padding: '0.25rem 0.5rem',
+            border: '1px solid #e5e7eb',
+            borderRadius: '4px',
+            background: 'white',
+            cursor: 'pointer',
+            fontSize: '0.875rem'
+          }}>
+            &gt;
+          </button>
         </div>
       </div>
 
@@ -1641,243 +1938,50 @@ export function SessionReplayPlayer() {
           borderBottom: '1px solid #e5e7eb',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between'
+          gap: '1.5rem'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            {session && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                  <User className="icon-small" />
-                  <span>{session.session_id?.substring(0, 20) || session.id.substring(0, 20)}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                  <MapPin className="icon-small" />
-                  <span>
-                    {(() => {
-                      // Try multiple sources for location (check all possible locations)
-                      const city = (session as any).location?.city ||
-                                   session.device_info?.city || 
-                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
-                                   session.user_properties?.city || 
+          {session && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <User className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>{session.session_id || session.id}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>
+                  {(() => {
+                    const city = (session as any).location?.city ||
+                                 session.device_info?.city || 
+                                 (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                                 session.user_properties?.city || 
+                                 null
+                    const country = (session as any).location?.country ||
+                                   session.device_info?.country || 
+                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                                   session.user_properties?.country || 
                                    null
-                      const country = (session as any).location?.country ||
-                                     session.device_info?.country || 
-                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
-                                     session.user_properties?.country || 
-                                     null
-                      if (city && country) {
-                        return `${city}, ${country}`
-                      } else if (city) {
-                        return city
-                      } else if (country) {
-                        return country
-                      }
-                      return 'N/A, N/A'
-                    })()}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                  <Calendar className="icon-small" />
-                  <span>{new Date(session.start_time).toLocaleDateString()}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#6b7280' }}>
-                  <Tag className="icon-small" />
-                  <span>Labels</span>
-                </div>
-              </>
-            )}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <button
-              onClick={togglePlay}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: '#9333ea',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              {isPlaying ? <Pause className="icon-small" /> : <Play className="icon-small" />}
-            </button>
-            <button
-              onClick={() => handleSpeedChange(playbackSpeed === 1 ? 2 : playbackSpeed === 2 ? 4 : 1)}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: 'white',
-                border: '1px solid #e5e7eb',
-                borderRadius: '6px',
-                fontSize: '0.875rem',
-                cursor: 'pointer'
-              }}
-            >
-              {playbackSpeed}x
-            </button>
-          </div>
+                    if (city && country) {
+                      return `${city}, ${country}`
+                    } else if (city) {
+                      return city
+                    } else if (country) {
+                      return country
+                    }
+                    return 'Unknown'
+                  })()}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>Labels</span>
+              </div>
+            </>
+          )}
         </div>
-
-        {/* Progress/Timeline Bar */}
-        {duration > 0 && (
-          <div style={{
-            padding: '0.75rem 1.5rem',
-            backgroundColor: 'white',
-            borderBottom: '1px solid #e5e7eb',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '1rem'
-          }}>
-            <div style={{
-              flex: 1,
-              height: '8px',
-              backgroundColor: '#e5e7eb',
-              borderRadius: '4px',
-              position: 'relative',
-              cursor: 'pointer',
-              overflow: 'visible'
-            }}
-            onMouseDown={(e) => {
-              e.preventDefault()
-              const handleMouseMove = (moveEvent: MouseEvent) => {
-                const rect = e.currentTarget.getBoundingClientRect()
-                const clickX = moveEvent.clientX - rect.left
-                const percentage = Math.max(0, Math.min(1, clickX / rect.width))
-                const newTime = percentage * duration
-                
-                // Handle video player
-                if (hasVideo && videoPlayerRef.current) {
-                  videoPlayerRef.current.currentTime = newTime / 1000
-                  setCurrentTime(newTime)
-                  return
-                }
-                
-                // Handle rrweb replayer - use goto method for seeking
-                if (playerRef.current) {
-                  playerRef.current.pause()
-                  setIsPlaying(false)
-                  // Use goto to seek to specific time (in milliseconds)
-                  try {
-                    (playerRef.current as any).goto(newTime)
-                    setCurrentTime(newTime)
-                    console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
-                  } catch (error) {
-                    // Fallback to play if goto doesn't work
-                    console.warn('goto() not available, using play():', error)
-                    playerRef.current.play(newTime)
-                    setCurrentTime(newTime)
-                    setIsPlaying(true)
-                  }
-                }
-              }
-              
-              const handleMouseUp = () => {
-                document.removeEventListener('mousemove', handleMouseMove)
-                document.removeEventListener('mouseup', handleMouseUp)
-              }
-              
-              document.addEventListener('mousemove', handleMouseMove)
-              document.addEventListener('mouseup', handleMouseUp)
-              
-              // Also handle initial click
-              const rect = e.currentTarget.getBoundingClientRect()
-              const clickX = e.clientX - rect.left
-              const percentage = Math.max(0, Math.min(1, clickX / rect.width))
-              const newTime = percentage * duration
-              
-              if (hasVideo && videoPlayerRef.current) {
-                videoPlayerRef.current.currentTime = newTime / 1000
-                setCurrentTime(newTime)
-              } else if (playerRef.current) {
-                playerRef.current.pause()
-                setIsPlaying(false)
-                // Use goto to seek to specific time (in milliseconds)
-                try {
-                  (playerRef.current as any).goto(newTime)
-                  setCurrentTime(newTime)
-                  console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
-                } catch (error) {
-                  // Fallback to play if goto doesn't work
-                  console.warn('goto() not available, using play():', error)
-                  playerRef.current.play(newTime)
-                  setCurrentTime(newTime)
-                  setIsPlaying(true)
-                }
-              }
-            }}
-            onClick={(e) => {
-              e.stopPropagation()
-              if (duration > 0) {
-                const rect = e.currentTarget.getBoundingClientRect()
-                const clickX = e.clientX - rect.left
-                const percentage = Math.max(0, Math.min(1, clickX / rect.width))
-                const newTime = percentage * duration
-                
-                // Handle video player
-                if (hasVideo && videoPlayerRef.current) {
-                  videoPlayerRef.current.currentTime = newTime / 1000
-                  setCurrentTime(newTime)
-                  return
-                }
-                
-                // Handle rrweb replayer - use goto method for seeking
-                if (playerRef.current) {
-                  playerRef.current.pause()
-                  setIsPlaying(false)
-                  // Use goto to seek to specific time (in milliseconds)
-                  try {
-                    (playerRef.current as any).goto(newTime)
-                    setCurrentTime(newTime)
-                    console.log(`⏩ Seeking to ${newTime}ms (${formatDuration(newTime)})`)
-                  } catch (error) {
-                    // Fallback to play if goto doesn't work
-                    console.warn('goto() not available, using play():', error)
-                    playerRef.current.play(newTime)
-                    setCurrentTime(newTime)
-                    setIsPlaying(true)
-                  }
-                }
-              }
-            }}
-            >
-              <div style={{
-                height: '100%',
-                width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                backgroundColor: '#9333ea',
-                borderRadius: '4px',
-                transition: 'width 0.05s linear'
-              }} />
-              <div style={{
-                position: 'absolute',
-                left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
-                top: '50%',
-                transform: 'translate(-50%, -50%)',
-                width: '16px',
-                height: '16px',
-                backgroundColor: '#9333ea',
-                borderRadius: '50%',
-                border: '2px solid white',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-                cursor: 'grab',
-                transition: 'left 0.05s linear'
-              }} />
-            </div>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              fontSize: '0.875rem',
-              color: '#6b7280',
-              minWidth: '120px',
-              justifyContent: 'flex-end'
-            }}>
-              <Clock className="icon-small" style={{ width: '14px', height: '14px' }} />
-              <span>{formatDuration(currentTime)} / {formatDuration(duration)}</span>
-            </div>
-          </div>
-        )}
 
         {/* Replay Container */}
         <div style={{ 
@@ -1888,7 +1992,8 @@ export function SessionReplayPlayer() {
           justifyContent: selectedPlatform === 'mobile' ? 'center' : 'stretch',
           overflow: 'hidden',
           backgroundColor: '#f9fafb',
-          minHeight: 0
+          minHeight: 0,
+          position: 'relative' // Needed for absolute positioning of controls
         }}>
           <div 
             ref={replayContainerRef}
@@ -2032,8 +2137,365 @@ export function SessionReplayPlayer() {
               </div>
             )}
             {/* Replay player will be rendered here by initializePlayer() when snapshots.length > 0 */}
+            
+            {/* Skip Inactivity Indicator */}
+            {isSkippingInactivity && skipInactivity && (
+              <div style={{
+                position: 'absolute',
+                top: '1rem',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                backgroundColor: 'rgba(147, 51, 234, 0.95)',
+                color: 'white',
+                padding: '0.5rem 1rem',
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                zIndex: 1000,
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
+                animation: 'pulse 2s ease-in-out infinite',
+                pointerEvents: 'none'
+              }}>
+                <FastForward style={{ width: '16px', height: '16px' }} />
+                <span>Skipping inactivity...</span>
+              </div>
+            )}
+            
+          </div>
+          
+          {/* Media Controls Container - White Container with Progress Bar Above - Like Picture 2 */}
+          <div 
+            id="session-replay-controls"
+            style={{
+              position: 'absolute',
+              bottom: '0.5rem',
+              left: '0.5rem',
+              right: '0.5rem',
+              backgroundColor: 'white',
+              padding: '0',
+              display: 'flex',
+              flexDirection: 'column',
+              zIndex: 99999,
+              pointerEvents: 'auto',
+              opacity: 1,
+              visibility: 'visible',
+              borderRadius: '8px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              border: '1px solid #e5e7eb',
+              overflow: 'hidden'
+            }}
+          >
+            {/* Progress Bar Above Controls - Attached to Container */}
+            <div 
+              style={{
+                width: '100%',
+                height: '4px',
+                backgroundColor: '#9333ea',
+                position: 'relative',
+                cursor: 'pointer'
+              }}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (duration > 0) {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const clickX = e.clientX - rect.left
+                  const percentage = Math.max(0, Math.min(1, clickX / rect.width))
+                  const newTime = percentage * duration
+                  
+                  if (hasVideo && videoPlayerRef.current) {
+                    videoPlayerRef.current.currentTime = newTime / 1000
+                    setCurrentTime(newTime)
+                  } else if (playerRef.current) {
+                    playerRef.current.pause()
+                    setIsPlaying(false)
+                    try {
+                      (playerRef.current as any).goto(newTime)
+                      setCurrentTime(newTime)
+                    } catch (error) {
+                      playerRef.current.play(newTime)
+                      setCurrentTime(newTime)
+                      setIsPlaying(true)
+                    }
+                  }
+                }
+              }}
+            >
+              {/* Blue progress overlay */}
+              <div 
+                style={{
+                  height: '100%',
+                  width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                  backgroundColor: '#3b82f6',
+                  transition: 'width 0.05s linear',
+                  position: 'relative'
+                }}
+              />
+              {/* Blue circular playhead */}
+              {duration > 0 && (
+                <div style={{
+                  position: 'absolute',
+                  left: `${(currentTime / duration) * 100}%`,
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  width: '12px',
+                  height: '12px',
+                  backgroundColor: '#3b82f6',
+                  borderRadius: '50%',
+                  border: '2px solid white',
+                  cursor: 'grab',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                  pointerEvents: 'none'
+                }} />
+              )}
+            </div>
+            
+            {/* Control Buttons Row */}
+            <div style={{
+              padding: '0.75rem 1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem'
+            }}>
+              
+              {/* Playback Controls */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Skip backward 5 seconds
+                  if (playerRef.current) {
+                    const newTime = Math.max(0, currentTime - 5000)
+                    try {
+                      (playerRef.current as any).goto(newTime)
+                      setCurrentTime(newTime)
+                    } catch (error) {
+                      playerRef.current.play(newTime)
+                      setCurrentTime(newTime)
+                    }
+                  } else if (hasVideo && videoPlayerRef.current) {
+                    videoPlayerRef.current.currentTime = Math.max(0, (currentTime - 5000) / 1000)
+                    setCurrentTime(Math.max(0, currentTime - 5000))
+                  }
+                }}
+                style={{
+                  background: '#f3f4f6',
+                  border: 'none',
+                  color: '#1f2937',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                <SkipBack style={{ width: '18px', height: '18px' }} />
+              </button>
+              
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  togglePlay()
+                }}
+                style={{
+                  background: '#3b82f6',
+                  border: 'none',
+                  color: 'white',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                {isPlaying ? <Pause style={{ width: '18px', height: '18px' }} /> : <Play style={{ width: '18px', height: '18px' }} />}
+              </button>
+              
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Skip forward 5 seconds
+                  if (playerRef.current) {
+                    const newTime = Math.min(duration, currentTime + 5000)
+                    try {
+                      (playerRef.current as any).goto(newTime)
+                      setCurrentTime(newTime)
+                    } catch (error) {
+                      playerRef.current.play(newTime)
+                      setCurrentTime(newTime)
+                    }
+                  } else if (hasVideo && videoPlayerRef.current) {
+                    videoPlayerRef.current.currentTime = Math.min(duration / 1000, (currentTime + 5000) / 1000)
+                    setCurrentTime(Math.min(duration, currentTime + 5000))
+                  }
+                }}
+                style={{
+                  background: '#f3f4f6',
+                  border: 'none',
+                  color: '#1f2937',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                <SkipForward style={{ width: '18px', height: '18px' }} />
+              </button>
+              
+              {/* Time Display */}
+              <div style={{
+                color: '#6b7280',
+                fontSize: '0.875rem',
+                minWidth: '100px',
+                textAlign: 'center'
+              }}>
+                {formatDuration(currentTime)}/{formatDuration(duration)} <span style={{ color: '#9333ea' }}>unknown</span>
+              </div>
+              
+              {/* Skip Inactivity */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const newSkipInactivity = !skipInactivity
+                  setSkipInactivity(newSkipInactivity)
+                  setIsSkippingInactivity(false)
+                  if (!newSkipInactivity && playerRef.current) {
+                    try {
+                      playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+                    } catch (e) {
+                      // Ignore errors
+                    }
+                  }
+                }}
+                style={{
+                  background: 'white',
+                  border: '1px solid #e5e7eb',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '20px',
+                  fontSize: '0.875rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem'
+                }}
+              >
+                <FastForward style={{ width: '14px', height: '14px', color: '#3b82f6' }} />
+                Skip Inactivity: {skipInactivity ? 'On' : 'Off'}
+              </button>
+              
+              {/* Speed Selector */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleSpeedChange(playbackSpeed === 1 ? 2 : playbackSpeed === 2 ? 4 : 1)
+                }}
+                style={{
+                  background: 'white',
+                  border: '1px solid #e5e7eb',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '20px',
+                  fontSize: '0.875rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem'
+                }}
+              >
+                {playbackSpeed}x
+                <ChevronRight style={{ width: '12px', height: '12px', transform: 'rotate(90deg)' }} />
+              </button>
+              
+              {/* Chat/Comments */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Chat/Comments functionality
+                }}
+                style={{
+                  background: '#f3f4f6',
+                  border: 'none',
+                  color: '#1f2937',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                <MessageCircle style={{ width: '18px', height: '18px' }} />
+              </button>
+              
+              {/* Settings */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  // Settings functionality
+                }}
+                style={{
+                  background: '#f3f4f6',
+                  border: 'none',
+                  color: '#1f2937',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                <Settings style={{ width: '18px', height: '18px' }} />
+              </button>
+              
+              {/* Fullscreen */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (replayContainerRef.current) {
+                    if (document.fullscreenElement) {
+                      document.exitFullscreen()
+                    } else {
+                      replayContainerRef.current.requestFullscreen()
+                    }
+                  }
+                }}
+                style={{
+                  background: '#f3f4f6',
+                  border: 'none',
+                  color: '#1f2937',
+                  cursor: 'pointer',
+                  padding: '0.5rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: '50%',
+                  width: '36px',
+                  height: '36px',
+                  justifyContent: 'center'
+                }}
+              >
+                <Maximize style={{ width: '18px', height: '18px' }} />
+              </button>
+            </div>
           </div>
         </div>
+
       </div>
 
       {/* Right Panel - Activity Timeline */}
@@ -2059,15 +2521,15 @@ export function SessionReplayPlayer() {
                 padding: '0.75rem 1rem',
                 backgroundColor: 'transparent',
                 border: 'none',
-                borderBottom: activeTab === tab ? '2px solid #9333ea' : '2px solid transparent',
-                color: activeTab === tab ? '#9333ea' : '#6b7280',
+                borderBottom: activeTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
+                color: activeTab === tab ? '#3b82f6' : '#6b7280',
                 fontWeight: activeTab === tab ? '500' : '400',
                 cursor: 'pointer',
                 textTransform: 'capitalize',
                 fontSize: '0.875rem'
               }}
             >
-              {tab}
+              {tab === 'info' ? 'Session Info' : tab === 'notes' ? 'Notes' : tab === 'logs' ? 'Logs' : 'Activity'}
             </button>
           ))}
         </div>
@@ -2084,13 +2546,14 @@ export function SessionReplayPlayer() {
                     onClick={() => setActiveFilter(filter)}
                     style={{
                       padding: '0.5rem 0.75rem',
-                      backgroundColor: activeFilter === filter ? '#9333ea' : 'white',
+                      backgroundColor: activeFilter === filter ? '#3b82f6' : 'white',
                       color: activeFilter === filter ? 'white' : '#6b7280',
                       border: '1px solid #e5e7eb',
                       borderRadius: '6px',
-                      fontSize: '0.75rem',
+                      fontSize: '0.875rem',
                       cursor: 'pointer',
-                      textTransform: 'capitalize'
+                      textTransform: 'capitalize',
+                      fontWeight: activeFilter === filter ? '500' : '400'
                     }}
                   >
                     {filter}
@@ -2103,16 +2566,17 @@ export function SessionReplayPlayer() {
                 {events.length > 0 ? (
                   <>
                     <div style={{ 
-                      fontSize: '0.75rem', 
+                      fontSize: '0.875rem', 
                       color: '#6b7280', 
-                      marginBottom: '0.5rem',
+                      marginBottom: '1rem',
                       display: 'flex',
                       justifyContent: 'space-between',
-                      alignItems: 'center'
+                      alignItems: 'center',
+                      padding: '0.5rem 0'
                     }}>
-                      <span>00:00.0 {session?.device_info?.screen || 'unknown'}</span>
+                      <span>00:00.0 unknown</span>
                       {duration > 0 && (
-                        <span>{formatDuration(duration)}</span>
+                        <span>{Math.round(duration / 1000)} sec</span>
                       )}
                     </div>
                     {getFilteredEvents().slice(0, 50).map((event, index) => {
@@ -2300,6 +2764,60 @@ export function SessionReplayPlayer() {
               <p>No logs available.</p>
             </div>
           )}
+        </div>
+        
+        {/* Navigation Buttons */}
+        <div style={{
+          padding: '1rem',
+          borderTop: '1px solid #e5e7eb',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem'
+        }}>
+          <button
+            onClick={() => {
+              const currentIndex = sessions.findIndex(s => (s.id === sessionId || s.session_id === sessionId))
+              if (currentIndex > 0) {
+                const prevSession = sessions[currentIndex - 1]
+                const sessionIdForNav = prevSession.session_id || prevSession.id
+                navigate(`/dashboard/sessions/${projectId}/${sessionIdForNav}`)
+              }
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              color: '#6b7280',
+              textAlign: 'left'
+            }}
+          >
+            Previous user session
+          </button>
+          <button
+            onClick={() => {
+              const currentIndex = sessions.findIndex(s => (s.id === sessionId || s.session_id === sessionId))
+              if (currentIndex < sessions.length - 1) {
+                const nextSession = sessions[currentIndex + 1]
+                const sessionIdForNav = nextSession.session_id || nextSession.id
+                navigate(`/dashboard/sessions/${projectId}/${sessionIdForNav}`)
+              }
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              color: '#6b7280',
+              textAlign: 'left'
+            }}
+          >
+            Next user session
+          </button>
         </div>
       </div>
     </div>

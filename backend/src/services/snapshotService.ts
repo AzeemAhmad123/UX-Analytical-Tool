@@ -430,6 +430,8 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
   created_at: string
 }>> {
   try {
+    console.log(`🔍 getSessionSnapshots called with sessionDbId: ${sessionDbId}`)
+    
     const { data: snapshots, error } = await supabase
       .from('session_snapshots')
       .select('id, snapshot_data, snapshot_count, is_initial_snapshot, created_at')
@@ -437,20 +439,82 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
       .order('created_at', { ascending: true })
 
     if (error) {
+      console.error(`❌ Error querying snapshots:`, error)
       throw new Error(`Failed to retrieve snapshots: ${error.message}`)
     }
 
+    console.log(`📊 Query result:`, {
+      sessionDbId,
+      snapshotCount: snapshots?.length || 0,
+      hasError: !!error,
+      errorMessage: error?.message,
+      snapshotIds: snapshots?.map((s: any) => s.id) || []
+    })
+
     if (!snapshots || snapshots.length === 0) {
+      console.warn(`⚠️ No snapshots found for sessionDbId: ${sessionDbId}`)
+      
+      // Check if there are any snapshots with different session_id format
+      const { data: allSnapshots } = await supabase
+        .from('session_snapshots')
+        .select('id, session_id, created_at, snapshot_count')
+        .limit(10)
+        .order('created_at', { ascending: false })
+      
+      console.log(`🔍 Recent snapshots in database (last 10):`, allSnapshots?.map((s: any) => ({
+        id: s.id,
+        session_id: s.session_id,
+        session_id_type: typeof s.session_id,
+        session_id_length: s.session_id?.length,
+        snapshot_count: s.snapshot_count,
+        created_at: s.created_at
+      })) || [])
+      
+      // Also check if there are snapshots with the SDK session_id format (shouldn't happen, but check)
+      const { data: sessionData } = await supabase
+        .from('sessions')
+        .select('id, session_id')
+        .eq('id', sessionDbId)
+        .single()
+      
+      if (sessionData) {
+        console.log(`🔍 Session data for lookup:`, {
+          dbId: sessionData.id,
+          sdkSessionId: sessionData.session_id,
+          lookingFor: sessionDbId
+        })
+        
+        // Try querying with SDK session_id (shouldn't work, but let's check)
+        const { data: snapshotsBySdkId } = await supabase
+          .from('session_snapshots')
+          .select('id, session_id')
+          .eq('session_id', sessionData.session_id)
+          .limit(5)
+        
+        console.log(`🔍 Snapshots with SDK session_id format:`, snapshotsBySdkId?.length || 0)
+      }
+      
       return []
     }
 
-    // Convert BYTEA to string using the same approach as getSessionDurationFromSnapshots (which works!)
-    // This converts hex BYTEA to string, preserving the data format for LZString decompression
+    // Convert BYTEA to string - CRITICAL: Must preserve binary data exactly for LZString
+    // LZString compressed data is binary-like and any corruption will prevent decompression
     const processedSnapshots = snapshots.map((snapshot: any) => {
       let snapshotData: string
 
-      // Handle Supabase BYTEA format - same logic as getSessionDurationFromSnapshots
+      // Handle Supabase BYTEA format
       let rawData: any = snapshot.snapshot_data
+      
+      console.log(`🔧 Converting snapshot ${snapshot.id} data:`, {
+        rawDataType: typeof rawData,
+        isBuffer: Buffer.isBuffer(rawData),
+        isObject: typeof rawData === 'object' && rawData !== null,
+        hasType: rawData?.type,
+        length: typeof rawData === 'string' ? rawData.length : 
+                Buffer.isBuffer(rawData) ? rawData.length : 
+                rawData?.data?.length || 'unknown',
+        firstChars: typeof rawData === 'string' ? rawData.substring(0, 20) : 'not string'
+      })
       
       if (typeof rawData === 'string' && rawData.length >= 2 && 
           rawData.charCodeAt(0) === 92 && rawData.charCodeAt(1) === 120) {
@@ -458,21 +522,55 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
         const hexString = rawData.substring(2) // Remove \x prefix
         try {
           // Convert hex to Buffer, then to string using latin1 (preserves binary data for LZString)
-          snapshotData = Buffer.from(hexString, 'hex').toString('latin1')
-          console.log(`✅ Converted hex BYTEA to string for snapshot ${snapshot.id} (${hexString.length / 2} bytes)`)
+          // CRITICAL: latin1 encoding preserves all byte values 0-255 exactly
+          const buffer = Buffer.from(hexString, 'hex')
+          snapshotData = buffer.toString('latin1')
+          console.log(`✅ Converted hex BYTEA to string for snapshot ${snapshot.id}`, {
+            hexLength: hexString.length,
+            bufferLength: buffer.length,
+            stringLength: snapshotData.length,
+            firstBytes: Array.from(buffer.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')
+          })
         } catch (e) {
           console.error(`❌ Error converting hex BYTEA for snapshot ${snapshot.id}:`, e)
           snapshotData = rawData // Fallback to original
         }
       } else if (rawData && typeof rawData === 'object' && rawData.type === 'Buffer' && Array.isArray(rawData.data)) {
         // JSON-serialized Buffer object
-        snapshotData = Buffer.from(rawData.data).toString('latin1')
+        const buffer = Buffer.from(rawData.data)
+        snapshotData = buffer.toString('latin1')
+        console.log(`✅ Converted Buffer object to string for snapshot ${snapshot.id}`, {
+          bufferLength: buffer.length,
+          stringLength: snapshotData.length
+        })
       } else if (Buffer.isBuffer(rawData)) {
         snapshotData = rawData.toString('latin1')
+        console.log(`✅ Converted Buffer to string for snapshot ${snapshot.id}`, {
+          bufferLength: rawData.length,
+          stringLength: snapshotData.length
+        })
       } else if (typeof rawData === 'string') {
-        snapshotData = rawData
+        // Already a string - check if it looks like hex BYTEA without \x prefix
+        // Supabase might return hex string directly in some cases
+        if (rawData.length > 0 && /^[0-9a-fA-F]+$/.test(rawData) && rawData.length % 2 === 0) {
+          try {
+            const buffer = Buffer.from(rawData, 'hex')
+            snapshotData = buffer.toString('latin1')
+            console.log(`✅ Converted hex string (no \\x prefix) to string for snapshot ${snapshot.id}`)
+          } catch (e) {
+            console.log(`⚠️ Hex string conversion failed, using as-is:`, e)
+            snapshotData = rawData
+          }
+        } else {
+          snapshotData = rawData
+          console.log(`✅ Using string as-is for snapshot ${snapshot.id}`, {
+            length: snapshotData.length,
+            looksLikeJson: snapshotData.trim().startsWith('[') || snapshotData.trim().startsWith('{')
+          })
+        }
       } else {
         snapshotData = String(rawData)
+        console.log(`⚠️ Unknown data type, converted to string for snapshot ${snapshot.id}`)
       }
 
       return {
