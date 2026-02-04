@@ -74,15 +74,21 @@ export function SessionsList() {
     // Load immediately - no delays, no loading indicators
     loadSessions()
     
-    // Check for new sessions in background (every 60 seconds)
+    // Check for new sessions in background (every 10 seconds for faster updates)
     let intervalId: number | null = null
+    // Check immediately after a short delay to ensure checkForNewSessions is defined
+    const initialTimeout = setTimeout(() => {
+      checkForNewSessions()
+    }, 1000) // Check after 1 second
+    
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
         checkForNewSessions()
-      }, 60000) // Check every 60 seconds
-    }, 2000) // Reduced delay for faster initial check
+      }, 10000) // Check every 10 seconds for faster updates
+    }, 2000) // Start interval after 2 seconds
     
     return () => {
+      clearTimeout(initialTimeout)
       clearTimeout(timeout)
       if (intervalId) {
         clearInterval(intervalId)
@@ -149,9 +155,17 @@ export function SessionsList() {
       
       const loadedSessions = response.sessions || []
       console.log(`📊 Loaded ${loadedSessions.length} sessions from API`)
-      setAllSessions(loadedSessions)
+      
+      // Sort sessions by start_time descending (newest first)
+      const sortedSessions = [...loadedSessions].sort((a: any, b: any) => {
+        const timeA = new Date(a.start_time || a.created_at || 0).getTime()
+        const timeB = new Date(b.start_time || b.created_at || 0).getTime()
+        return timeB - timeA // Descending order (newest first)
+      })
+      
+      setAllSessions(sortedSessions)
       // Apply current filters
-      applyFilters(loadedSessions, activeFilters, platformFilter)
+      applyFilters(sortedSessions, activeFilters, platformFilter)
     } catch (error: any) {
       // Log all errors for debugging
       console.error('❌ Error loading sessions:', {
@@ -169,27 +183,47 @@ export function SessionsList() {
 
   // Check for new sessions in background (non-disruptive)
   const checkForNewSessions = async () => {
-    if (!selectedProject || allSessions.length === 0) return
+    if (!selectedProject) return
     
     try {
-      // Only fetch recent sessions (last 5 minutes) to check for new ones
-      const recentCheckTime = new Date(Date.now() - 5 * 60 * 1000)
+      // Always check from the last 10 minutes to current time (not limited by dateRange)
+      // This ensures new sessions are always found regardless of date range filter
+      const recentCheckTime = new Date(Date.now() - 10 * 60 * 1000) // Last 10 minutes
+      const now = new Date()
+      
       const response = await sessionsAPI.getByProject(selectedProject, {
         limit: 50, // Only check recent sessions
         start_date: recentCheckTime.toISOString(),
-        end_date: dateRange.end.toISOString()
+        end_date: now.toISOString() // Always use current time, not dateRange.end
       })
       
       const recentSessions = response.sessions || []
+      
+      // If we have no sessions yet, just reload all sessions
+      if (allSessions.length === 0) {
+        console.log('🔄 No sessions yet, reloading all sessions...')
+        loadSessions()
+        return
+      }
+      
       const currentSessionIds = new Set(allSessions.map((s: any) => s.id))
       
       // Find truly new sessions (not in current list)
       const trulyNewSessions = recentSessions.filter((s: any) => !currentSessionIds.has(s.id))
       
       if (trulyNewSessions.length > 0) {
+        console.log(`🆕 Found ${trulyNewSessions.length} new session(s)`, trulyNewSessions.map((s: any) => ({
+          id: s.id,
+          start_time: s.start_time,
+          created_at: s.created_at
+        })))
         // Only update if there are new sessions
-        // Add new sessions at the top, keep existing ones in their order
-        const mergedSessions = [...trulyNewSessions, ...allSessions]
+        // Merge and sort by start_time descending (newest first)
+        const mergedSessions = [...trulyNewSessions, ...allSessions].sort((a: any, b: any) => {
+          const timeA = new Date(a.start_time || a.created_at || 0).getTime()
+          const timeB = new Date(b.start_time || b.created_at || 0).getTime()
+          return timeB - timeA // Descending order (newest first)
+        })
         
         setAllSessions(mergedSessions)
         // Apply current filters to merged sessions (silently, no loading state)

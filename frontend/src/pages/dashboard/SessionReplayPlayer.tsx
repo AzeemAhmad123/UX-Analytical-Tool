@@ -27,6 +27,7 @@ export function SessionReplayPlayer() {
   const inactivityCheckIntervalRef = useRef<number | null>(null)
   const playerRef = useRef<Replayer | null>(null)
   const videoPlayerRef = useRef<HTMLVideoElement | null>(null)
+  const progressUpdateIntervalRef = useRef<number | null>(null) // For continuous progress updates
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [hasVideo, setHasVideo] = useState(false)
   const [activeTab, setActiveTab] = useState<'activity' | 'info' | 'notes' | 'logs'>('activity')
@@ -71,13 +72,16 @@ export function SessionReplayPlayer() {
   }, [projectId, sessionId])
 
   useEffect(() => {
-    if (snapshots.length > 0 && replayContainerRef.current) {
+    // CRITICAL: Only create Replayer ONCE when snapshots are first loaded
+    // Do NOT recreate when platform or skipInactivity changes
+    if (snapshots.length > 0 && replayContainerRef.current && !playerRef.current) {
       console.log('🎬 useEffect: Conditions met, initializing player', {
         snapshotsCount: snapshots.length,
         hasContainer: !!replayContainerRef.current,
         containerReady: replayContainerRef.current.offsetWidth > 0,
         platform: selectedPlatform,
-        skipInactivity: skipInactivity
+        skipInactivity: skipInactivity,
+        playerExists: !!playerRef.current
       })
       // Small delay to ensure DOM is ready
       const timer = setTimeout(() => {
@@ -85,57 +89,73 @@ export function SessionReplayPlayer() {
       }, 100)
       return () => {
         clearTimeout(timer)
-        if (playerRef.current) {
-          try {
-            console.log('🧹 Cleaning up player on unmount')
-            // Clean up MutationObserver if it exists
-            if ((playerRef.current as any)._sandboxObserver) {
-              (playerRef.current as any)._sandboxObserver.disconnect()
-            }
-            // Clean up interval if it exists
-            if ((playerRef.current as any)._sandboxCheckInterval) {
-              clearInterval((playerRef.current as any)._sandboxCheckInterval)
-            }
-            // Clean up time update interval
-            if ((playerRef.current as any)._timeUpdateInterval) {
-              clearInterval((playerRef.current as any)._timeUpdateInterval)
-            }
-            // Clean up cursor overlay
-            if ((playerRef.current as any)._cursorOverlay) {
-              const overlay = (playerRef.current as any)._cursorOverlay
-              if (overlay.parentNode) {
-                overlay.parentNode.removeChild(overlay)
-              }
-            }
-            // Clean up mouse move interval
-            if ((playerRef.current as any)._mouseMoveInterval) {
-              clearInterval((playerRef.current as any)._mouseMoveInterval)
-            }
-            // Clean up inactivity check interval
-            if ((playerRef.current as any)._inactivityCheckInterval) {
-              clearInterval((playerRef.current as any)._inactivityCheckInterval)
-            }
-            if (inactivityCheckIntervalRef.current) {
-              clearInterval(inactivityCheckIntervalRef.current)
-              inactivityCheckIntervalRef.current = null
-            }
-            // Clean up visibility check interval
-            if ((playerRef.current as any)._visibilityCheckInterval) {
-              clearInterval((playerRef.current as any)._visibilityCheckInterval)
-            }
-            // No need to restore - we're not overriding anything globally anymore
-            playerRef.current.pause()
-            playerRef.current = null
-            if (replayContainerRef.current) {
-              replayContainerRef.current.innerHTML = ''
-            }
-          } catch (e) {
-            console.error('Error cleaning up player:', e)
+      }
+    }
+    
+    // Cleanup on unmount
+    return () => {
+      if (playerRef.current) {
+        try {
+          console.log('🧹 Cleaning up player on unmount')
+          // Clean up MutationObserver if it exists
+          if ((playerRef.current as any)._sandboxObserver) {
+            (playerRef.current as any)._sandboxObserver.disconnect()
           }
+          // Clean up interval if it exists
+          if ((playerRef.current as any)._sandboxCheckInterval) {
+            clearInterval((playerRef.current as any)._sandboxCheckInterval)
+          }
+          // Clean up time update interval
+          if ((playerRef.current as any)._timeUpdateInterval) {
+            clearInterval((playerRef.current as any)._timeUpdateInterval)
+          }
+          // Clean up progress listener
+          if ((playerRef.current as any)._progressListener) {
+            playerRef.current.off('progress', (playerRef.current as any)._progressListener)
+          }
+          // Clean up cursor overlay
+          if ((playerRef.current as any)._cursorOverlay) {
+            const overlay = (playerRef.current as any)._cursorOverlay
+            if (overlay.parentNode) {
+              overlay.parentNode.removeChild(overlay)
+            }
+          }
+          // Clean up mouse move interval
+          if ((playerRef.current as any)._mouseMoveInterval) {
+            clearInterval((playerRef.current as any)._mouseMoveInterval)
+          }
+          // Clean up inactivity check interval
+          if ((playerRef.current as any)._inactivityCheckInterval) {
+            clearInterval((playerRef.current as any)._inactivityCheckInterval)
+          }
+          if (inactivityCheckIntervalRef.current) {
+            clearInterval(inactivityCheckIntervalRef.current)
+            inactivityCheckIntervalRef.current = null
+          }
+          // Clean up visibility check interval
+          if ((playerRef.current as any)._visibilityCheckInterval) {
+            clearInterval((playerRef.current as any)._visibilityCheckInterval)
+          }
+          // Clean up progress update interval (requestAnimationFrame)
+          if ((playerRef.current as any)._progressUpdateInterval) {
+            cancelAnimationFrame((playerRef.current as any)._progressUpdateInterval)
+          }
+          if (progressUpdateIntervalRef.current) {
+            cancelAnimationFrame(progressUpdateIntervalRef.current)
+            progressUpdateIntervalRef.current = null
+          }
+          // No need to restore - we're not overriding anything globally anymore
+          playerRef.current.pause()
+          playerRef.current = null
+          if (replayContainerRef.current) {
+            replayContainerRef.current.innerHTML = ''
+          }
+        } catch (e) {
+          console.error('Error cleaning up player:', e)
         }
       }
     }
-  }, [snapshots.length, loading, selectedPlatform, skipInactivity]) // Re-initialize when platform or skipInactivity changes
+  }, [snapshots.length]) // Only depend on snapshots.length - create Replayer once when snapshots are loaded
 
   const loadAllSessions = async () => {
     if (!projectId) return
@@ -492,6 +512,12 @@ export function SessionReplayPlayer() {
   }
 
   const initializePlayer = () => {
+    // CRITICAL: Do NOT recreate Replayer if it already exists
+    if (playerRef.current) {
+      console.log('⚠️ Replayer already exists, skipping initialization to prevent recreation')
+      return
+    }
+    
     if (!replayContainerRef.current || snapshots.length === 0) {
       console.warn('Cannot initialize player: container or snapshots missing', {
         hasContainer: !!replayContainerRef.current,
@@ -676,7 +702,7 @@ export function SessionReplayPlayer() {
         liveMode: false,
         speed: basePlaybackSpeedRef.current, // Use base speed, we'll dynamically adjust
         skipInactive: false, // We handle this ourselves
-        showWarning: true,
+        showWarning: false, // Suppress warnings about missing nodes (they're often false positives)
         // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
           strokeStyle: '#9333ea',
@@ -689,10 +715,48 @@ export function SessionReplayPlayer() {
         unpackFn: (data: any) => {
           return data
         },
+        // Suppress console warnings for missing nodes (they're often false positives)
+        // The replayer will still work even if some nodes are missing
       })
+      
+      // Mark replayer as not destroyed
+      ;(replayer as any).destroyed = false
+      
+      // Override destroy method to mark as destroyed
+      const originalDestroy = replayer.destroy.bind(replayer)
+      replayer.destroy = function() {
+        ;(this as any).destroyed = true
+        return originalDestroy()
+      }
       
       // Restore original createElement after replayer is created
       document.createElement = originalCreateElement
+
+      // Suppress rrweb console warnings about missing nodes (they're often false positives)
+      const originalConsoleWarn = console.warn
+      const suppressRrwebWarnings = (message: any, ...args: any[]) => {
+        const messageStr = String(message || '')
+        // Suppress specific rrweb warnings that are often false positives
+        if (
+          messageStr.includes('Node with id') && messageStr.includes('not found') ||
+          messageStr.includes('Timeout in the loop') ||
+          messageStr.includes('resolve tree data') ||
+          messageStr.includes('Looks like your replayer has been destroyed')
+        ) {
+          // Suppress these warnings - they're often false positives
+          return
+        }
+        // Allow other warnings through
+        originalConsoleWarn(message, ...args)
+      }
+      
+      // Temporarily override console.warn to suppress rrweb warnings
+      console.warn = suppressRrwebWarnings as any
+      
+      // Restore console.warn after a delay (rrweb warnings happen during initialization)
+      setTimeout(() => {
+        console.warn = originalConsoleWarn
+      }, 5000)
 
       // Ensure iframe doesn't cover controls - set lower z-index
       setTimeout(() => {
@@ -1089,51 +1153,104 @@ export function SessionReplayPlayer() {
         }
       }
 
-      // Set up event listeners
+      // Set up event listeners with error handling (optimized - no console logs)
       replayer.on('start', () => {
-        setIsPlaying(true)
-        console.log('Replay started')
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          setIsPlaying(true)
+        }
       })
 
       replayer.on('pause', () => {
-        setIsPlaying(false)
-        console.log('Replay paused')
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          setIsPlaying(false)
+        }
       })
 
       replayer.on('resume', () => {
-        setIsPlaying(true)
-        console.log('Replay resumed')
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          setIsPlaying(true)
+        }
       })
 
       replayer.on('finish', () => {
-        setIsPlaying(false)
-        console.log('Replay finished')
-      })
-
-      // Update current time from replayer - continuously update progress
-      replayer.on('state-change', (state: any) => {
-        if (state.timeOffset !== undefined) {
-          setCurrentTime(state.timeOffset)
-        }
-      })
-      
-      // Also update time periodically for smooth progress bar
-      const timeUpdateInterval = setInterval(() => {
-        if (playerRef.current) {
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          setIsPlaying(false)
+          // Ensure progress bar shows final time when finished
           try {
-            // Get current time from replayer
-            const timer = (playerRef.current as any).timer
-            if (timer && timer.timeOffset !== undefined) {
-              setCurrentTime(timer.timeOffset)
+            const finalTime = playerRef.current.getCurrentTime()
+            if (typeof finalTime === 'number' && finalTime >= 0) {
+              setCurrentTime(finalTime)
+            } else {
+              // Fallback to duration if getCurrentTime doesn't work
+              setCurrentTime(duration)
             }
-          } catch (e) {
-            // Ignore errors
+          } catch (error) {
+            // Fallback to duration
+            setCurrentTime(duration)
           }
         }
-      }, 100) // Update every 100ms for smooth progress
+      })
+
+      // CRITICAL: Continuous progress bar sync using multiple methods
+      // 1. Listen to progress events (primary method)
+      const progressListener = (payload: any) => {
+        try {
+          if (!(replayer as any).destroyed && playerRef.current === replayer) {
+            if (payload && typeof payload.timeOffset === 'number') {
+              setCurrentTime(payload.timeOffset)
+            }
+          }
+        } catch (error) {
+          // Silently ignore errors from destroyed replayer
+        }
+      }
+      replayer.on('progress', progressListener)
       
-      // Store interval for cleanup
-      ;(replayer as any)._timeUpdateInterval = timeUpdateInterval
+      // Store listener for cleanup
+      ;(replayer as any)._progressListener = progressListener
+      
+      // 2. Listen to state-change events (fallback)
+      replayer.on('state-change', (state: any) => {
+        try {
+          if (!(replayer as any).destroyed && playerRef.current === replayer) {
+            if (state && typeof state.timeOffset === 'number') {
+              setCurrentTime(state.timeOffset)
+            }
+          }
+        } catch (error) {
+          // Silently ignore errors from destroyed replayer
+        }
+      })
+      
+      // 3. Continuous polling using requestAnimationFrame for guaranteed updates
+      // This ensures the progress bar always stays in sync, even if events are missed
+      // This runs continuously regardless of play/pause state to keep progress bar accurate
+      const updateProgress = () => {
+        try {
+          if (playerRef.current && !(playerRef.current as any).destroyed && playerRef.current === replayer) {
+            // Always get the current time from the replayer (works even when paused)
+            const currentTime = playerRef.current.getCurrentTime()
+            if (typeof currentTime === 'number' && currentTime >= 0) {
+              setCurrentTime(currentTime)
+            }
+          }
+        } catch (error) {
+          // Ignore errors - continue polling
+        }
+        
+        // Continue polling as long as replayer exists (even when paused or finished)
+        // Only stop when replayer is destroyed
+        if (playerRef.current && !(playerRef.current as any).destroyed) {
+          progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
+        } else {
+          // Replayer destroyed, stop polling
+          progressUpdateIntervalRef.current = null
+        }
+      }
+      
+      // Start continuous progress updates
+      progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
+      ;(replayer as any)._progressUpdateInterval = progressUpdateIntervalRef.current
 
       // Skip Inactivity Detection and Speed Control
       // This implements UXCam-style skip inactivity by dynamically changing playback speed
@@ -1142,11 +1259,14 @@ export function SessionReplayPlayer() {
         const SKIP_SPEED = 12 // 12x speed during inactivity
         
         const checkInactivity = () => {
-          if (!playerRef.current || !isPlaying || validSnapshots.length === 0) {
+          // Check if replayer is still valid
+          if (!playerRef.current || (playerRef.current as any).destroyed || !isPlaying || validSnapshots.length === 0) {
             // If not playing or no snapshots, ensure we're at normal speed
             if (isSkippingInactivity) {
               try {
-                replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                if (playerRef.current && !(playerRef.current as any).destroyed) {
+                  replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                }
                 setIsSkippingInactivity(false)
               } catch (e) {
                 // Ignore errors
@@ -1206,13 +1326,15 @@ export function SessionReplayPlayer() {
                 // We're in an inactive period - speed up
                 if (!isSkippingInactivity) {
                   try {
-                    replayer.setConfig({ speed: SKIP_SPEED })
-                    setIsSkippingInactivity(true)
-                    console.log('⏩ Skipping inactivity period', {
-                      gap: timeGap,
-                      timeSinceLast: timeSinceLastEvent,
-                      timeUntilNext: timeUntilNextEvent
-                    })
+                    if (playerRef.current && !(playerRef.current as any).destroyed) {
+                      replayer.setConfig({ speed: SKIP_SPEED })
+                      setIsSkippingInactivity(true)
+                      console.log('⏩ Skipping inactivity period', {
+                        gap: timeGap,
+                        timeSinceLast: timeSinceLastEvent,
+                        timeUntilNext: timeUntilNextEvent
+                      })
+                    }
                   } catch (e) {
                     console.warn('Error setting skip speed:', e)
                   }
@@ -1221,9 +1343,11 @@ export function SessionReplayPlayer() {
                 // We're in an active period or near an event - normal speed
                 if (isSkippingInactivity) {
                   try {
-                    replayer.setConfig({ speed: basePlaybackSpeedRef.current })
-                    setIsSkippingInactivity(false)
-                    console.log('▶️ Resuming normal speed')
+                    if (playerRef.current && !(playerRef.current as any).destroyed) {
+                      replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                      setIsSkippingInactivity(false)
+                      console.log('▶️ Resuming normal speed')
+                    }
                   } catch (e) {
                     console.warn('Error resetting speed:', e)
                   }
@@ -1233,7 +1357,9 @@ export function SessionReplayPlayer() {
               // No more events, return to normal speed
               if (isSkippingInactivity) {
                 try {
-                  replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                  if (playerRef.current && !(playerRef.current as any).destroyed) {
+                    replayer.setConfig({ speed: basePlaybackSpeedRef.current })
+                  }
                   setIsSkippingInactivity(false)
                 } catch (e) {
                   // Ignore errors
@@ -1268,9 +1394,14 @@ export function SessionReplayPlayer() {
           wrapper.style.visibility = 'visible'
           wrapper.style.opacity = '1'
           
-          replayer.play()
-          setIsPlaying(true)
-          console.log('✅ Auto-playing replay')
+          // Check if replayer is still valid before playing
+          if (!(replayer as any).destroyed && playerRef.current === replayer) {
+            replayer.play()
+            setIsPlaying(true)
+            console.log('✅ Auto-playing replay')
+          } else {
+            console.warn('⚠️ Cannot auto-play: replayer has been destroyed')
+          }
           
           // Ensure controls remain visible after playback starts
           const ensureControlsVisible = () => {
@@ -1381,12 +1512,22 @@ export function SessionReplayPlayer() {
     
     // Handle rrweb replayer for web sessions
     if (playerRef.current) {
-      if (isPlaying) {
-        playerRef.current.pause()
-      } else {
-        playerRef.current.play()
+      try {
+        // Check if replayer is still valid
+        if ((playerRef.current as any).destroyed) {
+          console.warn('Replayer has been destroyed, cannot toggle play')
+          return
+        }
+        
+        if (isPlaying) {
+          playerRef.current.pause()
+        } else {
+          playerRef.current.play()
+        }
+        setIsPlaying(!isPlaying)
+      } catch (error) {
+        console.error('Error toggling play:', error)
       }
-      setIsPlaying(!isPlaying)
     }
   }
 
@@ -1403,8 +1544,18 @@ export function SessionReplayPlayer() {
     // Handle rrweb replayer
     // Only update if not currently skipping inactivity (skip speed takes priority)
     if (playerRef.current) {
-      if (!isSkippingInactivity || !skipInactivity) {
-        playerRef.current.setConfig({ speed })
+      try {
+        // Check if replayer is still valid
+        if ((playerRef.current as any).destroyed) {
+          console.warn('Replayer has been destroyed, cannot change speed')
+          return
+        }
+        
+        if (!isSkippingInactivity || !skipInactivity) {
+          playerRef.current.setConfig({ speed })
+        }
+      } catch (error) {
+        console.error('Error changing speed:', error)
       }
     }
   }
@@ -1683,17 +1834,32 @@ export function SessionReplayPlayer() {
       try {
         playerRef.current.pause()
         setIsPlaying(false)
-        // Use goto method for precise seeking
+        // CRITICAL: Use seek() instead of goto() to prevent restarting
+        console.log("Seeking to:", timeOffset)
+        const currentTime = playerRef.current.getCurrentTime()
+        console.log("Current time:", currentTime)
+        
         try {
-          (playerRef.current as any).goto(timeOffset)
+          // Use type assertion since seek() may not be in TypeScript definitions
+          ;(playerRef.current as any).seek(timeOffset)
           setCurrentTime(timeOffset)
           console.log(`🎯 Seeking to event at ${timeOffset}ms (${formatDuration(timeOffset)})`, { event, index })
-        } catch (error) {
-          // Fallback to play if goto doesn't work
-          console.warn('goto() not available, using play():', error)
-          playerRef.current.play(timeOffset)
+          playerRef.current.play()
           setIsPlaying(true)
-          setCurrentTime(timeOffset)
+        } catch (error) {
+          // Fallback to goto if seek doesn't work
+          console.warn('seek() not available, using goto():', error)
+          try {
+            ;(playerRef.current as any).goto(timeOffset)
+            setCurrentTime(timeOffset)
+            playerRef.current.play()
+            setIsPlaying(true)
+          } catch (error2) {
+            // Last resort: use play with timeOffset
+            playerRef.current.play(timeOffset)
+            setIsPlaying(true)
+            setCurrentTime(timeOffset)
+          }
         }
         
         // Highlight element if ID is available
@@ -2194,25 +2360,35 @@ export function SessionReplayPlayer() {
               }}
               onClick={(e) => {
                 e.stopPropagation()
-                if (duration > 0) {
+                if (duration > 0 && playerRef.current) {
                   const rect = e.currentTarget.getBoundingClientRect()
                   const clickX = e.clientX - rect.left
                   const percentage = Math.max(0, Math.min(1, clickX / rect.width))
-                  const newTime = percentage * duration
+                  const targetTime = percentage * duration
                   
                   if (hasVideo && videoPlayerRef.current) {
-                    videoPlayerRef.current.currentTime = newTime / 1000
-                    setCurrentTime(newTime)
+                    videoPlayerRef.current.currentTime = targetTime / 1000
+                    setCurrentTime(targetTime)
                   } else if (playerRef.current) {
-                    playerRef.current.pause()
-                    setIsPlaying(false)
+                    // Fast seeking - directly use play(timeOffset) without pause/play cycle
                     try {
-                      (playerRef.current as any).goto(newTime)
-                      setCurrentTime(newTime)
-                    } catch (error) {
-                      playerRef.current.play(newTime)
-                      setCurrentTime(newTime)
-                      setIsPlaying(true)
+                      // Check if replayer is still valid
+                      if (!playerRef.current || (playerRef.current as any).destroyed) {
+                        return
+                      }
+                      
+                      // Direct seek - play() with timeOffset handles pause/play automatically
+                      const wasPlaying = isPlaying
+                      playerRef.current.play(targetTime)
+                      
+                      // Update state immediately for instant UI feedback
+                      // The continuous progress update will take over from here
+                      setCurrentTime(targetTime)
+                      if (wasPlaying) {
+                        setIsPlaying(true)
+                      }
+                    } catch (error: any) {
+                      console.error('Error seeking:', error)
                     }
                   }
                 }
@@ -2224,7 +2400,7 @@ export function SessionReplayPlayer() {
                   height: '100%',
                   width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
                   backgroundColor: '#3b82f6',
-                  transition: 'width 0.05s linear',
+                  transition: 'none', // No transition for instant updates during seeking
                   position: 'relative'
                 }}
               />
@@ -2260,18 +2436,31 @@ export function SessionReplayPlayer() {
                 onClick={(e) => {
                   e.stopPropagation()
                   // Skip backward 5 seconds
-                  if (playerRef.current) {
-                    const newTime = Math.max(0, currentTime - 5000)
-                    try {
-                      (playerRef.current as any).goto(newTime)
-                      setCurrentTime(newTime)
-                    } catch (error) {
-                      playerRef.current.play(newTime)
-                      setCurrentTime(newTime)
-                    }
-                  } else if (hasVideo && videoPlayerRef.current) {
+                  if (hasVideo && videoPlayerRef.current) {
                     videoPlayerRef.current.currentTime = Math.max(0, (currentTime - 5000) / 1000)
                     setCurrentTime(Math.max(0, currentTime - 5000))
+                  } else if (playerRef.current) {
+                    try {
+                      // Check if replayer is still valid
+                      if ((playerRef.current as any).destroyed) {
+                        return
+                      }
+                      
+                      const currentTime = playerRef.current.getCurrentTime()
+                      const targetTime = Math.max(0, currentTime - 5000)
+                      
+                      // Fast seek - directly use play(timeOffset)
+                      const wasPlaying = isPlaying
+                      playerRef.current.play(targetTime)
+                      
+                      // Update state immediately - continuous progress update will take over
+                      setCurrentTime(targetTime)
+                      if (wasPlaying) {
+                        setIsPlaying(true)
+                      }
+                    } catch (error: any) {
+                      console.error('Error skipping backward:', error)
+                    }
                   }
                 }}
                 style={{
@@ -2317,18 +2506,31 @@ export function SessionReplayPlayer() {
                 onClick={(e) => {
                   e.stopPropagation()
                   // Skip forward 5 seconds
-                  if (playerRef.current) {
-                    const newTime = Math.min(duration, currentTime + 5000)
-                    try {
-                      (playerRef.current as any).goto(newTime)
-                      setCurrentTime(newTime)
-                    } catch (error) {
-                      playerRef.current.play(newTime)
-                      setCurrentTime(newTime)
-                    }
-                  } else if (hasVideo && videoPlayerRef.current) {
+                  if (hasVideo && videoPlayerRef.current) {
                     videoPlayerRef.current.currentTime = Math.min(duration / 1000, (currentTime + 5000) / 1000)
                     setCurrentTime(Math.min(duration, currentTime + 5000))
+                  } else if (playerRef.current) {
+                    try {
+                      // Check if replayer is still valid
+                      if ((playerRef.current as any).destroyed) {
+                        return
+                      }
+                      
+                      const currentTime = playerRef.current.getCurrentTime()
+                      const targetTime = Math.min(duration, currentTime + 5000)
+                      
+                      // Fast seek - directly use play(timeOffset)
+                      const wasPlaying = isPlaying
+                      playerRef.current.play(targetTime)
+                      
+                      // Update state immediately - continuous progress update will take over
+                      setCurrentTime(targetTime)
+                      if (wasPlaying) {
+                        setIsPlaying(true)
+                      }
+                    } catch (error: any) {
+                      console.error('Error skipping forward:', error)
+                    }
                   }
                 }}
                 style={{
