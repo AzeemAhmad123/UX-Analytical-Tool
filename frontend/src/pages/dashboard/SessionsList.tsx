@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Play, Download, MoreVertical, Filter, Search, Trash2, Flame, AlertTriangle, Snowflake, X, Monitor, Smartphone } from 'lucide-react'
 import { sessionsAPI, projectsAPI } from '../../services/api'
@@ -45,6 +45,103 @@ const detectPlatform = (session: any): 'mobile' | 'web' => {
   return 'web'
 }
 
+// LocalStorage cache helpers for sessions
+const SESSIONS_CACHE_PREFIX = 'uxcam_sessions_cache_'
+const LAST_PROJECT_KEY = 'uxcam_last_selected_project'
+const CACHE_EXPIRY_MS = 5 * 60 * 1000 // 5 minutes cache expiry
+
+const getLastSelectedProject = (): string | null => {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY)
+  } catch (error) {
+    return null
+  }
+}
+
+const setLastSelectedProject = (projectId: string): void => {
+  try {
+    localStorage.setItem(LAST_PROJECT_KEY, projectId)
+  } catch (error) {
+    // Ignore errors
+  }
+}
+
+const getCachedSessions = (projectId: string): any[] => {
+  try {
+    const cacheKey = `${SESSIONS_CACHE_PREFIX}${projectId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (!cached) return []
+    
+    const { sessions, timestamp } = JSON.parse(cached)
+    const age = Date.now() - timestamp
+    
+    // Return cached sessions if not expired
+    if (age < CACHE_EXPIRY_MS && Array.isArray(sessions)) {
+      console.log(`📦 Loaded ${sessions.length} cached sessions for project ${projectId}`)
+      return sessions
+    } else {
+      // Cache expired, remove it
+      localStorage.removeItem(cacheKey)
+      return []
+    }
+  } catch (error) {
+    console.error('Error reading cached sessions:', error)
+    return []
+  }
+}
+
+const setCachedSessions = (projectId: string, sessions: any[]): void => {
+  try {
+    const cacheKey = `${SESSIONS_CACHE_PREFIX}${projectId}`
+    const cacheData = {
+      sessions,
+      timestamp: Date.now()
+    }
+    localStorage.setItem(cacheKey, JSON.stringify(cacheData))
+    console.log(`💾 Cached ${sessions.length} sessions for project ${projectId}`)
+  } catch (error) {
+    console.error('Error caching sessions:', error)
+  }
+}
+
+const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
+  const sessionMap = new Map<string, any>()
+  
+  // Add existing sessions to map
+  existing.forEach(session => {
+    if (session?.id) {
+      sessionMap.set(session.id, session)
+    }
+  })
+  
+  // Add/update with new sessions (newer sessions override older ones)
+  newSessions.forEach(session => {
+    if (session?.id) {
+      const existingSession = sessionMap.get(session.id)
+      if (!existingSession) {
+        // New session, add it
+        sessionMap.set(session.id, session)
+      } else {
+        // Existing session, keep the newer one
+        const existingTime = new Date(existingSession.start_time || existingSession.created_at || 0).getTime()
+        const newTime = new Date(session.start_time || session.created_at || 0).getTime()
+        if (newTime > existingTime) {
+          sessionMap.set(session.id, session)
+        }
+      }
+    }
+  })
+  
+  // Convert back to array and sort by time (newest first)
+  const merged = Array.from(sessionMap.values()).sort((a: any, b: any) => {
+    const timeA = new Date(a.start_time || a.created_at || 0).getTime()
+    const timeB = new Date(b.start_time || b.created_at || 0).getTime()
+    return timeB - timeA
+  })
+  
+  return merged
+}
+
 export function SessionsList() {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<any[]>([])
@@ -63,18 +160,55 @@ export function SessionsList() {
   const [isSearchVisible, setIsSearchVisible] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
 
+  // CRITICAL: Load cached sessions for last selected project IMMEDIATELY on mount
+  // This prevents "no sessions" flash even before projects load
+  useLayoutEffect(() => {
+    const lastProjectId = getLastSelectedProject()
+    if (lastProjectId) {
+      const cachedSessions = getCachedSessions(lastProjectId)
+      if (cachedSessions.length > 0) {
+        console.log(`⚡ Loading ${cachedSessions.length} cached sessions for last project (${lastProjectId}) immediately`)
+        setAllSessions(cachedSessions)
+        // Set sessions directly (filtering will happen in next effect)
+        setSessions(cachedSessions)
+        // Set project ID so other effects can use it
+        setSelectedProject(lastProjectId)
+      }
+    }
+  }, []) // Run only once on mount
+
   useEffect(() => {
     loadProjects()
   }, [])
 
-  // Load sessions immediately when project is selected (no delays, instant)
+  // CRITICAL: Load cached sessions synchronously BEFORE first render (useLayoutEffect)
+  // This prevents "no sessions" flash - sessions appear instantly
+  useLayoutEffect(() => {
+    if (!selectedProject) return
+    
+    // Remember this project for next time
+    setLastSelectedProject(selectedProject)
+    
+    // Load cached sessions synchronously (runs before paint)
+    const cachedSessions = getCachedSessions(selectedProject)
+    if (cachedSessions.length > 0) {
+      console.log(`⚡ Loading ${cachedSessions.length} cached sessions synchronously (before render)`)
+      setAllSessions(cachedSessions)
+      // Set sessions directly - filtering will be applied when loadSessions completes
+      // This prevents "no sessions" flash - sessions show immediately
+      setSessions(cachedSessions)
+    }
+  }, [selectedProject])
+  
+  // Load fresh sessions in background after cached sessions are shown
   useEffect(() => {
     if (!selectedProject) return
     
-    // Load immediately - no delays, no loading indicators
+    // Load fresh sessions in background (non-blocking)
+    // Cached sessions are already shown, so this just updates them
     loadSessions()
     
-    // Check for new sessions in background (every 10 seconds for faster updates)
+    // Check for new sessions in background (every 5 seconds for faster updates)
     let intervalId: number | null = null
     // Check immediately after a short delay to ensure checkForNewSessions is defined
     const initialTimeout = setTimeout(() => {
@@ -84,7 +218,7 @@ export function SessionsList() {
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
         checkForNewSessions()
-      }, 10000) // Check every 10 seconds for faster updates
+      }, 5000) // Check every 5 seconds for faster updates
     }, 2000) // Start interval after 2 seconds
     
     return () => {
@@ -108,7 +242,10 @@ export function SessionsList() {
       const projectsList = response.projects || []
       // setProjects(projectsList)
       if (projectsList.length > 0) {
-        setSelectedProject(projectsList[0].id)
+        const projectId = projectsList[0].id
+        setSelectedProject(projectId)
+        // Remember this project for next time
+        setLastSelectedProject(projectId)
         } else {
           // No projects - nothing to do
         }
@@ -163,9 +300,15 @@ export function SessionsList() {
         return timeB - timeA // Descending order (newest first)
       })
       
-      setAllSessions(sortedSessions)
+      // Merge with existing sessions (from cache or previous load)
+      const mergedSessions = mergeSessions(allSessions, sortedSessions)
+      
+      // Update cache with merged sessions
+      setCachedSessions(selectedProject, mergedSessions)
+      
+      setAllSessions(mergedSessions)
       // Apply current filters
-      applyFilters(sortedSessions, activeFilters, platformFilter)
+      applyFilters(mergedSessions, activeFilters, platformFilter)
     } catch (error: any) {
       // Log all errors for debugging
       console.error('❌ Error loading sessions:', {
@@ -174,9 +317,16 @@ export function SessionsList() {
         stack: error?.stack,
         error: error
       })
-      // Set empty array on error to show "no sessions" instead of infinite loading
-      setAllSessions([])
-      setSessions([])
+      // DON'T clear sessions on error - keep cached sessions visible
+      // Only clear if we have no cached sessions
+      if (allSessions.length === 0) {
+        // No cached sessions, show empty state
+        setAllSessions([])
+        setSessions([])
+      } else {
+        // Keep cached sessions visible even if API fails
+        console.log('⚠️ API error, but keeping cached sessions visible')
+      }
     }
     // No finally block - we don't set loading state anymore
   }
@@ -217,13 +367,11 @@ export function SessionsList() {
           start_time: s.start_time,
           created_at: s.created_at
         })))
-        // Only update if there are new sessions
-        // Merge and sort by start_time descending (newest first)
-        const mergedSessions = [...trulyNewSessions, ...allSessions].sort((a: any, b: any) => {
-          const timeA = new Date(a.start_time || a.created_at || 0).getTime()
-          const timeB = new Date(b.start_time || b.created_at || 0).getTime()
-          return timeB - timeA // Descending order (newest first)
-        })
+        // Merge new sessions with existing ones
+        const mergedSessions = mergeSessions(allSessions, trulyNewSessions)
+        
+        // Update cache with merged sessions
+        setCachedSessions(selectedProject, mergedSessions)
         
         setAllSessions(mergedSessions)
         // Apply current filters to merged sessions (silently, no loading state)
@@ -231,10 +379,12 @@ export function SessionsList() {
       }
     } catch (error) {
       // Silently fail in background - don't disturb user
+      // Keep existing sessions visible even if check fails
       // Only log in development
       if (import.meta.env.DEV) {
         console.error('Error checking for new sessions:', error)
       }
+      // Don't clear sessions on error - keep cached sessions visible
     }
   }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
@@ -7,11 +7,113 @@ import '../../components/dashboard/Dashboard.css'
 
 type Platform = 'web' | 'mobile'
 
+// LocalStorage cache helpers for session replay data
+const SESSION_DATA_CACHE_PREFIX = 'uxcam_session_data_'
+const SESSION_SNAPSHOTS_CACHE_PREFIX = 'uxcam_session_snapshots_'
+const SESSION_EVENTS_CACHE_PREFIX = 'uxcam_session_events_'
+const CACHE_EXPIRY_MS = 30 * 60 * 1000 // 30 minutes cache expiry (sessions don't change)
+
+const getCachedSessionData = (projectId: string, sessionId: string): any | null => {
+  try {
+    const cacheKey = `${SESSION_DATA_CACHE_PREFIX}${projectId}_${sessionId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (!cached) return null
+    
+    const { data, timestamp } = JSON.parse(cached)
+    const age = Date.now() - timestamp
+    
+    if (age < CACHE_EXPIRY_MS && data) {
+      console.log(`📦 Loaded cached session data for ${sessionId}`)
+      return data
+    } else {
+      localStorage.removeItem(cacheKey)
+      return null
+    }
+  } catch (error) {
+    return null
+  }
+}
+
+const setCachedSessionData = (projectId: string, sessionId: string, data: any): void => {
+  try {
+    const cacheKey = `${SESSION_DATA_CACHE_PREFIX}${projectId}_${sessionId}`
+    localStorage.setItem(cacheKey, JSON.stringify({ data, timestamp: Date.now() }))
+  } catch (error) {
+    // Ignore errors
+  }
+}
+
+const getCachedSnapshots = (projectId: string, sessionId: string): any[] => {
+  try {
+    const cacheKey = `${SESSION_SNAPSHOTS_CACHE_PREFIX}${projectId}_${sessionId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (!cached) {
+      console.log(`📭 No cached snapshots found for ${sessionId}`)
+      return []
+    }
+    
+    const { snapshots, timestamp } = JSON.parse(cached)
+    const age = Date.now() - timestamp
+    
+    if (age < CACHE_EXPIRY_MS && Array.isArray(snapshots)) {
+      console.log(`📦 Loaded ${snapshots.length} cached snapshots for ${sessionId} (age: ${Math.round(age / 1000)}s)`)
+      return snapshots
+    } else {
+      console.log(`⏰ Cache expired for ${sessionId} (age: ${Math.round(age / 1000)}s)`)
+      localStorage.removeItem(cacheKey)
+      return []
+    }
+  } catch (error) {
+    console.error('Error reading cached snapshots:', error)
+    return []
+  }
+}
+
+const setCachedSnapshots = (projectId: string, sessionId: string, snapshots: any[]): void => {
+  try {
+    const cacheKey = `${SESSION_SNAPSHOTS_CACHE_PREFIX}${projectId}_${sessionId}`
+    localStorage.setItem(cacheKey, JSON.stringify({ snapshots, timestamp: Date.now() }))
+    console.log(`💾 Cached ${snapshots.length} snapshots for ${sessionId}`)
+  } catch (error) {
+    // Ignore errors
+  }
+}
+
+const getCachedEvents = (projectId: string, sessionId: string): any[] => {
+  try {
+    const cacheKey = `${SESSION_EVENTS_CACHE_PREFIX}${projectId}_${sessionId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (!cached) return []
+    
+    const { events, timestamp } = JSON.parse(cached)
+    const age = Date.now() - timestamp
+    
+    if (age < CACHE_EXPIRY_MS && Array.isArray(events)) {
+      console.log(`📦 Loaded ${events.length} cached events for ${sessionId}`)
+      return events
+    } else {
+      localStorage.removeItem(cacheKey)
+      return []
+    }
+  } catch (error) {
+    return []
+  }
+}
+
+const setCachedEvents = (projectId: string, sessionId: string, events: any[]): void => {
+  try {
+    const cacheKey = `${SESSION_EVENTS_CACHE_PREFIX}${projectId}_${sessionId}`
+    localStorage.setItem(cacheKey, JSON.stringify({ events, timestamp: Date.now() }))
+  } catch (error) {
+    // Ignore errors
+  }
+}
+
 export function SessionReplayPlayer() {
   const { projectId, sessionId } = useParams()
   const navigate = useNavigate()
   const replayContainerRef = useRef<HTMLDivElement>(null)
-  const [loading, setLoading] = useState(false) // Start with false - load in background
+  // Removed loading state - cached data loads instantly, no loading needed
   const [error, setError] = useState<string | null>(null)
   const [session, setSession] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([]) // All sessions for left panel
@@ -36,6 +138,140 @@ export function SessionReplayPlayer() {
   const [selectedEventIndex, setSelectedEventIndex] = useState<number | null>(null)
   const [bookmarkedSessions, setBookmarkedSessions] = useState<Set<string>>(new Set())
 
+  // CRITICAL: Clean up previous session when switching sessions
+  useLayoutEffect(() => {
+    if (!projectId || !sessionId) return
+    
+    // Clean up previous player if it exists (when switching sessions)
+    if (playerRef.current) {
+      try {
+        console.log('🧹 Cleaning up previous player before loading new session')
+        
+        // Clean up cursor overlay BEFORE destroying player or clearing container
+        if ((playerRef.current as any)._cursorOverlay) {
+          const overlay = (playerRef.current as any)._cursorOverlay
+          try {
+            // Safely remove overlay - check if it's still connected to DOM
+            if (overlay && overlay.parentNode && overlay.parentNode.contains(overlay)) {
+              overlay.parentNode.removeChild(overlay)
+            } else if (overlay && overlay.remove) {
+              // Use remove() method if available (more modern)
+              overlay.remove()
+            }
+          } catch (e) {
+            // Ignore errors - overlay might already be removed
+            console.debug('Overlay already removed or not in DOM')
+          }
+        }
+        
+        // Clean up all intervals and listeners
+        if ((playerRef.current as any)._sandboxObserver) {
+          (playerRef.current as any)._sandboxObserver.disconnect()
+        }
+        if ((playerRef.current as any)._sandboxCheckInterval) {
+          clearInterval((playerRef.current as any)._sandboxCheckInterval)
+        }
+        if ((playerRef.current as any)._timeUpdateInterval) {
+          clearInterval((playerRef.current as any)._timeUpdateInterval)
+        }
+        if ((playerRef.current as any)._progressListener) {
+          try {
+            playerRef.current.off('progress', (playerRef.current as any)._progressListener)
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+        if ((playerRef.current as any)._mouseMoveInterval) {
+          clearInterval((playerRef.current as any)._mouseMoveInterval)
+        }
+        if ((playerRef.current as any)._inactivityCheckInterval) {
+          clearInterval((playerRef.current as any)._inactivityCheckInterval)
+        }
+        if ((playerRef.current as any)._visibilityCheckInterval) {
+          clearInterval((playerRef.current as any)._visibilityCheckInterval)
+        }
+        if ((playerRef.current as any)._progressUpdateInterval) {
+          cancelAnimationFrame((playerRef.current as any)._progressUpdateInterval)
+        }
+        if (progressUpdateIntervalRef.current) {
+          cancelAnimationFrame(progressUpdateIntervalRef.current)
+          progressUpdateIntervalRef.current = null
+        }
+        
+        // Pause and destroy player
+        try {
+          playerRef.current.pause()
+          playerRef.current.destroy()
+        } catch (e) {
+          // Ignore destroy errors
+          console.debug('Error destroying player (may already be destroyed):', e)
+        }
+        playerRef.current = null
+      } catch (e) {
+        console.error('Error cleaning up previous player:', e)
+      }
+    }
+    
+    // Clear container for new session (AFTER cleaning up player)
+    // Don't clear here - let initializePlayer() handle it to avoid React conflicts
+    // The container will be cleared in initializePlayer() before creating new player
+    
+    // Load cached data FIRST for new session (before clearing state)
+    const cachedSessionData = getCachedSessionData(projectId, sessionId)
+    const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
+    const cachedEvents = getCachedEvents(projectId, sessionId)
+    
+    // Reset state for new session (only if no cached data, or always reset to ensure clean state)
+    setCurrentTime(0)
+    setIsPlaying(false)
+    setError(null)
+    setHasVideo(false)
+    setVideoUrl(null)
+    
+    // Set cached data immediately (or clear if no cache)
+    if (cachedSessionData) {
+      console.log(`⚡ Loading cached session data immediately for ${sessionId}`)
+      setSession(cachedSessionData.session || cachedSessionData)
+      
+      // Set platform if available
+      if (cachedSessionData.session?.device_info || cachedSessionData.device_info) {
+        const deviceInfo = cachedSessionData.session?.device_info || cachedSessionData.device_info
+        const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
+        const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
+        setSelectedPlatform(detectedPlatform)
+      }
+      
+      // Set duration
+      if (cachedSessionData.session) {
+        const startTime = new Date(cachedSessionData.session.start_time).getTime()
+        const endTime = new Date(cachedSessionData.session.last_activity_time).getTime()
+        const calculatedDuration = endTime - startTime
+        if (calculatedDuration > 0) {
+          setDuration(calculatedDuration)
+        }
+      }
+    } else {
+      setSession(null)
+      setDuration(0)
+    }
+    
+    // Set cached snapshots (or clear if no cache)
+    if (cachedSnapshots.length > 0) {
+      console.log(`⚡ Loading ${cachedSnapshots.length} cached snapshots immediately for ${sessionId}`)
+      setSnapshots(cachedSnapshots)
+    } else {
+      setSnapshots([])
+    }
+    
+    // Set cached events (or clear if no cache)
+    if (cachedEvents.length > 0) {
+      console.log(`⚡ Loading ${cachedEvents.length} cached events immediately for ${sessionId}`)
+      setEvents(cachedEvents)
+    } else {
+      setEvents([])
+    }
+  }, [projectId, sessionId])
+
   useEffect(() => {
     let isMounted = true
     
@@ -47,7 +283,8 @@ export function SessionReplayPlayer() {
       })
     }
     if (projectId && sessionId) {
-      // Load data sequentially to avoid race conditions and AbortErrors
+      // Load fresh data in background (non-blocking)
+      // Cached data is already shown, so this just updates it
       loadSessionData()
         .then(() => {
           if (isMounted) {
@@ -72,10 +309,11 @@ export function SessionReplayPlayer() {
   }, [projectId, sessionId])
 
   useEffect(() => {
-    // CRITICAL: Only create Replayer ONCE when snapshots are first loaded
-    // Do NOT recreate when platform or skipInactivity changes
-    if (snapshots.length > 0 && replayContainerRef.current && !playerRef.current) {
+    // CRITICAL: Create Replayer when snapshots are loaded for current session
+    // This will reinitialize when switching sessions (snapshots change)
+    if (snapshots.length > 0 && replayContainerRef.current && !playerRef.current && sessionId) {
       console.log('🎬 useEffect: Conditions met, initializing player', {
+        sessionId,
         snapshotsCount: snapshots.length,
         hasContainer: !!replayContainerRef.current,
         containerReady: replayContainerRef.current.offsetWidth > 0,
@@ -83,16 +321,204 @@ export function SessionReplayPlayer() {
         skipInactivity: skipInactivity,
         playerExists: !!playerRef.current
       })
-      // Small delay to ensure DOM is ready
-      const timer = setTimeout(() => {
+      // Initialize immediately - use double RAF for guaranteed DOM readiness
+      // First RAF ensures we're in the next frame, second ensures DOM is painted
+      let rafId1: number
+      const rafId2 = requestAnimationFrame(() => {
+        rafId1 = requestAnimationFrame(() => {
         initializePlayer()
-      }, 100)
+        })
+      })
       return () => {
-        clearTimeout(timer)
+        cancelAnimationFrame(rafId2)
+        if (rafId1) cancelAnimationFrame(rafId1)
       }
     }
+  }, [snapshots.length, sessionId, selectedPlatform, skipInactivity])
+
+  // Skip Inactivity Detection and Speed Control
+  // This implements UXCam-style skip inactivity by dynamically changing playback speed
+  // Set up/tear down when skipInactivity toggle changes or player is initialized
+  useEffect(() => {
+      // Only set up if skip inactivity is enabled and player exists
+      if (!skipInactivity || !playerRef.current || snapshots.length === 0) {
+        // Clean up if disabled
+        if (inactivityCheckIntervalRef.current) {
+          clearInterval(inactivityCheckIntervalRef.current)
+          inactivityCheckIntervalRef.current = null
+        }
+        // Reset speed if we were skipping
+        if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
+          try {
+            playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+            setIsSkippingInactivity(false)
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+        return
+      }
+      
+      const INACTIVITY_THRESHOLD = 3000 // 3 seconds in milliseconds
+      const SKIP_SPEED = 12 // 12x speed during inactivity
+      
+      // Calculate first event timestamp for relative time calculations
+      const firstEvent = snapshots.find((e: any) => e && e.timestamp)
+      if (!firstEvent || !firstEvent.timestamp) {
+        return // Can't calculate without timestamps
+      }
+      const firstEventTimestamp = firstEvent.timestamp
+      
+      const checkInactivity = () => {
+        // Check if replayer is still valid
+        if (!playerRef.current || (playerRef.current as any).destroyed || !isPlaying) {
+          // If not playing, ensure we're at normal speed
+          if (isSkippingInactivity) {
+            try {
+              if (playerRef.current && !(playerRef.current as any).destroyed) {
+                playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+              }
+              setIsSkippingInactivity(false)
+            } catch (e) {
+              // Ignore errors
+            }
+          }
+          return
+        }
+        
+        try {
+          // Get current playback time (relative to session start) - use replayer's time for accuracy
+          let currentPlaybackTime = currentTime
+          try {
+            if (playerRef.current && !(playerRef.current as any).destroyed) {
+              const replayerTime = playerRef.current.getCurrentTime()
+              if (typeof replayerTime === 'number' && !isNaN(replayerTime)) {
+                currentPlaybackTime = replayerTime
+              }
+            }
+          } catch (e) {
+            // Fallback to state
+          }
+          
+          // Find the last event that has occurred (relative timestamp <= currentPlaybackTime)
+          let lastEventIndex = -1
+          let lastEventRelativeTime = 0
+          for (let i = snapshots.length - 1; i >= 0; i--) {
+            const event = snapshots[i]
+            if (event && event.timestamp) {
+              const relativeTime = event.timestamp - firstEventTimestamp
+              if (relativeTime <= currentPlaybackTime) {
+                lastEventIndex = i
+                lastEventRelativeTime = relativeTime
+                break
+              }
+            }
+          }
+          
+          // Find the next event that will occur (relative timestamp > currentPlaybackTime)
+          let nextEventIndex = -1
+          let nextEventRelativeTime = Infinity
+          for (let i = 0; i < snapshots.length; i++) {
+            const event = snapshots[i]
+            if (event && event.timestamp) {
+              const relativeTime = event.timestamp - firstEventTimestamp
+              if (relativeTime > currentPlaybackTime) {
+                nextEventIndex = i
+                nextEventRelativeTime = relativeTime
+                break
+              }
+            }
+          }
+          
+          // Calculate time gap between last and next event
+          if (lastEventIndex >= 0 && nextEventIndex >= 0) {
+            const timeGap = nextEventRelativeTime - lastEventRelativeTime
+            const timeSinceLastEvent = currentPlaybackTime - lastEventRelativeTime
+            const timeUntilNextEvent = nextEventRelativeTime - currentPlaybackTime
+            
+            // Check if we're in an inactivity period (gap > 3 seconds and we're between events)
+            // Only skip if we're more than 100ms into the gap and more than 100ms before the next event
+            if (timeGap > INACTIVITY_THRESHOLD && timeSinceLastEvent > 100 && timeUntilNextEvent > 100) {
+              // We're in an inactive period - speed up
+              if (!isSkippingInactivity) {
+                try {
+                  if (playerRef.current && !(playerRef.current as any).destroyed) {
+                    playerRef.current.setConfig({ speed: SKIP_SPEED })
+                    setIsSkippingInactivity(true)
+                    console.log('⏩ Skipping inactivity period', {
+                      gap: timeGap,
+                      timeSinceLast: timeSinceLastEvent,
+                      timeUntilNext: timeUntilNextEvent,
+                      currentTime: currentPlaybackTime,
+                      lastEventTime: lastEventRelativeTime,
+                      nextEventTime: nextEventRelativeTime
+                    })
+                  }
+                } catch (e) {
+                  console.warn('Error setting skip speed:', e)
+                }
+              }
+            } else {
+              // We're in an active period or near an event - normal speed
+              if (isSkippingInactivity) {
+                try {
+                  if (playerRef.current && !(playerRef.current as any).destroyed) {
+                    playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+                    setIsSkippingInactivity(false)
+                    console.log('▶️ Resuming normal speed', {
+                      gap: timeGap,
+                      timeUntilNext: timeUntilNextEvent
+                    })
+                  }
+                } catch (e) {
+                  console.warn('Error resetting speed:', e)
+                }
+              }
+            }
+          } else if (nextEventIndex === -1) {
+            // No more events, return to normal speed
+            if (isSkippingInactivity) {
+              try {
+                if (playerRef.current && !(playerRef.current as any).destroyed) {
+                  playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+                }
+                setIsSkippingInactivity(false)
+              } catch (e) {
+                // Ignore errors
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Error checking inactivity:', error)
+        }
+      }
+      
+      // Check inactivity every 200ms for responsive speed changes
+      inactivityCheckIntervalRef.current = setInterval(checkInactivity, 200) as any
+      
+      // Initial check
+      checkInactivity()
+      
+      // Cleanup
+      return () => {
+        if (inactivityCheckIntervalRef.current) {
+          clearInterval(inactivityCheckIntervalRef.current)
+          inactivityCheckIntervalRef.current = null
+        }
+        // Reset speed on cleanup
+        if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
+          try {
+            playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+            setIsSkippingInactivity(false)
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+      }
+    }, [skipInactivity, isPlaying, currentTime, snapshots, isSkippingInactivity])
     
     // Cleanup on unmount
+  useEffect(() => {
     return () => {
       if (playerRef.current) {
         try {
@@ -116,8 +542,17 @@ export function SessionReplayPlayer() {
           // Clean up cursor overlay
           if ((playerRef.current as any)._cursorOverlay) {
             const overlay = (playerRef.current as any)._cursorOverlay
-            if (overlay.parentNode) {
+            try {
+              // Safely remove overlay - check if it's still connected to DOM
+              if (overlay && overlay.parentNode && overlay.parentNode.contains(overlay)) {
               overlay.parentNode.removeChild(overlay)
+              } else if (overlay && overlay.remove) {
+                // Use remove() method if available (more modern)
+                overlay.remove()
+              }
+            } catch (e) {
+              // Ignore errors - overlay might already be removed
+              console.debug('Overlay already removed or not in DOM')
             }
           }
           // Clean up mouse move interval
@@ -146,6 +581,7 @@ export function SessionReplayPlayer() {
           }
           // No need to restore - we're not overriding anything globally anymore
           playerRef.current.pause()
+          playerRef.current.destroy()
           playerRef.current = null
           if (replayContainerRef.current) {
             replayContainerRef.current.innerHTML = ''
@@ -155,7 +591,7 @@ export function SessionReplayPlayer() {
         }
       }
     }
-  }, [snapshots.length]) // Only depend on snapshots.length - create Replayer once when snapshots are loaded
+  }, []) // Only run on unmount
 
   const loadAllSessions = async () => {
     if (!projectId) return
@@ -179,6 +615,10 @@ export function SessionReplayPlayer() {
     
     try {
       const response = await sessionsAPI.getById(projectId, sessionId)
+      
+      // Cache session data
+      setCachedSessionData(projectId, sessionId, response)
+      
       setSession(response.session)
       
       // Detect platform from device_info
@@ -268,9 +708,13 @@ export function SessionReplayPlayer() {
             data: e.data
           }))
         setEvents(eventList)
+        // Cache events
+        setCachedEvents(projectId, sessionId, eventList)
         console.log(`✅ Loaded ${eventList.length} events for activity timeline`)
       } else if (response.events) {
         setEvents(response.events)
+        // Cache events
+        setCachedEvents(projectId, sessionId, response.events)
       }
     } catch (error: any) {
       // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
@@ -323,7 +767,6 @@ export function SessionReplayPlayer() {
           setDuration(videoDuration)
         }
         setSnapshots([]) // No snapshots for mobile
-        setLoading(false)
         return // Don't try to load snapshots
       } else if (videoUrl) {
         // If video URL exists but flag is not set, still show video
@@ -335,7 +778,6 @@ export function SessionReplayPlayer() {
           setDuration(videoDuration)
         }
         setSnapshots([]) // No snapshots for mobile
-        setLoading(false)
         return // Don't try to load snapshots
       }
       
@@ -355,7 +797,6 @@ export function SessionReplayPlayer() {
           } catch (parseError) {
             console.error('❌ Failed to parse snapshots string:', parseError)
             setError('Invalid snapshot data format')
-            setLoading(false)
             return
           }
         } else {
@@ -378,7 +819,6 @@ export function SessionReplayPlayer() {
             setDuration(videoDuration)
           }
           setSnapshots([]) // No snapshots for mobile
-          setLoading(false)
           return // Don't show error, video will be displayed
         } else if (videoUrl) {
           // If video URL exists but flag is not set, still show video
@@ -390,7 +830,6 @@ export function SessionReplayPlayer() {
             setDuration(videoDuration)
           }
           setSnapshots([]) // No snapshots for mobile
-          setLoading(false)
           return // Don't show error, video will be displayed
         }
         
@@ -403,7 +842,6 @@ export function SessionReplayPlayer() {
           responseStructure: JSON.stringify(data).substring(0, 500)
         })
         setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
-        setLoading(false)
         return
       }
       
@@ -476,6 +914,9 @@ export function SessionReplayPlayer() {
       
       setSnapshots(events)
       
+      // Cache snapshots
+      setCachedSnapshots(projectId, sessionId, events)
+      
       // Calculate duration from actual event timestamps
       if (events.length > 0) {
         const timestamps = events
@@ -527,9 +968,30 @@ export function SessionReplayPlayer() {
     }
 
     try {
-      // Clear container
+      // Clear container safely - check if it exists and has children
+      if (replayContainerRef.current) {
+        try {
+          // Remove children one by one to avoid React conflicts
+          const container = replayContainerRef.current
+          while (container.firstChild) {
+            const child = container.firstChild
+            // Only remove if child is still a child of container
+            if (child.parentNode === container) {
+              container.removeChild(child)
+            } else {
+              break
+            }
+          }
+        } catch (e) {
+          // If removing children fails, try innerHTML as fallback
+          try {
       if (replayContainerRef.current) {
         replayContainerRef.current.innerHTML = ''
+            }
+          } catch (e2) {
+            console.error('Error clearing container:', e2)
+          }
+        }
       }
 
       // Validate snapshots format
@@ -1156,25 +1618,25 @@ export function SessionReplayPlayer() {
       // Set up event listeners with error handling (optimized - no console logs)
       replayer.on('start', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          setIsPlaying(true)
+        setIsPlaying(true)
         }
       })
 
       replayer.on('pause', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          setIsPlaying(false)
+        setIsPlaying(false)
         }
       })
 
       replayer.on('resume', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          setIsPlaying(true)
+        setIsPlaying(true)
         }
       })
 
       replayer.on('finish', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          setIsPlaying(false)
+        setIsPlaying(false)
           // Ensure progress bar shows final time when finished
           try {
             const finalTime = playerRef.current.getCurrentTime()
@@ -1196,8 +1658,8 @@ export function SessionReplayPlayer() {
       const progressListener = (payload: any) => {
         try {
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
-            if (payload && typeof payload.timeOffset === 'number') {
-              setCurrentTime(payload.timeOffset)
+        if (payload && typeof payload.timeOffset === 'number') {
+          setCurrentTime(payload.timeOffset)
             }
           }
         } catch (error) {
@@ -1214,8 +1676,8 @@ export function SessionReplayPlayer() {
         try {
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
             if (state && typeof state.timeOffset === 'number') {
-              setCurrentTime(state.timeOffset)
-            }
+          setCurrentTime(state.timeOffset)
+        }
           }
         } catch (error) {
           // Silently ignore errors from destroyed replayer
@@ -1242,7 +1704,7 @@ export function SessionReplayPlayer() {
         // Only stop when replayer is destroyed
         if (playerRef.current && !(playerRef.current as any).destroyed) {
           progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
-        } else {
+              } else {
           // Replayer destroyed, stop polling
           progressUpdateIntervalRef.current = null
         }
@@ -1252,129 +1714,8 @@ export function SessionReplayPlayer() {
       progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
       ;(replayer as any)._progressUpdateInterval = progressUpdateIntervalRef.current
 
-      // Skip Inactivity Detection and Speed Control
-      // This implements UXCam-style skip inactivity by dynamically changing playback speed
-      if (skipInactivity) {
-        const INACTIVITY_THRESHOLD = 3000 // 3 seconds in milliseconds
-        const SKIP_SPEED = 12 // 12x speed during inactivity
-        
-        const checkInactivity = () => {
-          // Check if replayer is still valid
-          if (!playerRef.current || (playerRef.current as any).destroyed || !isPlaying || validSnapshots.length === 0) {
-            // If not playing or no snapshots, ensure we're at normal speed
-            if (isSkippingInactivity) {
-              try {
-                if (playerRef.current && !(playerRef.current as any).destroyed) {
-                  replayer.setConfig({ speed: basePlaybackSpeedRef.current })
-                }
-                setIsSkippingInactivity(false)
-              } catch (e) {
-                // Ignore errors
-              }
-            }
-            return
-          }
-          
-          try {
-            // Get current time from replayer timer (more accurate than state)
-            let currentTimestamp = 0
-            try {
-              const timer = (playerRef.current as any).timer
-              if (timer && timer.timeOffset !== undefined) {
-                currentTimestamp = timer.timeOffset
-              } else {
-                // Fallback to state if timer access fails
-                currentTimestamp = currentTime
-              }
-            } catch (e) {
-              // Fallback to state if timer access fails
-              currentTimestamp = currentTime
-            }
-            
-            // Find the last event that has occurred (timestamp <= currentTime)
-            let lastEventIndex = -1
-            let lastEventTimestamp = 0
-            for (let i = validSnapshots.length - 1; i >= 0; i--) {
-              const event = validSnapshots[i]
-              if (event && event.timestamp && event.timestamp <= currentTimestamp) {
-                lastEventIndex = i
-                lastEventTimestamp = event.timestamp
-                break
-              }
-            }
-            
-            // Find the next event that will occur (timestamp > currentTime)
-            let nextEventIndex = -1
-            let nextEventTimestamp = Infinity
-            for (let i = 0; i < validSnapshots.length; i++) {
-              const event = validSnapshots[i]
-              if (event && event.timestamp && event.timestamp > currentTimestamp) {
-                nextEventIndex = i
-                nextEventTimestamp = event.timestamp
-                break
-              }
-            }
-            
-            // Calculate time gap between last and next event
-            if (lastEventIndex >= 0 && nextEventIndex >= 0) {
-              const timeGap = nextEventTimestamp - lastEventTimestamp
-              const timeSinceLastEvent = currentTimestamp - lastEventTimestamp
-              const timeUntilNextEvent = nextEventTimestamp - currentTimestamp
-              
-              // Check if we're in an inactivity period (gap > 3 seconds and we're between events)
-              if (timeGap > INACTIVITY_THRESHOLD && timeUntilNextEvent > 100) {
-                // We're in an inactive period - speed up
-                if (!isSkippingInactivity) {
-                  try {
-                    if (playerRef.current && !(playerRef.current as any).destroyed) {
-                      replayer.setConfig({ speed: SKIP_SPEED })
-                      setIsSkippingInactivity(true)
-                      console.log('⏩ Skipping inactivity period', {
-                        gap: timeGap,
-                        timeSinceLast: timeSinceLastEvent,
-                        timeUntilNext: timeUntilNextEvent
-                      })
-                    }
-                  } catch (e) {
-                    console.warn('Error setting skip speed:', e)
-                  }
-                }
-              } else {
-                // We're in an active period or near an event - normal speed
-                if (isSkippingInactivity) {
-                  try {
-                    if (playerRef.current && !(playerRef.current as any).destroyed) {
-                      replayer.setConfig({ speed: basePlaybackSpeedRef.current })
-                      setIsSkippingInactivity(false)
-                      console.log('▶️ Resuming normal speed')
-                    }
-                  } catch (e) {
-                    console.warn('Error resetting speed:', e)
-                  }
-                }
-              }
-            } else if (nextEventIndex === -1) {
-              // No more events, return to normal speed
-              if (isSkippingInactivity) {
-                try {
-                  if (playerRef.current && !(playerRef.current as any).destroyed) {
-                    replayer.setConfig({ speed: basePlaybackSpeedRef.current })
-                  }
-                  setIsSkippingInactivity(false)
-                } catch (e) {
-                  // Ignore errors
-                }
-              }
-            }
-          } catch (error) {
-            console.warn('Error checking inactivity:', error)
-          }
-        }
-        
-        // Check inactivity every 200ms for responsive speed changes
-        inactivityCheckIntervalRef.current = setInterval(checkInactivity, 200)
-        ;(replayer as any)._inactivityCheckInterval = inactivityCheckIntervalRef.current
-      }
+      // Skip inactivity will be set up via useEffect when skipInactivity state changes
+      // This ensures it works when toggled on/off dynamically
 
       // Auto-play to show the replay immediately
       // Small delay to ensure container is ready
@@ -1396,9 +1737,9 @@ export function SessionReplayPlayer() {
           
           // Check if replayer is still valid before playing
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
-            replayer.play()
-            setIsPlaying(true)
-            console.log('✅ Auto-playing replay')
+          replayer.play()
+          setIsPlaying(true)
+          console.log('✅ Auto-playing replay')
           } else {
             console.warn('⚠️ Cannot auto-play: replayer has been destroyed')
           }
@@ -1489,12 +1830,9 @@ export function SessionReplayPlayer() {
           console.error('❌ Error auto-playing:', error)
         }
       }, 200) // Increased delay to ensure DOM is ready
-
-      setLoading(false)
     } catch (error: any) {
       console.error('Error creating player:', error)
       setError('Failed to initialize replay player: ' + error.message)
-      setLoading(false)
     }
   }
 
@@ -1519,12 +1857,12 @@ export function SessionReplayPlayer() {
           return
         }
         
-        if (isPlaying) {
-          playerRef.current.pause()
-        } else {
-          playerRef.current.play()
-        }
-        setIsPlaying(!isPlaying)
+      if (isPlaying) {
+        playerRef.current.pause()
+      } else {
+        playerRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
       } catch (error) {
         console.error('Error toggling play:', error)
       }
@@ -1551,8 +1889,8 @@ export function SessionReplayPlayer() {
           return
         }
         
-        if (!isSkippingInactivity || !skipInactivity) {
-          playerRef.current.setConfig({ speed })
+      if (!isSkippingInactivity || !skipInactivity) {
+        playerRef.current.setConfig({ speed })
         }
       } catch (error) {
         console.error('Error changing speed:', error)
@@ -2171,11 +2509,12 @@ export function SessionReplayPlayer() {
               position: 'relative',
               display: 'flex',
               flexDirection: 'column',
-              flex: selectedPlatform === 'mobile' ? '0 0 auto' : 1
+              flex: selectedPlatform === 'mobile' ? '0 0 auto' : 1,
+              minHeight: '400px' // Ensure container is always visible, even before data loads
             }}
           >
             {/* Show loading state - only when no snapshots loaded yet */}
-            {loading && snapshots.length === 0 && (
+            {false && snapshots.length === 0 && (
               <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -2228,7 +2567,7 @@ export function SessionReplayPlayer() {
               </div>
             )}
             {/* Show video player for mobile sessions */}
-            {hasVideo && videoUrl && !loading && (
+            {hasVideo && videoUrl && (
               <div style={{
                 width: '100%',
                 height: '100%',
@@ -2275,7 +2614,7 @@ export function SessionReplayPlayer() {
             )}
             
             {/* Show "no data" message only when not loading, no error, no snapshots, and no video */}
-            {snapshots.length === 0 && !loading && !error && !hasVideo && (
+            {snapshots.length === 0 && !error && !hasVideo && (
               <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -2379,7 +2718,7 @@ export function SessionReplayPlayer() {
                       
                       // Direct seek - play() with timeOffset handles pause/play automatically
                       const wasPlaying = isPlaying
-                      playerRef.current.play(targetTime)
+                        playerRef.current.play(targetTime)
                       
                       // Update state immediately for instant UI feedback
                       // The continuous progress update will take over from here
@@ -2446,12 +2785,12 @@ export function SessionReplayPlayer() {
                         return
                       }
                       
-                      const currentTime = playerRef.current.getCurrentTime()
-                      const targetTime = Math.max(0, currentTime - 5000)
+                    const currentTime = playerRef.current.getCurrentTime()
+                    const targetTime = Math.max(0, currentTime - 5000)
                       
                       // Fast seek - directly use play(timeOffset)
                       const wasPlaying = isPlaying
-                      playerRef.current.play(targetTime)
+                        playerRef.current.play(targetTime)
                       
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
@@ -2516,12 +2855,12 @@ export function SessionReplayPlayer() {
                         return
                       }
                       
-                      const currentTime = playerRef.current.getCurrentTime()
-                      const targetTime = Math.min(duration, currentTime + 5000)
+                    const currentTime = playerRef.current.getCurrentTime()
+                    const targetTime = Math.min(duration, currentTime + 5000)
                       
                       // Fast seek - directly use play(timeOffset)
                       const wasPlaying = isPlaying
-                      playerRef.current.play(targetTime)
+                        playerRef.current.play(targetTime)
                       
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
@@ -2566,12 +2905,21 @@ export function SessionReplayPlayer() {
                   e.stopPropagation()
                   const newSkipInactivity = !skipInactivity
                   setSkipInactivity(newSkipInactivity)
+                  // The useEffect will handle cleanup and speed reset
+                  // But we can also reset immediately for better UX
+                  if (!newSkipInactivity) {
                   setIsSkippingInactivity(false)
-                  if (!newSkipInactivity && playerRef.current) {
+                    if (playerRef.current && !(playerRef.current as any).destroyed) {
                     try {
                       playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
                     } catch (e) {
                       // Ignore errors
+                      }
+                    }
+                    // Clear interval immediately
+                    if (inactivityCheckIntervalRef.current) {
+                      clearInterval(inactivityCheckIntervalRef.current)
+                      inactivityCheckIntervalRef.current = null
                     }
                   }
                 }}
