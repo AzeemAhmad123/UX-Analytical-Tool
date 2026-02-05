@@ -142,13 +142,33 @@ const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
   return merged
 }
 
+// Helper function to apply default filters: exclude sessions < 10 seconds and sessions without video
+const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
+  return sessionsToFilter.filter(s => {
+    // Exclude sessions with duration < 10 seconds
+    const duration = (s.duration || 0) / 1000 // Convert to seconds
+    if (duration < 10) {
+      return false
+    }
+    
+    // Exclude sessions without video recordings (no snapshots)
+    const snapshotCount = s.snapshot_count || 0
+    if (snapshotCount === 0) {
+      return false
+    }
+    
+    return true
+  })
+}
+
 export function SessionsList() {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<any[]>([])
   const [allSessions, setAllSessions] = useState<any[]>([]) // Store all sessions for comparison
   // const [projects, setProjects] = useState<any[]>([])
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  // Removed loading state - data loads in background without blocking UI
+  // Track if we've loaded from database at least once (to know if "no sessions" is real)
+  const [hasLoadedFromDatabase, setHasLoadedFromDatabase] = useState<boolean>(false)
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set())
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all')
@@ -169,8 +189,9 @@ export function SessionsList() {
       if (cachedSessions.length > 0) {
         console.log(`⚡ Loading ${cachedSessions.length} cached sessions for last project (${lastProjectId}) immediately`)
         setAllSessions(cachedSessions)
-        // Set sessions directly (filtering will happen in next effect)
-        setSessions(cachedSessions)
+        // Apply default filters to cached sessions (exclude < 10s and no video)
+        const filteredCached = applyDefaultFilters(cachedSessions)
+        setSessions(filteredCached)
         // Set project ID so other effects can use it
         setSelectedProject(lastProjectId)
       }
@@ -184,19 +205,27 @@ export function SessionsList() {
   // CRITICAL: Load cached sessions synchronously BEFORE first render (useLayoutEffect)
   // This prevents "no sessions" flash - sessions appear instantly
   useLayoutEffect(() => {
-    if (!selectedProject) return
+    if (!selectedProject) {
+      // Reset database load flag when project changes
+      setHasLoadedFromDatabase(false)
+      return
+    }
     
     // Remember this project for next time
     setLastSelectedProject(selectedProject)
+    
+    // Reset database load flag when project changes (we need to check DB for new project)
+    setHasLoadedFromDatabase(false)
     
     // Load cached sessions synchronously (runs before paint)
     const cachedSessions = getCachedSessions(selectedProject)
     if (cachedSessions.length > 0) {
       console.log(`⚡ Loading ${cachedSessions.length} cached sessions synchronously (before render)`)
       setAllSessions(cachedSessions)
-      // Set sessions directly - filtering will be applied when loadSessions completes
+      // Apply default filters to cached sessions (exclude < 10s and no video)
+      const filteredCached = applyDefaultFilters(cachedSessions)
       // This prevents "no sessions" flash - sessions show immediately
-      setSessions(cachedSessions)
+      setSessions(filteredCached)
     }
   }, [selectedProject])
   
@@ -309,6 +338,8 @@ export function SessionsList() {
       setAllSessions(mergedSessions)
       // Apply current filters
       applyFilters(mergedSessions, activeFilters, platformFilter)
+      // Mark that we've successfully loaded from database
+      setHasLoadedFromDatabase(true)
     } catch (error: any) {
       // Log all errors for debugging
       console.error('❌ Error loading sessions:', {
@@ -323,9 +354,16 @@ export function SessionsList() {
         // No cached sessions, show empty state
         setAllSessions([])
         setSessions([])
+        // If we've tried to load and got an error, mark as loaded (so we show "no sessions" not "loading")
+        // But only if it's not a timeout (timeout means we're still trying)
+        if (error?.message !== 'Request timeout') {
+          setHasLoadedFromDatabase(true)
+        }
       } else {
         // Keep cached sessions visible even if API fails
         console.log('⚠️ API error, but keeping cached sessions visible')
+        // Mark as loaded since we have cached data to show
+        setHasLoadedFromDatabase(true)
       }
     }
     // No finally block - we don't set loading state anymore
@@ -361,6 +399,9 @@ export function SessionsList() {
       // Find truly new sessions (not in current list)
       const trulyNewSessions = recentSessions.filter((s: any) => !currentSessionIds.has(s.id))
       
+      // Mark as loaded since we successfully checked the database (even if no new sessions found)
+      setHasLoadedFromDatabase(true)
+      
       if (trulyNewSessions.length > 0) {
         console.log(`🆕 Found ${trulyNewSessions.length} new session(s)`, trulyNewSessions.map((s: any) => ({
           id: s.id,
@@ -385,6 +426,7 @@ export function SessionsList() {
         console.error('Error checking for new sessions:', error)
       }
       // Don't clear sessions on error - keep cached sessions visible
+      // Don't mark as loaded on error - we want to keep showing loading if we haven't successfully loaded yet
     }
   }
 
@@ -425,6 +467,7 @@ export function SessionsList() {
     })
   }
 
+
   const applyFilters = (sessionsToFilter: any[], filters: Set<string>, platform: PlatformFilter = platformFilter) => {
     console.log('🔍 Applying filters:', {
       inputCount: sessionsToFilter.length,
@@ -435,6 +478,11 @@ export function SessionsList() {
     // First apply platform filter
     let filtered = filterByPlatform(sessionsToFilter, platform)
     console.log(`  After platform filter (${platform}): ${filtered.length} sessions`)
+    
+    // ALWAYS apply default filters: exclude sessions < 10 seconds and sessions without video recordings
+    const beforeDefaultFilters = filtered.length
+    filtered = applyDefaultFilters(filtered)
+    console.log(`  After default filters (≥10s duration, has video): ${filtered.length} sessions (removed ${beforeDefaultFilters - filtered.length})`)
     
     if (filters.size === 0) {
       console.log(`✅ No additional filters, showing ${filtered.length} sessions`)
@@ -712,7 +760,8 @@ export function SessionsList() {
 
   const clearAllFilters = () => {
     setActiveFilters(new Set())
-    setSessions(allSessions)
+    // Apply default filters even when clearing all filters
+    applyFilters(allSessions, new Set(), platformFilter)
   }
 
   const formatDuration = (seconds: number) => {
@@ -1618,9 +1667,29 @@ export function SessionsList() {
       {/* Sessions Table */}
       {sessions.length === 0 ? (
         <div style={{ padding: '4rem', textAlign: 'center', backgroundColor: 'white' }}>
-          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📄</div>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#111827', marginBottom: '0.5rem' }}>No sessions</h3>
-          <p style={{ color: '#6b7280' }}>No sessions match the current filters.</p>
+          {!hasLoadedFromDatabase ? (
+            // Show loading state until we've checked the database
+            <>
+              <div style={{ 
+                width: '48px', 
+                height: '48px', 
+                border: '3px solid #e5e7eb', 
+                borderTop: '3px solid #9333ea', 
+                borderRadius: '50%', 
+                animation: 'spin 1s linear infinite',
+                margin: '0 auto 1rem'
+              }}></div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#111827', marginBottom: '0.5rem' }}>Loading sessions...</h3>
+              <p style={{ color: '#6b7280' }}>Please wait while we fetch your sessions.</p>
+            </>
+          ) : (
+            // Only show "no sessions" if we've confirmed there are none in the database
+            <>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📄</div>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#111827', marginBottom: '0.5rem' }}>No sessions</h3>
+              <p style={{ color: '#6b7280' }}>No sessions match the current filters.</p>
+            </>
+          )}
         </div>
       ) : (
         <div style={{ backgroundColor: 'white', overflowX: 'auto' }}>
