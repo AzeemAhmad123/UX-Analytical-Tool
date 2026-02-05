@@ -109,6 +109,25 @@ const setCachedEvents = (projectId: string, sessionId: string, events: any[]): v
   }
 }
 
+// Helper function to apply default filters: exclude sessions < 10 seconds and sessions without video
+const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
+  return sessionsToFilter.filter(s => {
+    // Exclude sessions with duration < 10 seconds
+    const duration = (s.duration || 0) / 1000 // Convert to seconds
+    if (duration < 10) {
+      return false
+    }
+    
+    // Exclude sessions without video recordings (no snapshots)
+    const snapshotCount = s.snapshot_count || 0
+    if (snapshotCount === 0) {
+      return false
+    }
+    
+    return true
+  })
+}
+
 export function SessionReplayPlayer() {
   const { projectId, sessionId } = useParams()
   const navigate = useNavigate()
@@ -601,7 +620,11 @@ export function SessionReplayPlayer() {
         start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
         end_date: new Date().toISOString()
       })
-      setSessions(response.sessions || [])
+      // Apply default filters: exclude sessions < 10 seconds and sessions without video
+      const allSessions = response.sessions || []
+      const filteredSessions = applyDefaultFilters(allSessions)
+      console.log(`📊 Loaded ${allSessions.length} sessions, filtered to ${filteredSessions.length} (excluded < 10s and no video)`)
+      setSessions(filteredSessions)
     } catch (error: any) {
       // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
       if (error?.name !== 'AbortError' && error?.message !== 'signal is aborted without reason') {
