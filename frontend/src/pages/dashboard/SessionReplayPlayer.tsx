@@ -960,12 +960,37 @@ export function SessionReplayPlayer() {
         return event
       })
       
-      // Sort by timestamp
+      // Sort by timestamp to ensure chronological order
+      // This is critical for navigation events - Type 4 Meta must come before new Type 2 snapshots
       events.sort((a: any, b: any) => {
         const timeA = a.timestamp || 0
         const timeB = b.timestamp || 0
+        // If timestamps are equal, prioritize Type 4 (navigation) before Type 2 (new page snapshot)
+        if (timeA === timeB) {
+          if (a.type === 4 && b.type === 2) return -1 // Type 4 before Type 2
+          if (a.type === 2 && b.type === 4) return 1  // Type 2 after Type 4
+        }
         return timeA - timeB
       })
+      
+      // Log event order for debugging navigation
+      const type4Events = events.filter((e: any) => e.type === 4)
+      const type2Events = events.filter((e: any) => e.type === 2)
+      if (type4Events.length > 0 || type2Events.length > 1) {
+        console.log('🔍 Navigation events order check:', {
+          type4Count: type4Events.length,
+          type2Count: type2Events.length,
+          type4Positions: type4Events.map((e: any) => ({
+            index: events.indexOf(e),
+            timestamp: e.timestamp,
+            href: e.data?.href || e.data?.url
+          })),
+          type2Positions: type2Events.map((e: any) => ({
+            index: events.indexOf(e),
+            timestamp: e.timestamp
+          }))
+        })
+      }
       
       console.log(`Loaded ${events.length} snapshot events`, {
         firstEvent: events[0],
@@ -1096,13 +1121,28 @@ export function SessionReplayPlayer() {
 
       // CRITICAL: Ensure first event is a full snapshot (type 2)
       // rrweb Replayer REQUIRES type 2 as the first event
-      const type2Index = validSnapshots.findIndex((e: any) => e.type === 2)
-      if (type2Index > 0) {
-        // Move type 2 to front
-        const type2Event = validSnapshots.splice(type2Index, 1)[0]
-        validSnapshots.unshift(type2Event)
-        console.log('Moved type 2 (full snapshot) to first position')
-      } else if (type2Index === -1) {
+      // BUT: We must preserve chronological order for navigation events
+      // Only move the FIRST Type 2 (chronologically) to position 0
+      // Subsequent Type 2 snapshots (for new pages) must stay in their chronological position
+      const allType2Events = validSnapshots.filter((e: any) => e.type === 2)
+      const firstType2Index = validSnapshots.findIndex((e: any) => e.type === 2)
+      
+      if (allType2Events.length > 1) {
+        console.log('🔍 Multiple Type 2 snapshots detected - preserving chronological order for navigation', {
+          totalType2: allType2Events.length,
+          firstType2Index: firstType2Index,
+          firstType2Timestamp: allType2Events[0]?.timestamp,
+          allType2Timestamps: allType2Events.map((e: any) => e.timestamp)
+        })
+      }
+      
+      if (firstType2Index > 0) {
+        // Move ONLY the first type 2 to front (chronologically first)
+        // This is the initial page snapshot
+        const firstType2Event = validSnapshots.splice(firstType2Index, 1)[0]
+        validSnapshots.unshift(firstType2Event)
+        console.log('Moved first type 2 (initial full snapshot) to first position, preserving order for subsequent pages')
+      } else if (firstType2Index === -1) {
         console.error('ERROR: No full snapshot (type 2) found! Replay will NOT work.')
         console.error('Event types:', validSnapshots.map((e: any) => e.type))
         console.error('Total events:', validSnapshots.length)
@@ -1141,24 +1181,59 @@ export function SessionReplayPlayer() {
       const type4Events = validSnapshots.filter((e: any) => e.type === 4)
       const type2Events = validSnapshots.filter((e: any) => e.type === 2)
       
+      // Verify event order: Type 4 Meta should come before corresponding Type 2 snapshot
+      let navigationOrderValid = true
+      if (type4Events.length > 0 && type2Events.length > 1) {
+        for (let i = 0; i < type4Events.length; i++) {
+          const type4Event = type4Events[i]
+          const type4Index = validSnapshots.indexOf(type4Event)
+          // Find the next Type 2 after this Type 4
+          const nextType2 = type2Events.find((t2: any) => {
+            const t2Index = validSnapshots.indexOf(t2)
+            return t2Index > type4Index && t2.timestamp >= type4Event.timestamp
+          })
+          if (nextType2) {
+            const nextType2Index = validSnapshots.indexOf(nextType2)
+            if (nextType2Index <= type4Index) {
+              navigationOrderValid = false
+              console.warn('⚠️ Navigation event order issue: Type 4 at', type4Index, 'but next Type 2 at', nextType2Index)
+            }
+          }
+        }
+      }
+      
       console.log(`Initializing replay player with ${validSnapshots.length} events`, {
         firstEvent: validSnapshots[0],
         eventTypes: validSnapshots.map((e: any) => e.type),
         type2Count: type2Events.length,
         type4Count: type4Events.length,
         hasNavigation: type2Events.length > 1 || type4Events.length > 0,
+        navigationOrderValid: navigationOrderValid,
         type4Events: type4Events.map((e: any) => ({
           type: e.type,
           href: e.data?.href || e.data?.url || 'no url',
-          timestamp: e.timestamp
+          timestamp: e.timestamp,
+          position: validSnapshots.indexOf(e)
+        })),
+        type2Events: type2Events.map((e: any) => ({
+          type: e.type,
+          timestamp: e.timestamp,
+          position: validSnapshots.indexOf(e)
         }))
       })
       
       if (type2Events.length > 1) {
-        console.log('✅ Multiple Type 2 events detected - this session has page navigations')
+        console.log('✅ Multiple Type 2 events detected - this session has page navigations', {
+          count: type2Events.length,
+          timestamps: type2Events.map((e: any) => e.timestamp)
+        })
       }
       if (type4Events.length > 0) {
-        console.log('✅ Type 4 Meta events detected - navigation events found:', type4Events.map((e: any) => e.data?.href || e.data?.url))
+        console.log('✅ Type 4 Meta events detected - navigation events found:', type4Events.map((e: any) => ({
+          href: e.data?.href || e.data?.url,
+          timestamp: e.timestamp,
+          position: validSnapshots.indexOf(e)
+        })))
       }
 
       // CRITICAL: rrweb Replayer requires at least 2 events (Type 2 + at least one incremental event)
@@ -1715,9 +1790,34 @@ export function SessionReplayPlayer() {
       replayer.on('fullsnapshot-rebuilded', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
           console.log('🔄 Full snapshot rebuilt - page navigation detected')
-          // The replayer should automatically handle this, but we log it for debugging
+          // Force iframe to update - sometimes the replayer needs a nudge
+          const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+          if (iframe) {
+            try {
+              // Ensure iframe can handle navigation
+              const currentSandbox = iframe.getAttribute('sandbox') || ''
+              if (!currentSandbox.includes('allow-top-navigation')) {
+                const newSandbox = `${currentSandbox} allow-top-navigation`.trim()
+                iframe.setAttribute('sandbox', newSandbox)
+                console.log('🔧 Updated iframe sandbox for navigation after rebuild:', newSandbox)
+              }
+            } catch (e) {
+              console.warn('Could not update iframe sandbox after rebuild:', e)
+            }
+          }
         }
       })
+      
+      // Also listen for any event that might indicate navigation
+      // Check if we have Type 4 events and log when they're processed
+      const navType4Events = validSnapshots.filter((e: any) => e.type === 4)
+      if (navType4Events.length > 0) {
+        console.log('📍 Type 4 navigation events will be processed:', navType4Events.map((e: any) => ({
+          timestamp: e.timestamp,
+          href: e.data?.href || e.data?.url,
+          position: validSnapshots.indexOf(e)
+        })))
+      }
 
       // Listen for state changes that might indicate navigation
       // Note: This is separate from the state-change listener below which handles progress updates
