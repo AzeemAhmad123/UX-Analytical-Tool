@@ -218,6 +218,30 @@ export function SessionReplayPlayer() {
           cancelAnimationFrame(progressUpdateIntervalRef.current)
           progressUpdateIntervalRef.current = null
         }
+        if ((playerRef.current as any)._eventCheckInterval) {
+          clearInterval((playerRef.current as any)._eventCheckInterval)
+        }
+        // Clean up click and scroll containers
+        if ((playerRef.current as any)._clickContainer) {
+          try {
+            const container = (playerRef.current as any)._clickContainer
+            if (container && container.parentNode) {
+              container.parentNode.removeChild(container)
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }
+        if ((playerRef.current as any)._scrollContainer) {
+          try {
+            const container = (playerRef.current as any)._scrollContainer
+            if (container && container.parentNode) {
+              container.parentNode.removeChild(container)
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }
         
         // Pause and destroy player
         try {
@@ -645,6 +669,31 @@ export function SessionReplayPlayer() {
             cancelAnimationFrame(progressUpdateIntervalRef.current)
             progressUpdateIntervalRef.current = null
           }
+          // Clean up event check interval
+          if ((playerRef.current as any)._eventCheckInterval) {
+            clearInterval((playerRef.current as any)._eventCheckInterval)
+          }
+          // Clean up click and scroll containers
+          if ((playerRef.current as any)._clickContainer) {
+            try {
+              const container = (playerRef.current as any)._clickContainer
+              if (container && container.parentNode) {
+                container.parentNode.removeChild(container)
+              }
+            } catch (e) {
+              // Ignore errors
+            }
+          }
+          if ((playerRef.current as any)._scrollContainer) {
+            try {
+              const container = (playerRef.current as any)._scrollContainer
+              if (container && container.parentNode) {
+                container.parentNode.removeChild(container)
+              }
+            } catch (e) {
+              // Ignore errors
+            }
+          }
           // No need to restore - we're not overriding anything globally anymore
           playerRef.current.pause()
           playerRef.current.destroy()
@@ -717,11 +766,11 @@ export function SessionReplayPlayer() {
           console.log(`✅ Using session duration from database: ${response.session.duration}ms (${durationSeconds}s)`)
         } else {
           // Fallback: calculate from timestamps
-          const startTime = new Date(response.session.start_time).getTime()
-          const endTime = new Date(response.session.last_activity_time).getTime()
-          const calculatedDuration = endTime - startTime
-          if (calculatedDuration > 0) {
-            setDuration(calculatedDuration)
+        const startTime = new Date(response.session.start_time).getTime()
+        const endTime = new Date(response.session.last_activity_time).getTime()
+        const calculatedDuration = endTime - startTime
+        if (calculatedDuration > 0) {
+          setDuration(calculatedDuration)
             const durationSeconds = Math.round(calculatedDuration / 1000)
             console.log(`✅ Calculated duration from timestamps: ${calculatedDuration}ms (${durationSeconds}s)`)
           }
@@ -1201,7 +1250,7 @@ export function SessionReplayPlayer() {
           }
         }
       }
-      
+
       console.log(`Initializing replay player with ${validSnapshots.length} events`, {
         firstEvent: validSnapshots[0],
         eventTypes: validSnapshots.map((e: any) => e.type),
@@ -1437,6 +1486,40 @@ export function SessionReplayPlayer() {
       `
       wrapper.style.position = 'relative'
       wrapper.appendChild(cursorOverlay)
+      
+      // Create click visualization container
+      const clickContainer = document.createElement('div')
+      clickContainer.id = 'rrweb-click-container'
+      clickContainer.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 999998;
+        overflow: hidden;
+      `
+      wrapper.appendChild(clickContainer)
+      
+      // Create scroll visualization container
+      const scrollContainer = document.createElement('div')
+      scrollContainer.id = 'rrweb-scroll-container'
+      scrollContainer.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 999997;
+        overflow: hidden;
+      `
+      wrapper.appendChild(scrollContainer)
+      
+      // Store containers for cleanup
+      ;(replayer as any)._clickContainer = clickContainer
+      ;(replayer as any)._scrollContainer = scrollContainer
       
       // Also add cursor trail element
       const cursorTrail = document.createElement('div')
@@ -1902,15 +1985,356 @@ export function SessionReplayPlayer() {
       // Store listener for cleanup
       ;(replayer as any)._progressListener = progressListener
       
+      // Click and Scroll Visualization
+      // Track processed events to show visual indicators
+      let lastProcessedEventIndex = -1
+      const processedClickEvents = new Set<number>()
+      const processedScrollEvents = new Set<number>()
+      
+      // Function to create click ripple effect with enhanced visualization
+      const createClickRipple = (x: number, y: number, clickType: 'left' | 'right' | 'double' = 'left') => {
+        if (!clickContainer || !clickContainer.parentElement) return
+        
+        const colors = {
+          left: '#3b82f6',    // Blue for left click
+          right: '#ef4444',   // Red for right click
+          double: '#10b981'   // Green for double click
+        }
+        const color = colors[clickType]
+        const clickLabel = clickType === 'double' ? 'Double' : clickType === 'right' ? 'Right' : 'Click'
+        
+        // Create ripple effect
+        const ripple = document.createElement('div')
+        ripple.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y}px;
+          width: 0;
+          height: 0;
+          border-radius: 50%;
+          background: ${color};
+          opacity: 0.6;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+          z-index: 999998;
+          animation: clickRipple 0.8s ease-out forwards;
+        `
+        
+        // Add click marker (circle) - larger and more visible
+        const marker = document.createElement('div')
+        marker.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y}px;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          border: 3px solid ${color};
+          background: rgba(255, 255, 255, 0.95);
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+          z-index: 999999;
+          animation: clickMarker 1.2s ease-out forwards;
+          box-shadow: 0 0 0 4px rgba(${clickType === 'left' ? '59, 130, 246' : clickType === 'right' ? '239, 68, 68' : '16, 185, 129'}, 0.3);
+        `
+        
+        // Add click label for better visibility
+        const label = document.createElement('div')
+        label.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y - 30}px;
+          transform: translateX(-50%);
+          background: rgba(0, 0, 0, 0.8);
+          color: ${color};
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          pointer-events: none;
+          z-index: 999999;
+          white-space: nowrap;
+          animation: clickLabel 1.2s ease-out forwards;
+          border: 1px solid ${color};
+        `
+        label.textContent = clickLabel
+        
+        clickContainer.appendChild(ripple)
+        clickContainer.appendChild(marker)
+        clickContainer.appendChild(label)
+        
+        // Remove after animation (longer duration for better visibility)
+        setTimeout(() => {
+          if (ripple.parentElement) ripple.remove()
+          if (marker.parentElement) marker.remove()
+          if (label.parentElement) label.remove()
+        }, 1200)
+      }
+      
+      // Track scroll path for visualization
+      let scrollPathPoints: Array<{x: number, y: number, time: number}> = []
+      
+      // Function to create enhanced scroll visualization with path
+      const createScrollIndicator = (scrollX: number, scrollY: number, direction: 'up' | 'down' | 'left' | 'right') => {
+        if (!scrollContainer || !scrollContainer.parentElement) return
+        
+        const colors = {
+          up: '#9333ea',      // Purple for up
+          down: '#f59e0b',    // Orange for down
+          left: '#8b5cf6',    // Violet for left
+          right: '#06b6d4'    // Cyan for right
+        }
+        const color = colors[direction]
+        const arrow = direction === 'up' ? '↑' : direction === 'down' ? '↓' : direction === 'left' ? '←' : '→'
+        
+        // Get container dimensions for positioning
+        const containerRect = scrollContainer.getBoundingClientRect()
+        const containerWidth = containerRect.width
+        const containerHeight = containerRect.height
+        
+        // Calculate scroll position indicators on screen edges
+        const scrollPercentX = containerWidth > 0 ? (scrollX / (containerWidth * 2)) * 100 : 0
+        const scrollPercentY = containerHeight > 0 ? (scrollY / (containerHeight * 2)) * 100 : 0
+        
+        // Add current scroll point to path
+        const currentTime = Date.now()
+        scrollPathPoints.push({ x: scrollX, y: scrollY, time: currentTime })
+        
+        // Clean up old path points (older than 2 seconds)
+        scrollPathPoints = scrollPathPoints.filter(point => currentTime - point.time < 2000)
+        
+        // Draw scroll path line if we have previous point
+        if (scrollPathPoints.length > 1) {
+          const prevPoint = scrollPathPoints[scrollPathPoints.length - 2]
+          const currentPoint = scrollPathPoints[scrollPathPoints.length - 1]
+          
+          // Create SVG path element for scroll visualization
+          let pathSvg = scrollContainer.querySelector('svg.scroll-path-svg') as SVGElement
+          if (!pathSvg) {
+            pathSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+            pathSvg.setAttribute('class', 'scroll-path-svg')
+            pathSvg.style.cssText = `
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              pointer-events: none;
+              z-index: 999996;
+              overflow: visible;
+            `
+            scrollContainer.appendChild(pathSvg)
+          }
+          
+          // Create path line
+          const pathLine = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+          pathLine.setAttribute('x1', prevPoint.x.toString())
+          pathLine.setAttribute('y1', prevPoint.y.toString())
+          pathLine.setAttribute('x2', currentPoint.x.toString())
+          pathLine.setAttribute('y2', currentPoint.y.toString())
+          pathLine.setAttribute('stroke', color)
+          pathLine.setAttribute('stroke-width', '2')
+          pathLine.setAttribute('stroke-opacity', '0.6')
+          pathLine.setAttribute('stroke-dasharray', '5,5')
+          pathLine.style.cssText = `
+            animation: scrollPathFade 2s ease-out forwards;
+          `
+          pathSvg.appendChild(pathLine)
+          
+          // Remove path line after animation
+          setTimeout(() => {
+            if (pathLine.parentElement) pathLine.remove()
+          }, 2000)
+        }
+        
+        // Create scroll position indicator on appropriate edge
+        let indicatorPosition: { top?: string, bottom?: string, left?: string, right?: string } = {}
+        if (direction === 'up' || direction === 'down') {
+          // Vertical scroll - show on right edge
+          indicatorPosition = {
+            right: '10px',
+            top: `${Math.min(95, Math.max(5, scrollPercentY))}%`
+          }
+        } else {
+          // Horizontal scroll - show on bottom edge
+          indicatorPosition = {
+            bottom: '10px',
+            left: `${Math.min(95, Math.max(5, scrollPercentX))}%`
+          }
+        }
+        
+        const indicator = document.createElement('div')
+        indicator.style.cssText = `
+          position: absolute;
+          ${indicatorPosition.top ? `top: ${indicatorPosition.top};` : ''}
+          ${indicatorPosition.bottom ? `bottom: ${indicatorPosition.bottom};` : ''}
+          ${indicatorPosition.left ? `left: ${indicatorPosition.left};` : ''}
+          ${indicatorPosition.right ? `right: ${indicatorPosition.right};` : ''}
+          padding: 6px 10px;
+          background: rgba(0, 0, 0, 0.75);
+          color: ${color};
+          border: 2px solid ${color};
+          border-radius: 6px;
+          font-size: 14px;
+          font-weight: bold;
+          pointer-events: none;
+          z-index: 999997;
+          animation: scrollIndicator 1s ease-out forwards;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          transform: ${indicatorPosition.right ? 'translateX(0)' : indicatorPosition.bottom ? 'translateY(0)' : 'none'};
+        `
+        indicator.textContent = `${arrow}`
+        
+        // Add scroll position text for better context
+        const positionText = document.createElement('div')
+        positionText.style.cssText = `
+          position: absolute;
+          ${indicatorPosition.top ? `top: ${parseFloat(indicatorPosition.top.replace('%', '')) + 5}%;` : ''}
+          ${indicatorPosition.bottom ? `bottom: ${parseFloat(indicatorPosition.bottom.replace('px', '')) + 25}px;` : ''}
+          ${indicatorPosition.left ? `left: ${indicatorPosition.left};` : ''}
+          ${indicatorPosition.right ? `right: ${indicatorPosition.right};` : ''}
+          padding: 4px 8px;
+          background: rgba(0, 0, 0, 0.6);
+          color: ${color};
+          border-radius: 4px;
+          font-size: 10px;
+          font-weight: 500;
+          pointer-events: none;
+          z-index: 999997;
+          animation: scrollPositionText 1s ease-out forwards;
+          white-space: nowrap;
+        `
+        positionText.textContent = `Y: ${Math.round(scrollY)}`
+        if (scrollX > 0) {
+          positionText.textContent += ` X: ${Math.round(scrollX)}`
+        }
+        
+        scrollContainer.appendChild(indicator)
+        scrollContainer.appendChild(positionText)
+        
+        // Remove after animation
+        setTimeout(() => {
+          if (indicator.parentElement) indicator.remove()
+          if (positionText.parentElement) positionText.remove()
+        }, 1000)
+      }
+      
+      // Monitor events as they're processed
+      const checkForNewEvents = () => {
+        try {
+          if (!playerRef.current || (playerRef.current as any).destroyed || playerRef.current !== replayer) {
+            return
+          }
+          
+          const service = (replayer as any).service
+          if (!service || !service.state) return
+          
+          const currentIndex = service.state.currentIndex || 0
+          
+          // Process new events since last check
+          for (let i = lastProcessedEventIndex + 1; i <= currentIndex && i < validSnapshots.length; i++) {
+            const event = validSnapshots[i]
+            if (!event || event.type !== 3 || !event.data) continue
+            
+            const data = event.data
+            const source = data.source
+            
+            // Handle click events (source: 2)
+            if (source === 2 && !processedClickEvents.has(i)) {
+              processedClickEvents.add(i)
+              
+              // Get click coordinates
+              let clickX = data.x
+              let clickY = data.y
+              
+              // If coordinates are relative to an element, try to get absolute position
+              if (data.id && typeof data.id === 'number') {
+                try {
+                  const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+                  if (iframe && iframe.contentDocument) {
+                    const element = iframe.contentDocument.querySelector(`[data-rrweb-id="${data.id}"]`)
+                    if (element) {
+                      const rect = element.getBoundingClientRect()
+                      clickX = rect.left + (rect.width / 2)
+                      clickY = rect.top + (rect.height / 2)
+                    }
+              }
+            } catch (e) {
+                  // Fallback to provided coordinates
+                }
+              }
+              
+              // Determine click type
+              let clickType: 'left' | 'right' | 'double' = 'left'
+              if (data.type === 2) clickType = 'double'
+              else if (data.type === 3) clickType = 'right'
+              
+              // Get iframe position to adjust coordinates
+              const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+              if (iframe) {
+                const iframeRect = iframe.getBoundingClientRect()
+                const wrapperRect = wrapper.getBoundingClientRect()
+                const adjustedX = clickX + (iframeRect.left - wrapperRect.left)
+                const adjustedY = clickY + (iframeRect.top - wrapperRect.top)
+                createClickRipple(adjustedX, adjustedY, clickType)
+              } else {
+                createClickRipple(clickX, clickY, clickType)
+              }
+            }
+            
+            // Handle scroll events (source: 3 or source: 5)
+            if ((source === 3 || source === 5) && !processedScrollEvents.has(i)) {
+              processedScrollEvents.add(i)
+              
+              const scrollX = data.x || 0
+              const scrollY = data.y || 0
+              
+              // Determine scroll direction based on scroll deltas
+              // For vertical scroll, positive y means scrolled down
+              let direction: 'up' | 'down' | 'left' | 'right' = 'down'
+              
+              // Try to get scroll delta from data
+              if (data.id !== undefined) {
+                // If id contains scroll position, compare with previous
+                const prevScroll = (replayer as any)._lastScrollY || 0
+                if (scrollY < prevScroll) direction = 'up'
+                else if (scrollY > prevScroll) direction = 'down'
+                else if (scrollX > ((replayer as any)._lastScrollX || 0)) direction = 'right'
+                else if (scrollX < ((replayer as any)._lastScrollX || 0)) direction = 'left'
+              }
+              
+              // Store current scroll position for next comparison
+              ;(replayer as any)._lastScrollX = scrollX
+              ;(replayer as any)._lastScrollY = scrollY
+              
+              createScrollIndicator(scrollX, scrollY, direction)
+            }
+          }
+          
+          lastProcessedEventIndex = currentIndex
+        } catch (error) {
+          // Silently ignore errors
+        }
+      }
+      
+      // Check for new events periodically during playback
+      const eventCheckInterval = setInterval(() => {
+        if (isPlaying && !(replayer as any).destroyed) {
+          checkForNewEvents()
+        }
+      }, 100) // Check every 100ms
+      
+      ;(replayer as any)._eventCheckInterval = eventCheckInterval
+      
       // 2. Listen to state-change events (fallback)
       replayer.on('state-change', (state: any) => {
         try {
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
             if (state && typeof state.timeOffset === 'number') {
           setCurrentTime(state.timeOffset)
-        }
-          }
-        } catch (error) {
+              }
+            }
+          } catch (error) {
           // Silently ignore errors from destroyed replayer
         }
       })
@@ -1925,9 +2349,9 @@ export function SessionReplayPlayer() {
             const currentTime = playerRef.current.getCurrentTime()
             if (typeof currentTime === 'number' && currentTime >= 0) {
               setCurrentTime(currentTime)
+              }
             }
-          }
-        } catch (error) {
+          } catch (error) {
           // Ignore errors - continue polling
         }
         
@@ -2680,16 +3104,16 @@ export function SessionReplayPlayer() {
                       <>
                         <div style={{ fontSize: '0.75rem', fontWeight: '500', color: '#111827', lineHeight: '1.3', marginBottom: '0.125rem' }}>
                           {timeStr}
-                        </div>
+                  </div>
                         {city && (
                           <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2' }}>
                             {city}
-                          </div>
+                  </div>
                         )}
                         {country && (
                           <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2', marginBottom: '0.125rem' }}>
                             {country}
-                          </div>
+                  </div>
                         )}
                         <div style={{ fontSize: '0.625rem', color: '#9ca3af', lineHeight: '1.2' }}>
                           {durationStr}
@@ -2769,47 +3193,47 @@ export function SessionReplayPlayer() {
           justifyContent: 'space-between'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flex: 1 }}>
-            {session && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                  <User className="icon-small" style={{ width: '16px', height: '16px' }} />
-                  <span>{session.session_id || session.id}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                  <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
-                  <span>
-                    {(() => {
-                      const city = (session as any).location?.city ||
-                                   session.device_info?.city || 
-                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
-                                   session.user_properties?.city || 
+          {session && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <User className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>{session.session_id || session.id}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>
+                  {(() => {
+                    const city = (session as any).location?.city ||
+                                 session.device_info?.city || 
+                                 (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                                 session.user_properties?.city || 
+                                 null
+                    const country = (session as any).location?.country ||
+                                   session.device_info?.country || 
+                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                                   session.user_properties?.country || 
                                    null
-                      const country = (session as any).location?.country ||
-                                     session.device_info?.country || 
-                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
-                                     session.user_properties?.country || 
-                                     null
-                      if (city && country) {
-                        return `${city}, ${country}`
-                      } else if (city) {
-                        return city
-                      } else if (country) {
-                        return country
-                      }
-                      return 'Unknown'
-                    })()}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                  <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
-                  <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                  <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
-                  <span>Labels</span>
-                </div>
-              </>
-            )}
+                    if (city && country) {
+                      return `${city}, ${country}`
+                    } else if (city) {
+                      return city
+                    } else if (country) {
+                      return country
+                    }
+                    return 'Unknown'
+                  })()}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
+                <span>Labels</span>
+              </div>
+            </>
+          )}
           </div>
           
           {/* Expand/Collapse Button */}

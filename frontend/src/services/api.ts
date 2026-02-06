@@ -1,4 +1,6 @@
-import { supabase } from '../config/supabase'
+﻿import { supabase } from '../config/supabase'
+
+// API exports
 
 // Get API URL - auto-detect production backend if not set
 const getApiUrl = (): string => {
@@ -71,14 +73,14 @@ async function apiRequest(
   
   const shouldUseCache = cacheKey && !isProjectsEndpoint && requestCache.has(cacheKey)
   
-  if (shouldUseCache) {
+  if (shouldUseCache && cacheKey) {
     // Return existing promise if request is already in progress
     console.log('📦 Using cached request for:', url)
     return requestCache.get(cacheKey)!
   }
   
   const requestPromise = (async () => {
-    try {
+    
       // Create abort controller for timeout
       // Increased timeout to 60 seconds for session replay and large data loads
       const controller = new AbortController()
@@ -161,6 +163,7 @@ async function apiRequest(
       
       return data
     } catch (error: any) {
+      clearTimeout(timeoutId)
       // Remove from cache on error
       if (cacheKey && !isProjectsEndpoint) {
         requestCache.delete(cacheKey)
@@ -183,9 +186,9 @@ async function apiRequest(
   
   // Cache the promise for GET requests (but not for projects endpoint)
   if (cacheKey && !isProjectsEndpoint) {
-    requestCache.set(cacheKey, requestPromise)
-    // Auto-remove from cache after 1 second to allow fresh requests
-    setTimeout(() => requestCache.delete(cacheKey), 1000)
+    const key = cacheKey // TypeScript now knows cacheKey is not null
+    requestCache.set(key, requestPromise)
+    setTimeout(() => requestCache.delete(key), 1000)
   }
   
   return requestPromise
