@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
+import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, Minimize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import '../../components/dashboard/Dashboard.css'
@@ -156,6 +156,7 @@ export function SessionReplayPlayer() {
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('web')
   const [selectedEventIndex, setSelectedEventIndex] = useState<number | null>(null)
   const [bookmarkedSessions, setBookmarkedSessions] = useState<Set<string>>(new Set())
+  const [isReplayExpanded, setIsReplayExpanded] = useState<boolean>(false) // Track if replay container is expanded
 
   // CRITICAL: Clean up previous session when switching sessions
   useLayoutEffect(() => {
@@ -2325,12 +2326,14 @@ export function SessionReplayPlayer() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* Left Panel - Session List */}
       <div style={{ 
-        width: '300px', 
+        width: isReplayExpanded ? '0' : '300px',
+        overflow: isReplayExpanded ? 'hidden' : 'visible',
         backgroundColor: 'white', 
-        borderRight: '1px solid #e5e7eb',
+        borderRight: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
         display: 'flex',
         flexDirection: 'column',
-        overflow: 'hidden'
+        transition: 'width 0.3s ease, border 0.3s ease',
+        flexShrink: 0
       }}>
         <div style={{ 
           padding: '1rem', 
@@ -2504,49 +2507,88 @@ export function SessionReplayPlayer() {
           borderBottom: '1px solid #e5e7eb',
           display: 'flex',
           alignItems: 'center',
-          gap: '1.5rem'
+          gap: '1.5rem',
+          justifyContent: 'space-between'
         }}>
-          {session && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <User className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>{session.session_id || session.id}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>
-                  {(() => {
-                    const city = (session as any).location?.city ||
-                                 session.device_info?.city || 
-                                 (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
-                                 session.user_properties?.city || 
-                                 null
-                    const country = (session as any).location?.country ||
-                                   session.device_info?.country || 
-                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
-                                   session.user_properties?.country || 
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flex: 1 }}>
+            {session && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <User className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>{session.session_id || session.id}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>
+                    {(() => {
+                      const city = (session as any).location?.city ||
+                                   session.device_info?.city || 
+                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                                   session.user_properties?.city || 
                                    null
-                    if (city && country) {
-                      return `${city}, ${country}`
-                    } else if (city) {
-                      return city
-                    } else if (country) {
-                      return country
-                    }
-                    return 'Unknown'
-                  })()}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>Labels</span>
-              </div>
-            </>
-          )}
+                      const country = (session as any).location?.country ||
+                                     session.device_info?.country || 
+                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                                     session.user_properties?.country || 
+                                     null
+                      if (city && country) {
+                        return `${city}, ${country}`
+                      } else if (city) {
+                        return city
+                      } else if (country) {
+                        return country
+                      }
+                      return 'Unknown'
+                    })()}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>Labels</span>
+                </div>
+              </>
+            )}
+          </div>
+          
+          {/* Expand/Collapse Button */}
+          <button
+            onClick={() => setIsReplayExpanded(!isReplayExpanded)}
+            style={{
+              padding: '0.5rem',
+              backgroundColor: 'transparent',
+              border: '1px solid #e5e7eb',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#6b7280',
+              transition: 'all 0.2s',
+              width: '36px',
+              height: '36px'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#f3f4f6'
+              e.currentTarget.style.borderColor = '#9333ea'
+              e.currentTarget.style.color = '#9333ea'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.borderColor = '#e5e7eb'
+              e.currentTarget.style.color = '#6b7280'
+            }}
+            title={isReplayExpanded ? 'Collapse replay' : 'Expand replay'}
+          >
+            {isReplayExpanded ? (
+              <Minimize style={{ width: '18px', height: '18px' }} />
+            ) : (
+              <Maximize style={{ width: '18px', height: '18px' }} />
+            )}
+          </button>
         </div>
 
         {/* Replay Container */}
@@ -3145,12 +3187,14 @@ export function SessionReplayPlayer() {
 
       {/* Right Panel - Activity Timeline */}
       <div style={{ 
-        width: '350px', 
+        width: isReplayExpanded ? '0' : '350px',
+        overflow: isReplayExpanded ? 'hidden' : 'visible',
         backgroundColor: 'white', 
-        borderLeft: '1px solid #e5e7eb',
+        borderLeft: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
         display: 'flex',
         flexDirection: 'column',
-        overflow: 'hidden'
+        transition: 'width 0.3s ease, border 0.3s ease',
+        flexShrink: 0
       }}>
         {/* Tabs */}
         <div style={{ 
