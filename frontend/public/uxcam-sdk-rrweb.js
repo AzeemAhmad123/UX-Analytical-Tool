@@ -683,29 +683,39 @@
         const fromUrl = window.__UXCAM_NAVIGATION_FROM_URL || '';
         const toUrl = window.location.href;
         
+        // Check for pending navigation from beforeunload
+        const pendingNav = window.__UXCAM_PENDING_NAVIGATION;
+        const finalFromUrl = pendingNav?.from || fromUrl;
+        const finalToUrl = pendingNav?.to || toUrl;
+        
         // Create Type 4 Meta event for navigation
         const navigationEvent = {
           type: 4, // Meta event type
           data: {
-            href: toUrl,
-            url: toUrl,
-            referrer: fromUrl
+            href: finalToUrl,
+            url: finalToUrl,
+            referrer: finalFromUrl,
+            width: window.innerWidth,
+            height: window.innerHeight
           },
-          timestamp: Date.now()
+          timestamp: pendingNav?.timestamp || Date.now()
         };
         
         // Add navigation event to queue BEFORE Type 2 snapshot
         snapshotQueue.push(navigationEvent);
         events.push(navigationEvent);
         console.log('UXCam SDK: 📍 Navigation event recorded', {
-          from: fromUrl,
-          to: toUrl,
-          eventType: 4
+          from: finalFromUrl,
+          to: finalToUrl,
+          eventType: 4,
+          source: pendingNav ? 'beforeunload' : 'session-continuation',
+          sessionId: sessionId
         });
         
-        // Clear navigation flag
+        // Clear navigation flags
         delete window.__UXCAM_NAVIGATION_DETECTED;
         delete window.__UXCAM_NAVIGATION_FROM_URL;
+        delete window.__UXCAM_PENDING_NAVIGATION;
       }
       
       // Step 6: Start rrweb recording engine
@@ -990,6 +1000,26 @@
         
         // Setup form field tracking
         setupFormFieldTracking();
+        
+        // CRITICAL: If this is a navigation (different page), record navigation event FIRST
+        // This must happen BEFORE starting recording to ensure navigation is captured
+        if (isSessionContinuation && window.__UXCAM_NAVIGATION_DETECTED) {
+          const fromUrl = window.__UXCAM_NAVIGATION_FROM_URL || 'unknown';
+          const toUrl = window.location.href;
+          
+          console.log('UXCam SDK: 🔄 Recording navigation event before starting recording', {
+            from: fromUrl,
+            to: toUrl,
+            sessionId: sessionId
+          });
+          
+          // Store navigation info to be recorded when recording starts
+          window.__UXCAM_PENDING_NAVIGATION = {
+            from: fromUrl,
+            to: toUrl,
+            timestamp: Date.now()
+          };
+        }
         
         // Start DOM recording (async, won't block)
         // This will record navigation event + new Type 2 snapshot if navigation detected
@@ -1636,25 +1666,65 @@
             console.log('UXCam SDK: Page unloading, flushing data (session continues across pages)');
             trackEvent('page_unload');
             
+            // CRITICAL: Record navigation event BEFORE stopping recording
+            // This ensures navigation is captured in the current page's recording
+            const currentUrl = window.location.href;
+            const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
+            if (storedUrl && storedUrl !== currentUrl && stopRecording) {
+              // URL changed - record navigation event immediately
+              try {
+                const navEvent = {
+                  type: 4, // Meta event (navigation)
+                  data: {
+                    href: currentUrl,
+                    url: currentUrl,
+                    referrer: storedUrl,
+                    width: window.innerWidth,
+                    height: window.innerHeight
+                  },
+                  timestamp: Date.now()
+                };
+                // Add to events and queue immediately
+                events.push(navEvent);
+                snapshotQueue.push(navEvent);
+                console.log('UXCam SDK: 📍 Navigation event recorded on page unload', {
+                  from: storedUrl,
+                  to: currentUrl,
+                  sessionId: sessionId
+                });
+                
+                // Store navigation info for next page
+                window.__UXCAM_PENDING_NAVIGATION = {
+                  from: storedUrl,
+                  to: currentUrl,
+                  timestamp: Date.now()
+                };
+              } catch (e) {
+                console.warn('UXCam SDK: Error recording navigation on unload:', e);
+              }
+            }
+            
             // Flush data but keep session alive for next page
             if (sessionId && stopRecording) {
-              // Stop recording first
-              try {
-                stopRecording();
-              } catch (e) {
-                console.warn('Error stopping recording:', e);
-              }
-              
-              // CRITICAL: Flush all collected snapshots before page unload
-              // This is the UXCam-style behavior - collect during session, send on exit
+              // CRITICAL: Flush all collected snapshots BEFORE stopping recording
+              // This ensures all events including navigation are uploaded
               if (snapshotQueue.length > 0) {
                 console.log('UXCam SDK: Flushing all collected snapshots on page unload', {
                   snapshotCount: snapshotQueue.length,
                   eventTypes: snapshotQueue.map(s => s?.type),
-                  sessionId: sessionId
+                  sessionId: sessionId,
+                  hasNavigation: snapshotQueue.some(s => s?.type === 4)
                 });
                 // Flush via regular method first (faster)
                 flushSnapshots();
+              }
+              
+              // Stop recording AFTER flushing
+              try {
+                stopRecording();
+                stopRecording = null;
+              } catch (e) {
+                console.warn('Error stopping recording:', e);
               }
               
               // Flush remaining events
