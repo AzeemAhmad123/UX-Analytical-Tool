@@ -533,15 +533,25 @@
             });
             reusedSessionId = storedSessionId;
             
-            // Check if URL changed (navigation detected)
+            // Check if URL changed (navigation detected) - works for ANY page change
+            // This detects navigation from ANY page to ANY other page, regardless of page type
             if (storedUrl && storedUrl !== currentUrl) {
               isNavigation = true;
               console.log('UXCam SDK: 🔄 Page navigation detected - continuing same session', {
                 from: storedUrl,
                 to: currentUrl,
-                sessionId: storedSessionId
+                sessionId: storedSessionId,
+                note: 'Navigation works for ANY page change (homepage, login, signup, or any other page)'
+              });
+            } else if (!storedUrl) {
+              // First page visit - no previous URL stored
+              console.log('UXCam SDK: First page visit - starting new session', {
+                url: currentUrl,
+                sessionId: storedSessionId,
+                note: 'Session will continue across all subsequent page navigations'
               });
             } else {
+              // Same page (refresh or no navigation)
               console.log('UXCam SDK: Same page - continuing session', {
                 url: currentUrl,
                 sessionId: storedSessionId
@@ -2017,7 +2027,46 @@
       const originalReplaceState = history.replaceState;
       
       history.pushState = function(...args) {
+        const previousUrl = window.location.href;
         originalPushState.apply(history, args);
+        
+        // Track SPA route change (works for ANY route change)
+        setTimeout(() => {
+          const newUrl = window.location.href;
+          if (previousUrl !== newUrl && sessionId && type2Uploaded) {
+            // Record navigation event for SPA route change
+            const navEvent = {
+              type: 4, // Meta event (navigation)
+              data: {
+                href: newUrl,
+                url: newUrl,
+                referrer: previousUrl,
+                width: window.innerWidth,
+                height: window.innerHeight,
+                navigationType: 'pushState' // SPA route change
+              },
+              timestamp: Date.now()
+            };
+            
+            events.push(navEvent);
+            snapshotQueue.push(navEvent);
+            
+            // Update stored URL
+            localStorage.setItem(STORAGE_URL_KEY, newUrl);
+            
+            console.log('UXCam SDK: 📍 SPA route change detected', {
+              from: previousUrl,
+              to: newUrl,
+              sessionId: sessionId,
+              note: 'Works for ANY route change (not just specific pages)'
+            });
+            
+            // Flush navigation event
+            if (snapshotQueue.length > 0) {
+              flushSnapshots();
+            }
+          }
+        }, 0);
         trackPageView();
       };
       
