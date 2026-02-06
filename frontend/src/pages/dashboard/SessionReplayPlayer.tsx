@@ -1137,10 +1137,29 @@ export function SessionReplayPlayer() {
         }
       }
 
+      // Check for navigation events (Type 4 Meta events and multiple Type 2 FullSnapshots)
+      const type4Events = validSnapshots.filter((e: any) => e.type === 4)
+      const type2Events = validSnapshots.filter((e: any) => e.type === 2)
+      
       console.log(`Initializing replay player with ${validSnapshots.length} events`, {
         firstEvent: validSnapshots[0],
-        eventTypes: validSnapshots.map((e: any) => e.type)
+        eventTypes: validSnapshots.map((e: any) => e.type),
+        type2Count: type2Events.length,
+        type4Count: type4Events.length,
+        hasNavigation: type2Events.length > 1 || type4Events.length > 0,
+        type4Events: type4Events.map((e: any) => ({
+          type: e.type,
+          href: e.data?.href || e.data?.url || 'no url',
+          timestamp: e.timestamp
+        }))
       })
+      
+      if (type2Events.length > 1) {
+        console.log('✅ Multiple Type 2 events detected - this session has page navigations')
+      }
+      if (type4Events.length > 0) {
+        console.log('✅ Type 4 Meta events detected - navigation events found:', type4Events.map((e: any) => e.data?.href || e.data?.url))
+      }
 
       // CRITICAL: rrweb Replayer requires at least 2 events (Type 2 + at least one incremental event)
       if (validSnapshots.length < 2) {
@@ -1265,6 +1284,8 @@ export function SessionReplayPlayer() {
         },
         // Suppress console warnings for missing nodes (they're often false positives)
         // The replayer will still work even if some nodes are missing
+        // IMPORTANT: Ensure navigation events are processed
+        // The replayer should automatically handle Type 4 Meta events and multiple Type 2 FullSnapshots
       })
       
       // Mark replayer as not destroyed
@@ -1689,6 +1710,39 @@ export function SessionReplayPlayer() {
       // calculating duration from them would be incorrect
       // The duration state should already have the correct value from the database
 
+      // Handle navigation events manually
+      // Listen for full snapshot rebuilds which indicate page navigation
+      replayer.on('fullsnapshot-rebuilded', () => {
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          console.log('🔄 Full snapshot rebuilt - page navigation detected')
+          // The replayer should automatically handle this, but we log it for debugging
+        }
+      })
+
+      // Listen for state changes that might indicate navigation
+      // Note: This is separate from the state-change listener below which handles progress updates
+      replayer.on('state-change', (state: any) => {
+        if (!(replayer as any).destroyed && playerRef.current === replayer) {
+          // Check if this is a navigation event
+          if (state && state.mirror) {
+            const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+            if (iframe) {
+              // Ensure iframe can handle navigation
+              try {
+                const currentSandbox = iframe.getAttribute('sandbox') || ''
+                if (!currentSandbox.includes('allow-top-navigation')) {
+                  const newSandbox = `${currentSandbox} allow-top-navigation`.trim()
+                  iframe.setAttribute('sandbox', newSandbox)
+                  console.log('🔧 Updated iframe sandbox for navigation:', newSandbox)
+                }
+              } catch (e) {
+                console.warn('Could not update iframe sandbox for navigation:', e)
+              }
+            }
+          }
+        }
+      })
+
       // Set up event listeners with error handling (optimized - no console logs)
       replayer.on('start', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
@@ -2049,11 +2103,27 @@ export function SessionReplayPlayer() {
   } => {
     // rrweb event types: 0=DomContentLoaded, 2=FullSnapshot, 3=IncrementalSnapshot, 4=Meta, 5=Custom
     if (event.type === 2) {
+      // Check if this is the first snapshot or a navigation (new page)
+      // We'll track this by checking if there's a URL in the data
+      const url = event.data?.href || event.data?.url || ''
       return {
         icon: <Eye className="icon-small" style={{ color: '#9333ea' }} />,
         title: 'Page Loaded',
-        description: 'Initial page snapshot captured',
+        description: url || 'Initial page snapshot captured',
         category: 'screens'
+      }
+    }
+
+    // Type 4 = Meta events (URL changes, page navigation)
+    if (event.type === 4 && event.data) {
+      const url = event.data.href || event.data.url || ''
+      if (url) {
+        return {
+          icon: <Eye className="icon-small" style={{ color: '#9333ea' }} />,
+          title: 'Page Changed',
+          description: url,
+          category: 'screens'
+        }
       }
     }
 
@@ -2140,12 +2210,13 @@ export function SessionReplayPlayer() {
         }
       }
 
-      // DOM mutations (source: 0)
+      // DOM mutations (source: 0) - these are NOT page changes, just DOM updates
+      // Don't show these as "Page Changed" - they're just regular DOM updates
       if (source === 0) {
         return {
           icon: <Move className="icon-small" style={{ color: '#6b7280' }} />,
-          title: 'Page Changed',
-          description: '',
+          title: 'DOM Updated',
+          description: 'Content updated',
           category: 'events',
           metadata: { id: data.id }
         }

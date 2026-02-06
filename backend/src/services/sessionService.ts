@@ -33,6 +33,13 @@ export async function findOrCreateSession(
   deviceInfo: DeviceInfo = {}
 ): Promise<{ session: SessionData; created: boolean }> {
   try {
+    console.log('🔍 Looking for existing session:', {
+      projectId,
+      sessionId,
+      sessionIdLength: sessionId?.length,
+      sessionIdType: typeof sessionId
+    })
+    
     // First, try to find existing session
     const { data: existingSession, error: findError } = await supabase
       .from('sessions')
@@ -43,10 +50,26 @@ export async function findOrCreateSession(
 
     if (existingSession && !findError) {
       // Session exists, return it
+      console.log('✅ Found existing session - reusing for continuous recording:', {
+        sessionId: existingSession.session_id,
+        dbId: existingSession.id,
+        startTime: existingSession.start_time,
+        eventCount: existingSession.event_count
+      })
       return {
         session: existingSession as SessionData,
         created: false
       }
+    }
+    
+    if (findError && findError.code !== 'PGRST116') {
+      // PGRST116 is "not found" which is expected for new sessions
+      console.warn('⚠️ Error finding session (not "not found"):', findError)
+    } else {
+      console.log('📝 No existing session found - creating new one:', {
+        sessionId,
+        projectId
+      })
     }
 
     // Session doesn't exist, create new one

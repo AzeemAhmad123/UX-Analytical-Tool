@@ -489,41 +489,112 @@
       // Check if we have a valid session ID in localStorage (persist across page refreshes)
       const STORAGE_KEY = 'uxcam_session_id';
       const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
+      const STORAGE_URL_KEY = 'uxcam_last_url';
       const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+      
+      const currentUrl = window.location.href;
+      let isNavigation = false;
+      let reusedSessionId = null;
+      
+      console.log('UXCam SDK: 🔍 generateSessionId() called, checking localStorage...', {
+        currentUrl: currentUrl,
+        hasLocalStorage: typeof localStorage !== 'undefined'
+      });
       
       try {
         const storedSessionId = localStorage.getItem(STORAGE_KEY);
         const storedTimestamp = localStorage.getItem(STORAGE_TIMESTAMP_KEY);
+        const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
+        
+        console.log('UXCam SDK: 📦 localStorage check result:', {
+          hasStoredSessionId: !!storedSessionId,
+          storedSessionId: storedSessionId,
+          hasStoredTimestamp: !!storedTimestamp,
+          storedTimestamp: storedTimestamp,
+          storedUrl: storedUrl
+        });
         
         if (storedSessionId && storedTimestamp) {
           const sessionAge = Date.now() - parseInt(storedTimestamp, 10);
+          console.log('UXCam SDK: ⏱️ Session age check:', {
+            sessionAge: sessionAge,
+            sessionAgeSeconds: Math.round(sessionAge / 1000),
+            timeout: SESSION_TIMEOUT,
+            isWithinTimeout: sessionAge < SESSION_TIMEOUT
+          });
+          
           // Reuse session if it's less than 30 minutes old
           if (sessionAge < SESSION_TIMEOUT) {
-            console.log('UXCam SDK: Reusing existing session', storedSessionId);
-            return storedSessionId;
+            console.log('UXCam SDK: ✅ Reusing existing session for continuous recording', {
+              sessionId: storedSessionId,
+              sessionAge: Math.round(sessionAge / 1000) + 's',
+              previousUrl: storedUrl,
+              currentUrl: currentUrl
+            });
+            reusedSessionId = storedSessionId;
+            
+            // Check if URL changed (navigation detected)
+            if (storedUrl && storedUrl !== currentUrl) {
+              isNavigation = true;
+              console.log('UXCam SDK: 🔄 Page navigation detected - continuing same session', {
+                from: storedUrl,
+                to: currentUrl,
+                sessionId: storedSessionId
+              });
+            } else {
+              console.log('UXCam SDK: Same page - continuing session', {
+                url: currentUrl,
+                sessionId: storedSessionId
+              });
+            }
           } else {
             // Session expired, clear it
+            console.log('UXCam SDK: ⏰ Session expired, clearing localStorage', {
+              sessionAge: Math.round(sessionAge / 1000) + 's',
+              timeout: Math.round(SESSION_TIMEOUT / 1000) + 's'
+            });
             localStorage.removeItem(STORAGE_KEY);
             localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
+            localStorage.removeItem(STORAGE_URL_KEY);
           }
+        } else {
+          console.log('UXCam SDK: 📝 No existing session in localStorage, will create new one');
         }
       } catch (e) {
         // localStorage not available, continue with new session
-        console.warn('UXCam SDK: localStorage not available, creating new session');
+        console.warn('UXCam SDK: ⚠️ localStorage not available, creating new session', e);
       }
       
-      // Generate new session ID
-      const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      // Generate new session ID if not reusing
+      const sessionId = reusedSessionId || ('sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
       
-      // Store in localStorage
+      console.log('UXCam SDK: 🎯 Final session ID decision:', {
+        reused: !!reusedSessionId,
+        sessionId: sessionId,
+        isNew: !reusedSessionId
+      });
+      
+      // Store in localStorage IMMEDIATELY
       try {
-        localStorage.setItem(STORAGE_KEY, newSessionId);
+        localStorage.setItem(STORAGE_KEY, sessionId);
         localStorage.setItem(STORAGE_TIMESTAMP_KEY, Date.now().toString());
+        localStorage.setItem(STORAGE_URL_KEY, currentUrl);
+        console.log('UXCam SDK: 💾 Stored session ID in localStorage:', {
+          sessionId: sessionId,
+          url: currentUrl,
+          timestamp: Date.now()
+        });
       } catch (e) {
-        // Ignore if localStorage fails
+        console.error('UXCam SDK: ❌ Failed to store session ID in localStorage:', e);
       }
       
-      return newSessionId;
+      // Store navigation flag for later use
+      if (isNavigation) {
+        window.__UXCAM_NAVIGATION_DETECTED = true;
+        window.__UXCAM_NAVIGATION_FROM_URL = storedUrl;
+      }
+      
+      return sessionId;
     }
 
     // ============================================
@@ -606,6 +677,36 @@
       let capturedType2 = null;
       let type2Resolve = null;
       const type2Promise = new Promise(resolve => { type2Resolve = resolve; });
+      
+      // Step 5.5: Record navigation event (Type 4 Meta) if navigation detected
+      if (window.__UXCAM_NAVIGATION_DETECTED) {
+        const fromUrl = window.__UXCAM_NAVIGATION_FROM_URL || '';
+        const toUrl = window.location.href;
+        
+        // Create Type 4 Meta event for navigation
+        const navigationEvent = {
+          type: 4, // Meta event type
+          data: {
+            href: toUrl,
+            url: toUrl,
+            referrer: fromUrl
+          },
+          timestamp: Date.now()
+        };
+        
+        // Add navigation event to queue BEFORE Type 2 snapshot
+        snapshotQueue.push(navigationEvent);
+        events.push(navigationEvent);
+        console.log('UXCam SDK: 📍 Navigation event recorded', {
+          from: fromUrl,
+          to: toUrl,
+          eventType: 4
+        });
+        
+        // Clear navigation flag
+        delete window.__UXCAM_NAVIGATION_DETECTED;
+        delete window.__UXCAM_NAVIGATION_FROM_URL;
+      }
       
       // Step 6: Start rrweb recording engine
       console.log('UXCam SDK: Starting rrweb recording...');
@@ -726,14 +827,35 @@
           });
         }
         
-        // Step 9: Upload Type 2 immediately
+        // Step 9: Upload Type 2 immediately (include navigation event if present)
         console.log('UXCam SDK: Uploading Type 2 snapshot...');
-        const compressed = compressSnapshots([type2Event]);
+        
+        // Check if there's a navigation event in the queue (should be first)
+        const eventsToUpload = [];
+        if (snapshotQueue.length > 0 && snapshotQueue[0].type === 4) {
+          // Include navigation event before Type 2
+          eventsToUpload.push(snapshotQueue.shift()); // Remove from queue
+          console.log('UXCam SDK: Including navigation event with Type 2 snapshot');
+        }
+        eventsToUpload.push(type2Event);
+        
+        const compressed = compressSnapshots(eventsToUpload);
         
         // Log compression info
         console.log('UXCam SDK: Compression info', {
           compressedType: typeof compressed,
-          compressedLength: typeof compressed === 'string' ? compressed.length : 'N/A'
+          compressedLength: typeof compressed === 'string' ? compressed.length : 'N/A',
+          eventsCount: eventsToUpload.length,
+          hasNavigation: eventsToUpload.some(e => e.type === 4)
+        });
+        
+        // Log session ID being used for upload
+        console.log('UXCam SDK: 📤 Uploading Type 2 snapshot with session ID:', {
+          sessionId: sessionId,
+          sessionIdLength: sessionId?.length,
+          url: window.location.href,
+          hasNavigation: eventsToUpload.some(e => e.type === 4),
+          eventsCount: eventsToUpload.length
         });
         
         const response = await fetch(`${config.apiUrl}/api/snapshots/ingest`, {
@@ -743,7 +865,7 @@
             sdk_key: config.sdkKey,
             session_id: sessionId,
             snapshots: compressed,
-            snapshot_count: 1,
+            snapshot_count: eventsToUpload.length,
             is_initial_snapshot: true
           })
         });
@@ -806,10 +928,62 @@
     // Start new session - SAFE: Won't break website if it fails
     function startSession() {
       return safeExecute(function() {
-        sessionId = generateSessionId();
-        sessionStartTime = Date.now();
+        // CRITICAL: Check localStorage FIRST before generating new session ID
+        // This ensures we reuse the same session across page navigations
+        const STORAGE_KEY = 'uxcam_session_id';
+        const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
+        const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+        
+        let existingSessionId = null;
+        try {
+          const storedSessionId = localStorage.getItem(STORAGE_KEY);
+          const storedTimestamp = localStorage.getItem(STORAGE_TIMESTAMP_KEY);
+          
+          if (storedSessionId && storedTimestamp) {
+            const sessionAge = Date.now() - parseInt(storedTimestamp, 10);
+            if (sessionAge < SESSION_TIMEOUT) {
+              existingSessionId = storedSessionId;
+              console.log('UXCam SDK: 🔍 Found existing session in localStorage', {
+                sessionId: existingSessionId,
+                age: Math.round(sessionAge / 1000) + 's',
+                url: window.location.href
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('UXCam SDK: Could not read localStorage:', e);
+        }
+        
+        const previousSessionId = sessionId;
+        sessionId = existingSessionId || generateSessionId();
+        
+        // Check if this is a continuation of an existing session (page navigation)
+        const isSessionContinuation = (previousSessionId && previousSessionId === sessionId) || 
+                                      (existingSessionId && existingSessionId === sessionId);
+        
+        if (isSessionContinuation) {
+          console.log('UXCam SDK: 🔄 Continuing existing session across page navigation', {
+            sessionId: sessionId,
+            previousUrl: window.__UXCAM_NAVIGATION_FROM_URL || 'unknown',
+            currentUrl: window.location.href,
+            wasInMemory: !!previousSessionId,
+            wasInStorage: !!existingSessionId
+          });
+          // Don't reset events array - we want to continue the timeline
+          // The events from previous page are already uploaded
+          // Don't reset sessionStartTime - keep the original start time
+        } else {
+          console.log('UXCam SDK: 🆕 Starting new session', {
+            sessionId: sessionId,
+            url: window.location.href,
+            previousSessionId: previousSessionId || 'none'
+          });
+          // Reset events array only for truly new sessions
+          events = [];
+          sessionStartTime = Date.now();
+        }
+        
         lastActivityTime = Date.now();
-        events = [];
         
         // Setup activity tracking
         setupActivityTracking();
@@ -818,6 +992,7 @@
         setupFormFieldTracking();
         
         // Start DOM recording (async, won't block)
+        // This will record navigation event + new Type 2 snapshot if navigation detected
         safeAsyncExecute(function() {
           startRecording();
         }, null, null, 'startRecording failed');
@@ -999,6 +1174,13 @@
       }
       
       const compressed = compressSnapshots(validSnapshots);
+      
+      // Log session ID being used for incremental snapshots
+      console.log('UXCam SDK: 📤 Uploading incremental snapshots with session ID:', {
+        sessionId: sessionId,
+        snapshotCount: validSnapshots.length,
+        url: window.location.href
+      });
 
       fetch(`${config.apiUrl}/api/snapshots/ingest`, {
         method: 'POST',
@@ -1449,12 +1631,12 @@
             }
           });
 
-          // Track page unload - stop recording immediately
+          // Track page unload - flush data but DON'T clear session (for continuous recording across pages)
           window.addEventListener('beforeunload', () => {
-            console.log('UXCam SDK: Page unloading, ending session');
+            console.log('UXCam SDK: Page unloading, flushing data (session continues across pages)');
             trackEvent('page_unload');
             
-            // End session immediately
+            // Flush data but keep session alive for next page
             if (sessionId && stopRecording) {
               // Stop recording first
               try {
@@ -1468,7 +1650,8 @@
               if (snapshotQueue.length > 0) {
                 console.log('UXCam SDK: Flushing all collected snapshots on page unload', {
                   snapshotCount: snapshotQueue.length,
-                  eventTypes: snapshotQueue.map(s => s?.type)
+                  eventTypes: snapshotQueue.map(s => s?.type),
+                  sessionId: sessionId
                 });
                 // Flush via regular method first (faster)
                 flushSnapshots();
@@ -1477,13 +1660,12 @@
               // Flush remaining events
               flushEvents();
               
-              // Clear session
-              try {
-                localStorage.removeItem('uxcam_session_id');
-                localStorage.removeItem('uxcam_session_timestamp');
-              } catch (e) {
-                // Ignore
-              }
+              // CRITICAL: DO NOT clear localStorage on page unload
+              // This allows the session to continue across page navigations
+              // The session will only be cleared on actual session end (timeout, explicit end, etc.)
+              console.log('UXCam SDK: Keeping session in localStorage for continuous recording across pages', {
+                sessionId: sessionId
+              });
             }
             
             // Send remaining data synchronously using sendBeacon as backup
