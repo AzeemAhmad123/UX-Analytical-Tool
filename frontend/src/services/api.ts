@@ -37,8 +37,9 @@ async function getAuthToken(): Promise<string | null> {
   return session?.access_token || null
 }
 
-// Simple request cache to prevent duplicate concurrent requests
-const requestCache = new Map<string, Promise<any>>()
+// Enhanced request cache with timestamps for stale-while-revalidate
+const requestCache = new Map<string, { promise: Promise<any>, timestamp: number, data?: any }>()
+const CACHE_DURATION_MS = 60 * 1000 // 60 seconds cache for API requests
 
 // API request helper
 async function apiRequest(
@@ -71,12 +72,29 @@ async function apiRequest(
     console.log('🔄 Fetching fresh projects data (cache bypassed)')
   }
   
-  const shouldUseCache = cacheKey && !isProjectsEndpoint && requestCache.has(cacheKey)
-  
-  if (shouldUseCache && cacheKey) {
-    // Return existing promise if request is already in progress
-    console.log('📦 Using cached request for:', url)
-    return requestCache.get(cacheKey)!
+  // Check if we have cached data (stale-while-revalidate)
+  if (cacheKey && !isProjectsEndpoint && requestCache.has(cacheKey)) {
+    const cached = requestCache.get(cacheKey)!
+    const age = Date.now() - cached.timestamp
+    
+    // If request is in progress, return the existing promise
+    if (cached.promise && age < 5000) { // Request started less than 5 seconds ago
+      console.log('📦 Reusing in-progress request for:', url)
+      return cached.promise
+    }
+    
+    // If we have cached data and it's fresh, return it immediately
+    if (cached.data && age < CACHE_DURATION_MS) {
+      console.log(`⚡ Returning cached data for: ${url} (age: ${Math.round(age / 1000)}s)`)
+      // Still fetch in background for stale-while-revalidate (but don't block)
+      if (age > CACHE_DURATION_MS / 2) { // If cache is more than 50% expired, refresh in background
+        // Background refresh - don't await
+        apiRequest(endpoint, options).catch(() => {
+          // Silently fail background refresh
+        })
+      }
+      return Promise.resolve(cached.data)
+    }
   }
   
   const requestPromise = (async () => {
@@ -156,10 +174,18 @@ async function apiRequest(
         }
       }
       
-      // Remove from cache after successful response
-      // For projects endpoint, never cache to ensure fresh data
-      if (cacheKey && !isProjectsEndpoint) {
-        requestCache.delete(cacheKey)
+      // Store in cache after successful response (stale-while-revalidate)
+      // For projects endpoint, cache in memory but with shorter duration
+      if (cacheKey) {
+        if (isProjectsEndpoint) {
+          // Projects: cache for 5 minutes (they don't change often)
+          requestCache.set(cacheKey, { promise: Promise.resolve(data), timestamp: Date.now(), data })
+          setTimeout(() => requestCache.delete(cacheKey), 5 * 60 * 1000)
+        } else {
+          // Other endpoints: cache for 60 seconds
+          requestCache.set(cacheKey, { promise: Promise.resolve(data), timestamp: Date.now(), data })
+          setTimeout(() => requestCache.delete(cacheKey), CACHE_DURATION_MS)
+        }
       }
       
       return data
@@ -185,11 +211,11 @@ async function apiRequest(
     }
   })()
   
-  // Cache the promise for GET requests (but not for projects endpoint)
-  if (cacheKey && !isProjectsEndpoint) {
+  // Store promise in cache for GET requests (for deduplication)
+  if (cacheKey) {
     const key = cacheKey // TypeScript now knows cacheKey is not null
-    requestCache.set(key, requestPromise)
-    setTimeout(() => requestCache.delete(key), 1000)
+    requestCache.set(key, { promise: requestPromise, timestamp: Date.now() })
+    // Don't auto-delete - let it expire naturally or be replaced with data
   }
   
   return requestPromise

@@ -1,6 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Play, Download, MoreVertical, Filter, Search, Trash2, Flame, AlertTriangle, Snowflake, X, Monitor, Smartphone } from 'lucide-react'
+import { Play, Download, MoreVertical, Filter, Search, Trash2, Flame, AlertTriangle, Snowflake, X, Monitor, Smartphone, RefreshCw } from 'lucide-react'
 import { sessionsAPI, projectsAPI } from '../../services/api'
 import { DateRangePicker } from '../../components/dashboard/DateRangePicker'
 import '../../components/dashboard/Dashboard.css'
@@ -48,7 +48,12 @@ const detectPlatform = (session: any): 'mobile' | 'web' => {
 // LocalStorage cache helpers for sessions
 const SESSIONS_CACHE_PREFIX = 'uxcam_sessions_cache_'
 const LAST_PROJECT_KEY = 'uxcam_last_selected_project'
-const CACHE_EXPIRY_MS = 5 * 60 * 1000 // 5 minutes cache expiry
+const CACHE_EXPIRY_MS = 2 * 60 * 60 * 1000 // 2 hours cache expiry (longer cache for better performance)
+const MIN_FETCH_INTERVAL_MS = 60 * 1000 // Minimum 60 seconds between fetches (throttling)
+
+// Memory cache for request deduplication and throttling
+const memoryCache = new Map<string, { data: any, timestamp: number, promise?: Promise<any> }>()
+const lastFetchTime = new Map<string, number>() // Track last fetch time per project
 
 const getLastSelectedProject = (): string | null => {
   try {
@@ -69,6 +74,18 @@ const setLastSelectedProject = (projectId: string): void => {
 const getCachedSessions = (projectId: string): any[] => {
   try {
     const cacheKey = `${SESSIONS_CACHE_PREFIX}${projectId}`
+    
+    // Check memory cache first (fastest)
+    const memoryCached = memoryCache.get(cacheKey)
+    if (memoryCached && Array.isArray(memoryCached.data)) {
+      const age = Date.now() - memoryCached.timestamp
+      if (age < CACHE_EXPIRY_MS) {
+        console.log(`⚡ Loaded ${memoryCached.data.length} sessions from memory cache for project ${projectId}`)
+        return memoryCached.data
+      }
+    }
+    
+    // Check localStorage cache
     const cached = localStorage.getItem(cacheKey)
     if (!cached) return []
     
@@ -77,11 +94,14 @@ const getCachedSessions = (projectId: string): any[] => {
     
     // Return cached sessions if not expired
     if (age < CACHE_EXPIRY_MS && Array.isArray(sessions)) {
-      console.log(`📦 Loaded ${sessions.length} cached sessions for project ${projectId}`)
+      // Also store in memory cache for faster access
+      memoryCache.set(cacheKey, { data: sessions, timestamp })
+      console.log(`📦 Loaded ${sessions.length} cached sessions for project ${projectId} (from localStorage)`)
       return sessions
     } else {
       // Cache expired, remove it
       localStorage.removeItem(cacheKey)
+      memoryCache.delete(cacheKey)
       return []
     }
   } catch (error) {
@@ -93,15 +113,31 @@ const getCachedSessions = (projectId: string): any[] => {
 const setCachedSessions = (projectId: string, sessions: any[]): void => {
   try {
     const cacheKey = `${SESSIONS_CACHE_PREFIX}${projectId}`
+    const timestamp = Date.now()
     const cacheData = {
       sessions,
-      timestamp: Date.now()
+      timestamp
     }
+    
+    // Store in both memory and localStorage
+    memoryCache.set(cacheKey, { data: sessions, timestamp })
     localStorage.setItem(cacheKey, JSON.stringify(cacheData))
-    console.log(`💾 Cached ${sessions.length} sessions for project ${projectId}`)
+    console.log(`💾 Cached ${sessions.length} sessions for project ${projectId} (memory + localStorage)`)
   } catch (error) {
     console.error('Error caching sessions:', error)
   }
+}
+
+// Check if we should throttle the request (prevent too frequent fetches)
+const shouldThrottleFetch = (projectId: string): boolean => {
+  const lastFetch = lastFetchTime.get(projectId) || 0
+  const timeSinceLastFetch = Date.now() - lastFetch
+  return timeSinceLastFetch < MIN_FETCH_INTERVAL_MS
+}
+
+// Mark fetch time for throttling
+const markFetchTime = (projectId: string): void => {
+  lastFetchTime.set(projectId, Date.now())
 }
 
 const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
@@ -260,6 +296,7 @@ export function SessionsList() {
   }, [selectedProject])
   
   // Load fresh sessions in background after cached sessions are shown
+  // Uses stale-while-revalidate: shows cached data immediately, fetches fresh data in background
   useEffect(() => {
     if (!selectedProject) return
     
@@ -276,49 +313,86 @@ export function SessionsList() {
       }))
     }
     
-    // Load fresh sessions in background (non-blocking)
-    // Cached sessions are already shown, so this just updates them
-    loadSessions()
+    // Stale-while-revalidate: Load fresh sessions in background only if not throttled
+    // Cached sessions are already shown, so this just updates them silently
+    if (!shouldThrottleFetch(selectedProject)) {
+      loadSessions()
+    } else {
+      const timeUntilNextFetch = MIN_FETCH_INTERVAL_MS - (Date.now() - (lastFetchTime.get(selectedProject) || 0))
+      console.log(`⏸️ Throttled: Next fetch in ${Math.round(timeUntilNextFetch / 1000)}s`)
+    }
     
-    // Check for new sessions in background (every 5 seconds for faster updates)
+    // Check for new sessions in background (throttled to 60 seconds minimum)
     let intervalId: number | null = null
-    // Check immediately after a short delay to ensure checkForNewSessions is defined
-    const initialTimeout = setTimeout(() => {
-      checkForNewSessions()
-    }, 1000) // Check after 1 second
+    const POLL_INTERVAL_MS = 60 * 1000 // 60 seconds minimum (reduced from 5 seconds)
     
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
-        checkForNewSessions()
-      }, 5000) // Check every 5 seconds for faster updates
-    }, 2000) // Start interval after 2 seconds
+        // Only check if not throttled
+        if (!shouldThrottleFetch(selectedProject)) {
+          checkForNewSessions()
+        }
+      }, POLL_INTERVAL_MS)
+    }, POLL_INTERVAL_MS) // Start after initial delay
     
-    // Also check when page becomes visible (user comes back to tab)
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        checkForNewSessions()
-        loadSessions() // Also reload all sessions when tab becomes visible
-      }
-    }
-    
-    document.addEventListener('visibilitychange', handleVisibilityChange)
+    // REMOVED: visibilitychange handler that was causing excessive refetches
+    // Tab focus no longer triggers refetch - use manual refresh instead
     
     return () => {
-      clearTimeout(initialTimeout)
       clearTimeout(timeout)
       if (intervalId) {
         clearInterval(intervalId)
       }
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [selectedProject])
 
-  const loadProjects = async () => {
+  const loadProjects = async (forceRefresh: boolean = false) => {
     try {
-      // API already has 60-second timeout, so we don't need Promise.race here
-      // This prevents premature timeouts when the backend is processing
-      const response = await projectsAPI.getAll() as any
+      // Check memory cache first (projects don't change often)
+      const cacheKey = 'projects:all'
+      const cached = memoryCache.get(cacheKey)
+      if (!forceRefresh && cached && Array.isArray(cached.data)) {
+        const age = Date.now() - cached.timestamp
+        // Use longer cache for projects (5 minutes) since they don't change often
+        if (age < 5 * 60 * 1000) {
+          console.log(`⚡ Using cached projects (${cached.data.length} projects)`)
+          const projectsList = cached.data
+          if (projectsList.length > 0) {
+            const projectId = projectsList[0].id
+            setSelectedProject(projectId)
+            setLastSelectedProject(projectId)
+          }
+          return
+        }
+      }
+      
+      // Check if request is already in progress (deduplication)
+      if (cached?.promise) {
+        console.log('🔄 Projects request already in progress, reusing promise')
+        try {
+          const response = await cached.promise as any
+          const projectsList = response.projects || []
+          if (projectsList.length > 0) {
+            const projectId = projectsList[0].id
+            setSelectedProject(projectId)
+            setLastSelectedProject(projectId)
+          }
+          return
+        } catch (e) {
+          // Continue to make new request if cached one failed
+        }
+      }
+      
+      // Make API request
+      const requestPromise = projectsAPI.getAll() as Promise<any>
+      memoryCache.set(cacheKey, { data: null, timestamp: Date.now(), promise: requestPromise })
+      
+      const response = await requestPromise
       const projectsList = response.projects || []
+      
+      // Cache projects in memory
+      memoryCache.set(cacheKey, { data: projectsList, timestamp: Date.now() })
+      
       // setProjects(projectsList)
       if (projectsList.length > 0) {
         const projectId = projectsList[0].id
@@ -329,6 +403,9 @@ export function SessionsList() {
           // No projects - nothing to do
         }
     } catch (error: any) {
+      // Clear promise from cache on error
+      memoryCache.delete('projects:all')
+      
       // Only log non-timeout errors (timeout might be expected on slow connections)
       if (error?.message !== 'Request timeout') {
         console.error('Error loading projects:', error)
@@ -336,26 +413,53 @@ export function SessionsList() {
     }
   }
 
-  const loadSessions = async () => {
+  const loadSessions = async (forceRefresh: boolean = false) => {
     if (!selectedProject) {
       console.log('⚠️ loadSessions: No selected project')
       return
     }
+    
+    // Throttling: Don't fetch if last fetch was too recent (unless forced)
+    if (!forceRefresh && shouldThrottleFetch(selectedProject)) {
+      const timeUntilNextFetch = MIN_FETCH_INTERVAL_MS - (Date.now() - (lastFetchTime.get(selectedProject) || 0))
+      console.log(`⏸️ Request throttled: Next fetch allowed in ${Math.round(timeUntilNextFetch / 1000)}s`)
+      return
+    }
+    
+    // Request deduplication: Check if request is already in progress
+    const cacheKey = `loadSessions:${selectedProject}:${dateRange.start.getTime()}:${dateRange.end.getTime()}`
+    const existingRequest = memoryCache.get(cacheKey)
+    if (existingRequest?.promise) {
+      console.log('🔄 Request already in progress, reusing promise')
+      try {
+        await existingRequest.promise
+        return
+      } catch (e) {
+        // If request failed, continue to make new request
+      }
+    }
+    
     try {
-      console.log('📡 Loading sessions for project:', selectedProject)
+      console.log('📡 Loading sessions for project:', selectedProject, forceRefresh ? '(forced refresh)' : '')
       console.log('📅 Date range:', {
         start: dateRange.start.toISOString(),
         end: dateRange.end.toISOString()
       })
       
-      // Load in background without blocking UI - no loading spinner
-      // API already has 60-second timeout, so we don't need Promise.race here
-      // This prevents premature timeouts when the backend is processing large queries
-      const response = await sessionsAPI.getByProject(selectedProject, {
+      // Mark fetch time for throttling
+      markFetchTime(selectedProject)
+      
+      // Create request promise and store it for deduplication
+      const requestPromise = sessionsAPI.getByProject(selectedProject, {
         limit: 50, // Reduced to 50 for faster initial load - can load more if needed
         start_date: dateRange.start.toISOString(),
         end_date: dateRange.end.toISOString()
-      }) as any
+      }) as Promise<any>
+      
+      // Store promise for deduplication
+      memoryCache.set(cacheKey, { data: null, timestamp: Date.now(), promise: requestPromise })
+      
+      const response = await requestPromise
       console.log('✅ Sessions API response:', {
         hasResponse: !!response,
         hasSessions: !!(response?.sessions),
@@ -377,58 +481,100 @@ export function SessionsList() {
       // Merge with existing sessions (from cache or previous load)
       const mergedSessions = mergeSessions(allSessions, sortedSessions)
       
-      // Update cache with merged sessions
-      setCachedSessions(selectedProject, mergedSessions)
+      // Only update if data actually changed (stale-while-revalidate optimization)
+      const hasChanged = JSON.stringify(mergedSessions.map(s => s.id || s.session_id)) !== 
+                         JSON.stringify(allSessions.map(s => s.id || s.session_id))
       
-      setAllSessions(mergedSessions)
-      // Apply current filters
-      applyFilters(mergedSessions, activeFilters, platformFilter)
+      if (hasChanged || allSessions.length === 0) {
+        // Update cache with merged sessions
+        setCachedSessions(selectedProject, mergedSessions)
+        
+        setAllSessions(mergedSessions)
+        // Apply current filters
+        applyFilters(mergedSessions, activeFilters, platformFilter)
+        console.log('✅ Sessions updated with fresh data')
+      } else {
+        console.log('ℹ️ No changes detected, keeping existing sessions')
+      }
+      
       // Mark that we've successfully loaded from database
       setHasLoadedFromDatabase(true)
-    } catch (error: any) {
-      // Log all errors for debugging
-      console.error('❌ Error loading sessions:', {
-        message: error?.message,
-        name: error?.name,
-        stack: error?.stack,
-        error: error
-      })
-      // DON'T clear sessions on error - keep cached sessions visible
-      // Only clear if we have no cached sessions
-      if (allSessions.length === 0) {
-        // No cached sessions, show empty state
-        setAllSessions([])
-        setSessions([])
-        // If we've tried to load and got an error, mark as loaded (so we show "no sessions" not "loading")
-        // But only if it's not a timeout (timeout means we're still trying)
-        if (error?.message !== 'Request timeout') {
+      
+      // Clear request promise from cache
+      memoryCache.delete(cacheKey)
+      } catch (error: any) {
+        // Clear request promise from cache on error
+        memoryCache.delete(cacheKey)
+        
+        // Log all errors for debugging
+        console.error('❌ Error loading sessions:', {
+          message: error?.message,
+          name: error?.name,
+          stack: error?.stack,
+          error: error
+        })
+        // DON'T clear sessions on error - keep cached sessions visible
+        // Only clear if we have no cached sessions
+        if (allSessions.length === 0) {
+          // No cached sessions, show empty state
+          setAllSessions([])
+          setSessions([])
+          // If we've tried to load and got an error, mark as loaded (so we show "no sessions" not "loading")
+          // But only if it's not a timeout (timeout means we're still trying)
+          if (error?.message !== 'Request timeout') {
+            setHasLoadedFromDatabase(true)
+          }
+        } else {
+          // Keep cached sessions visible even if API fails (stale-while-revalidate)
+          console.log('⚠️ API error, but keeping cached sessions visible')
+          // Mark as loaded since we have cached data to show
           setHasLoadedFromDatabase(true)
         }
-      } else {
-        // Keep cached sessions visible even if API fails
-        console.log('⚠️ API error, but keeping cached sessions visible')
-        // Mark as loaded since we have cached data to show
-        setHasLoadedFromDatabase(true)
       }
-    }
     // No finally block - we don't set loading state anymore
   }
 
-  // Check for new sessions in background (non-disruptive)
+  // Check for new sessions in background (non-disruptive, throttled)
   const checkForNewSessions = async () => {
     if (!selectedProject) return
     
+    // Throttling: Don't check if last check was too recent
+    if (shouldThrottleFetch(selectedProject)) {
+      return
+    }
+    
+    // Request deduplication
+    const cacheKey = `checkNewSessions:${selectedProject}`
+    const existingRequest = memoryCache.get(cacheKey)
+    if (existingRequest?.promise) {
+      try {
+        await existingRequest.promise
+        return
+      } catch (e) {
+        // Continue if request failed
+      }
+    }
+    
     try {
-      // Always check from the last 30 minutes to current time (increased from 10 minutes)
+      // Always check from the last 30 minutes to current time
       // This ensures new sessions are always found regardless of date range filter
       const recentCheckTime = new Date(Date.now() - 30 * 60 * 1000) // Last 30 minutes
       const now = new Date()
       
-      const response = await sessionsAPI.getByProject(selectedProject, {
+      // Mark fetch time for throttling
+      markFetchTime(selectedProject)
+      
+      // Create request promise for deduplication
+      const requestPromise = sessionsAPI.getByProject(selectedProject, {
         limit: 30, // Reduced limit for faster new session checks
         start_date: recentCheckTime.toISOString(),
         end_date: now.toISOString() // Always use current time, not dateRange.end
-      })
+      }) as Promise<any>
+      
+      // Store promise for deduplication
+      memoryCache.set(cacheKey, { data: null, timestamp: Date.now(), promise: requestPromise })
+      
+      const response = await requestPromise
       
       const recentSessions = response.sessions || []
       
@@ -469,10 +615,19 @@ export function SessionsList() {
         setAllSessions(mergedSessions)
         // Apply current filters to merged sessions (silently, no loading state)
         applyFilters(mergedSessions, activeFilters, platformFilter)
+        console.log('✅ New sessions merged successfully')
+      } else {
+        console.log('ℹ️ No new sessions found')
       }
+      
+      // Clear request promise from cache
+      memoryCache.delete(cacheKey)
     } catch (error) {
+      // Clear request promise from cache on error
+      memoryCache.delete(cacheKey)
+      
       // Silently fail in background - don't disturb user
-      // Keep existing sessions visible even if check fails
+      // Keep existing sessions visible even if check fails (stale-while-revalidate)
       // Only log in development
       if (import.meta.env.DEV) {
         console.error('Error checking for new sessions:', error)
@@ -482,10 +637,11 @@ export function SessionsList() {
     }
   }
 
-  // Reload sessions when date range changes
+  // Reload sessions when date range changes (but respect throttling)
   useEffect(() => {
     if (selectedProject) {
-      loadSessions() // Reload when date range changes
+      // Force refresh when date range changes (user explicitly changed filter)
+      loadSessions(true) // Force refresh when date range changes
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRange.start.getTime(), dateRange.end.getTime(), selectedProject])
@@ -1102,6 +1258,34 @@ export function SessionsList() {
               </div>
             )}
           </div>
+          <button 
+            onClick={() => {
+              console.log('🔄 Manual refresh triggered')
+              if (selectedProject) {
+                loadSessions(true) // Force refresh
+              }
+            }}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem', 
+              padding: '0.5rem 1rem', 
+              backgroundColor: '#f3f4f6', 
+              color: '#374151', 
+              border: '1px solid #d1d5db', 
+              borderRadius: '5px',
+              fontSize: '0.875rem',
+              fontWeight: '500',
+              cursor: 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e5e7eb'}
+            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+            title="Refresh sessions (bypasses cache and throttling)"
+          >
+            <RefreshCw style={{ width: '14px', height: '14px' }} />
+            Refresh
+          </button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           {/* Platform Filter - Compact style */}
