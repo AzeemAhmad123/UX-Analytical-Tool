@@ -28,6 +28,28 @@ if (typeof window !== 'undefined') {
 // The secret key is ONLY for backend/server-side operations and should NEVER
 // be exposed in client-side code. Keep it secure in your backend environment variables.
 
+// Custom fetch with increased timeout for Supabase requests
+const customFetch = async (url: string, options: RequestInit = {}) => {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    })
+    clearTimeout(timeoutId)
+    return response
+  } catch (error: any) {
+    clearTimeout(timeoutId)
+    // If it's a timeout, throw a more descriptive error
+    if (error.name === 'AbortError') {
+      throw new Error('Request timeout - please check your internet connection')
+    }
+    throw error
+  }
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
@@ -40,7 +62,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   global: {
     headers: {
       'x-client-info': 'uxcam-frontend'
-    }
+    },
+    fetch: customFetch // Use custom fetch with timeout
   },
   // Configure realtime and storage options
   realtime: {

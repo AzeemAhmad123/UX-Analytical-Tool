@@ -83,35 +83,51 @@ async function apiRequest(
       // Increased timeout to 60 seconds for session replay and large data loads
       const controller = new AbortController()
       const timeoutDuration = 60000 // 60 second timeout for better compatibility
-      const timeoutId = setTimeout(() => controller.abort(), timeoutDuration)
+      const timeoutId = setTimeout(() => {
+        controller.abort()
+      }, timeoutDuration)
       
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: controller.signal
-      })
-      
-      clearTimeout(timeoutId)
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
-        // Use message if available, otherwise use error, otherwise use status
-        const errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+      try {
+        const response = await fetch(url, {
+          ...options,
+          headers,
+          signal: controller.signal
+        })
         
-        // Log detailed error for projects endpoint
-        if (endpoint === '/api/projects') {
-          console.error('❌ Projects API Error:', {
-            status: response.status,
-            statusText: response.statusText,
-            error,
-            url
-          })
+        clearTimeout(timeoutId)
+        
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
+          // Use message if available, otherwise use error, otherwise use status
+          let errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+          
+          // Provide more helpful messages for common timeout/error codes
+          if (response.status === 504) {
+            errorMessage = 'Gateway timeout - the server is taking too long to respond. Please try again.'
+          } else if (response.status === 503) {
+            errorMessage = 'Service temporarily unavailable. Please try again in a few moments.'
+          } else if (response.status === 502) {
+            errorMessage = 'Bad gateway - server connection issue. Please try again.'
+          } else if (response.status === 522) {
+            errorMessage = 'Connection timed out. Please check your internet connection.'
+          }
+          
+          // Log detailed error for projects endpoint
+          if (endpoint === '/api/projects') {
+            console.error('❌ Projects API Error:', {
+              status: response.status,
+              statusText: response.statusText,
+              error,
+              url
+            })
+          }
+          
+          const apiError = new Error(errorMessage) as any
+          apiError.status = response.status
+          throw apiError
         }
-        
-        throw new Error(errorMessage)
-      }
 
-      const data = await response.json()
+        const data = await response.json()
       
       // Log API responses for debugging (only for projects endpoint)
       if (endpoint === '/api/projects' && (!options.method || options.method === 'GET')) {

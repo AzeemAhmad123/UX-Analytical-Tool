@@ -130,10 +130,10 @@ const Login = () => {
       while (attempts < maxAttempts) {
         attempts++
         try {
-          // Add timeout for login (15 seconds max - increased for slow connections)
+          // Add timeout for login (30 seconds max - increased for slow connections and Supabase)
           const loginPromise = auth.signIn(trimmedEmail, formData.password)
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 15000)
+            setTimeout(() => reject(new Error('Login timeout - please check your internet connection')), 30000)
           )
           
           const { data, error: signInError } = await Promise.race([loginPromise, timeoutPromise]) as any
@@ -196,26 +196,33 @@ const Login = () => {
           lastError = err
           console.error(`Login error (attempt ${attempts}/${maxAttempts}):`, err)
           
-          // Retry on network/timeout errors
+          // Retry on network/timeout errors (including 504 Gateway Timeout)
           if (attempts < maxAttempts && (
             err.message?.includes('timeout') ||
             err.message?.includes('Failed to fetch') ||
             err.message?.includes('network') ||
             err.message?.includes('522') ||
-            err.message?.includes('CORS')
+            err.message?.includes('504') ||
+            err.message?.includes('Gateway Timeout') ||
+            err.message?.includes('CORS') ||
+            err.status === 504 ||
+            err.status === 503 ||
+            err.status === 502
           )) {
             console.log(`Retrying login (attempt ${attempts + 1}/${maxAttempts})...`)
-            await new Promise(resolve => setTimeout(resolve, 1000 * attempts)) // Exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 2000 * attempts)) // Exponential backoff (2s, 4s, 6s)
             continue
           }
           
           // If we get here, it's a non-retryable error or we've exhausted retries
-          if (err.message?.includes('timeout')) {
-            setError('Login is taking too long. Please check your internet connection and try again.')
-          } else if (err.message?.includes('Failed to fetch') || err.message?.includes('network') || err.message?.includes('522')) {
+          if (err.message?.includes('timeout') || err.status === 504) {
+            setError('Login is taking too long. The server may be experiencing high load. Please wait a moment and try again.')
+          } else if (err.message?.includes('Failed to fetch') || err.message?.includes('network') || err.message?.includes('522') || err.status === 503) {
             setError('Unable to connect to the server. Please check your internet connection and try again. If the problem persists, the service may be temporarily unavailable.')
           } else if (err.message?.includes('CORS')) {
             setError('Connection blocked. Please check your browser settings or try again later.')
+          } else if (err.status === 502) {
+            setError('Server is temporarily unavailable. Please try again in a few moments.')
           } else {
             setError(err.message || 'An unexpected error occurred. Please try again.')
           }
