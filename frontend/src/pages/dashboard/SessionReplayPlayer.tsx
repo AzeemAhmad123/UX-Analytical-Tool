@@ -366,19 +366,13 @@ export function SessionReplayPlayer() {
         setIsLoadingData(true)
       }
       
-      // Load fresh data in background (non-blocking)
+      // Load fresh data in parallel for faster loading (non-blocking)
       // Cached data is already shown, so this just updates it
-      loadSessionData()
-        .then(() => {
-          if (isMounted) {
-            return loadSnapshots()
-          }
-        })
-        .then(() => {
-          if (isMounted) {
-            return loadEvents()
-          }
-        })
+      Promise.all([
+        loadSessionData(),
+        loadSnapshots(),
+        loadEvents()
+      ])
         .then(() => {
           // Data loading complete
           if (isMounted) {
@@ -858,26 +852,8 @@ export function SessionReplayPlayer() {
       // Load in background without blocking UI
       setError(null)
       
-      console.log('📥 Loading snapshots for session:', { projectId, sessionId })
-      
       // Use sessions API which returns snapshots in correct format
       const data = await sessionsAPI.getById(projectId, sessionId)
-      
-      console.log('📦 Received session data:', {
-        hasSnapshots: !!data.snapshots,
-        snapshotsType: typeof data.snapshots,
-        snapshotsLength: Array.isArray(data.snapshots) ? data.snapshots.length : 'N/A',
-        totalSnapshots: data.total_snapshots,
-        snapshotBatches: data.snapshot_batches,
-        dataKeys: Object.keys(data),
-        debugInfo: data._debug, // Log debug info from backend
-        fullData: data // Log full response for debugging
-      })
-      
-      // Log debug info if available
-      if (data._debug) {
-        console.log('🔍 Backend Debug Info:', data._debug)
-      }
       
       let events: any[] = []
       
@@ -911,16 +887,12 @@ export function SessionReplayPlayer() {
       // Backend returns snapshots array directly
       if (data.snapshots && Array.isArray(data.snapshots)) {
         events = data.snapshots
-        console.log(`✅ Loaded ${events.length} events from snapshots array`)
-        console.log('First event sample:', events[0])
-        console.log('Event types:', events.slice(0, 10).map((e: any) => ({ type: e.type, hasData: !!e.data, hasTimestamp: !!e.timestamp })))
       } else if (data.snapshots) {
         // Fallback for other formats
         if (typeof data.snapshots === 'string') {
           try {
             const parsed = JSON.parse(data.snapshots)
             events = Array.isArray(parsed) ? parsed : [parsed]
-            console.log(`✅ Parsed ${events.length} events from string`)
           } catch (parseError) {
             console.error('❌ Failed to parse snapshots string:', parseError)
             setError('Invalid snapshot data format')
@@ -928,7 +900,6 @@ export function SessionReplayPlayer() {
           }
         } else {
           events = [data.snapshots]
-          console.log('✅ Wrapped single snapshot in array')
         }
       }
       
@@ -938,7 +909,6 @@ export function SessionReplayPlayer() {
         const hasVideoFlag = data.session?.has_video || data.session?.hasVideo || false
         
         if (hasVideoFlag && videoUrl) {
-          console.log('📹 Mobile session detected - using video instead of snapshots:', videoUrl)
           setHasVideo(true)
           setVideoUrl(videoUrl)
           const videoDuration = data.session?.video_duration || data.session?.videoDuration
@@ -949,7 +919,6 @@ export function SessionReplayPlayer() {
           return // Don't show error, video will be displayed
         } else if (videoUrl) {
           // If video URL exists but flag is not set, still show video
-          console.log('📹 Video URL found (flag not set):', videoUrl)
           setHasVideo(true)
           setVideoUrl(videoUrl)
           const videoDuration = data.session?.video_duration || data.session?.videoDuration
@@ -960,19 +929,9 @@ export function SessionReplayPlayer() {
           return // Don't show error, video will be displayed
         }
         
-        console.error('❌ No snapshots found in response!', {
-          dataKeys: Object.keys(data),
-          hasSnapshots: !!data.snapshots,
-          snapshotsValue: data.snapshots,
-          hasVideo: data.session?.has_video,
-          videoUrl: data.session?.video_url,
-          responseStructure: JSON.stringify(data).substring(0, 500)
-        })
         setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
         return
       }
-      
-      console.log(`✅ Processing ${events.length} events before validation`)
       
       // Handle old wrapped format if present
       events = events.map((event: any) => {
@@ -983,35 +942,42 @@ export function SessionReplayPlayer() {
         return event
       })
       
-      // Validate events have required rrweb properties
-      events = events.filter((event: any) => {
-        return event && 
-               typeof event.type === 'number' && 
-               event.data !== undefined
-      })
+      // Validate events have required rrweb properties and normalize timestamps in one pass
+      let firstTimestamp: number | null = null
+      const validEvents: any[] = []
       
-      // Ensure events have timestamps (rrweb requires this)
-      events = events.map((event: any, index) => {
-        if (!event.timestamp) {
-          if (index > 0) {
-            // Estimate timestamp based on previous event
-            const prevEvent = events[index - 1]
-            event.timestamp = (prevEvent.timestamp || 0) + 100 // 100ms between events
+      for (let i = 0; i < events.length; i++) {
+        const event = events[i]
+        if (!event || typeof event.type !== 'number' || event.data === undefined) {
+          continue
+        }
+        
+        // Normalize timestamp
+        let timestamp = event.timestamp
+        if (!timestamp) {
+          if (i > 0 && validEvents.length > 0) {
+            const prevEvent = validEvents[validEvents.length - 1]
+            timestamp = (prevEvent.timestamp || 0) + 100 // 100ms between events
           } else {
-            // First event: use current time minus estimated duration
-            event.timestamp = Date.now() - (events.length * 100)
+            timestamp = 0
           }
+        } else if (typeof timestamp === 'string') {
+          timestamp = new Date(timestamp).getTime()
         }
-        // Ensure timestamp is a number
-        if (typeof event.timestamp === 'string') {
-          event.timestamp = new Date(event.timestamp).getTime()
+        
+        if (firstTimestamp === null) {
+          firstTimestamp = timestamp
         }
-        return event
-      })
+        
+        validEvents.push({
+          ...event,
+          timestamp
+        })
+      }
       
       // Sort by timestamp to ensure chronological order
       // This is critical for navigation events - Type 4 Meta must come before new Type 2 snapshots
-      events.sort((a: any, b: any) => {
+      validEvents.sort((a: any, b: any) => {
         const timeA = a.timestamp || 0
         const timeB = b.timestamp || 0
         // If timestamps are equal, prioritize Type 4 (navigation) before Type 2 (new page snapshot)
@@ -1022,43 +988,12 @@ export function SessionReplayPlayer() {
         return timeA - timeB
       })
       
-      // Log event order for debugging navigation
-      const type4Events = events.filter((e: any) => e.type === 4)
-      const type2Events = events.filter((e: any) => e.type === 2)
-      if (type4Events.length > 0 || type2Events.length > 1) {
-        console.log('🔍 Navigation events order check:', {
-          type4Count: type4Events.length,
-          type2Count: type2Events.length,
-          type4Positions: type4Events.map((e: any) => ({
-            index: events.indexOf(e),
-            timestamp: e.timestamp,
-            href: e.data?.href || e.data?.url
-          })),
-          type2Positions: type2Events.map((e: any) => ({
-            index: events.indexOf(e),
-            timestamp: e.timestamp
-          }))
-        })
-      }
+      events = validEvents
       
-      console.log(`Loaded ${events.length} snapshot events`, {
-        firstEvent: events[0],
-        lastEvent: events[events.length - 1],
-        eventTypes: events.map((e: any) => e.type),
-        firstEventDataSize: events[0]?.data ? JSON.stringify(events[0].data).length : 0,
-        firstEventPreview: events[0]?.data ? JSON.stringify(events[0].data).substring(0, 200) : 'null'
-      })
-      
-      // VALIDATE: Check if type 2 has actual content
+      // Validate type 2 snapshot has content (only warn if issue)
       const type2Event = events.find((e: any) => e.type === 2);
       if (type2Event) {
         const dataSize = JSON.stringify(type2Event.data).length;
-        console.log(`Type 2 snapshot validation in frontend:`, {
-          hasData: !!type2Event.data,
-          dataSize: dataSize,
-          hasChildNodes: type2Event.data?.childNodes?.length > 0
-        });
-        
         if (dataSize < 100) {
           console.warn(`⚠️ Type 2 snapshot data is very small (${dataSize} bytes) - replay may be empty!`);
         }
@@ -1066,21 +1001,10 @@ export function SessionReplayPlayer() {
       
       // Normalize timestamps to be relative (starting from 0) for rrweb
       // This is important because rrweb expects relative timestamps, not absolute Unix timestamps
-      if (events.length > 0) {
-        const timestamps = events
-          .map((e: any) => e.timestamp)
-          .filter((ts: any) => ts && typeof ts === 'number')
-          .sort((a: number, b: number) => a - b)
-        
-        if (timestamps.length > 0) {
-          const firstTimestamp = timestamps[0]
-          // Normalize all timestamps to be relative to the first event (start at 0)
-          events = events.map((event: any) => ({
-            ...event,
-            timestamp: event.timestamp ? event.timestamp - firstTimestamp : 0
-          }))
-          
-          console.log(`✅ Normalized event timestamps (first: ${firstTimestamp}, now relative starting from 0)`)
+      if (events.length > 0 && firstTimestamp !== null && firstTimestamp !== 0) {
+        // Normalize all timestamps to be relative to the first event (start at 0)
+        for (let i = 0; i < events.length; i++) {
+          events[i].timestamp = events[i].timestamp - firstTimestamp
         }
       }
       
@@ -1088,12 +1012,6 @@ export function SessionReplayPlayer() {
       
       // Cache snapshots
       setCachedSnapshots(projectId, sessionId, events)
-      
-      // DON'T recalculate duration from event timestamps - use the session duration from database
-      // The duration is already set correctly in loadSessionData() from session.duration
-      // or calculated from start_time and last_activity_time
-      // Event timestamps are now normalized to be relative, so calculating from them would be wrong
-      console.log(`✅ Using session duration from database (not recalculating from events)`)
     } catch (error: any) {
       // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
       if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
