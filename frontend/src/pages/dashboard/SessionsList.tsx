@@ -315,13 +315,9 @@ export function SessionsList() {
 
   const loadProjects = async () => {
     try {
-      // Increased timeout to 30 seconds to handle slow Supabase queries
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
-      )
-      
-      const apiPromise = projectsAPI.getAll()
-      const response = await Promise.race([apiPromise, timeoutPromise]) as any
+      // API already has 60-second timeout, so we don't need Promise.race here
+      // This prevents premature timeouts when the backend is processing
+      const response = await projectsAPI.getAll() as any
       const projectsList = response.projects || []
       // setProjects(projectsList)
       if (projectsList.length > 0) {
@@ -353,18 +349,13 @@ export function SessionsList() {
       })
       
       // Load in background without blocking UI - no loading spinner
-      // Increased timeout to 30 seconds to handle slow Supabase queries
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
-      )
-      
-      const apiPromise = sessionsAPI.getByProject(selectedProject, {
-        limit: 100, // Reduced from 1000 to 100 for faster initial load
+      // API already has 60-second timeout, so we don't need Promise.race here
+      // This prevents premature timeouts when the backend is processing large queries
+      const response = await sessionsAPI.getByProject(selectedProject, {
+        limit: 50, // Reduced to 50 for faster initial load - can load more if needed
         start_date: dateRange.start.toISOString(),
         end_date: dateRange.end.toISOString()
-      })
-      
-      const response = await Promise.race([apiPromise, timeoutPromise]) as any
+      }) as any
       console.log('✅ Sessions API response:', {
         hasResponse: !!response,
         hasSessions: !!(response?.sessions),
@@ -434,7 +425,7 @@ export function SessionsList() {
       const now = new Date()
       
       const response = await sessionsAPI.getByProject(selectedProject, {
-        limit: 100, // Increased from 50 to catch more recent sessions
+        limit: 30, // Reduced limit for faster new session checks
         start_date: recentCheckTime.toISOString(),
         end_date: now.toISOString() // Always use current time, not dateRange.end
       })

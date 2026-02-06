@@ -82,9 +82,10 @@ async function apiRequest(
   const requestPromise = (async () => {
     
       // Create abort controller for timeout
-      // Increased timeout to 60 seconds for session replay and large data loads
+      // Increased timeout to 90 seconds for session replay and large data loads
+      // This gives the backend more time to process complex queries
       const controller = new AbortController()
-      const timeoutDuration = 60000 // 60 second timeout for better compatibility
+      const timeoutDuration = 90000 // 90 second timeout for better compatibility with slow queries
       const timeoutId = setTimeout(() => {
         controller.abort()
       }, timeoutDuration)
