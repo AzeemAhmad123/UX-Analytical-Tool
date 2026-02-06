@@ -2568,11 +2568,8 @@ export function SessionReplayPlayer() {
         </div>
         
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {sessions.map((s, index) => {
+          {sessions.map((s) => {
             const isSelected = s.id === sessionId || s.session_id === sessionId
-            const duration = s.duration ? Math.round(s.duration / 1000) : 0
-            const mins = Math.floor(duration / 60)
-            const secs = duration % 60
             const sessionKey = s.session_id || s.id
             const isBookmarked = bookmarkedSessions.has(sessionKey)
             
@@ -2654,12 +2651,52 @@ export function SessionReplayPlayer() {
                   <Play className="icon-small" style={{ color: '#6b7280', width: '14px', height: '14px', flexShrink: 0 }} />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.8125rem', fontWeight: '500', color: '#111827', lineHeight: '1.2' }}>
-                    {mins}:{secs.toString().padStart(2, '0')}
-                  </div>
-                  <div style={{ fontSize: '0.6875rem', color: '#9ca3af', lineHeight: '1.2' }}>
-                    Session {index + 1}
-                  </div>
+                  {(() => {
+                    // Format time/date: "23:45 - 01 Feb 2026"
+                    const startTime = s.start_time ? new Date(s.start_time) : null
+                    const timeStr = startTime 
+                      ? `${startTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} - ${startTime.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}`
+                      : '—'
+                    
+                    // Get city and country
+                    const city = (s as any).location?.city ||
+                                 s.device_info?.city || 
+                                 (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).city : null) ||
+                                 s.user_properties?.city || 
+                                 null
+                    const country = (s as any).location?.country ||
+                                   s.device_info?.country || 
+                                   (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).country : null) ||
+                                   s.user_properties?.country || 
+                                   null
+                    
+                    // Format duration
+                    const duration = s.duration ? Math.round(s.duration / 1000) : 0
+                    const mins = Math.floor(duration / 60)
+                    const secs = duration % 60
+                    const durationStr = `${mins}:${secs.toString().padStart(2, '0')}`
+                    
+                    return (
+                      <>
+                        <div style={{ fontSize: '0.75rem', fontWeight: '500', color: '#111827', lineHeight: '1.3', marginBottom: '0.125rem' }}>
+                          {timeStr}
+                        </div>
+                        {city && (
+                          <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2' }}>
+                            {city}
+                          </div>
+                        )}
+                        {country && (
+                          <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2', marginBottom: '0.125rem' }}>
+                            {country}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.625rem', color: '#9ca3af', lineHeight: '1.2' }}>
+                          {durationStr}
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
             )
