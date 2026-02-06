@@ -6,7 +6,7 @@
 }
 
 .dashboard-sidebar {
-  width: 224px;
+  width: 180px;
   background-color: white;
   border-right: 1px solid #e5e7eb;
   display: flex;
@@ -44,7 +44,7 @@
 }
 
 .sidebar-logo {
-  padding: 0.75rem 1rem;
+  padding: 0.75rem;
   border-bottom: 1px solid #e5e7eb;
 }
 
@@ -80,7 +80,7 @@
 }
 
 .app-selector {
-  padding: 0.75rem;
+  padding: 0.625rem;
   border-bottom: 1px solid #e5e7eb;
 }
 
@@ -135,7 +135,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem;
   border-radius: 6px;
   transition: all 0.2s;
   text-decoration: none;
@@ -201,7 +201,7 @@
 }
 
 .sidebar-footer {
-  padding: 0.75rem;
+  padding: 0.625rem;
   border-top: 1px solid #e5e7eb;
   margin-top: auto;
 }
