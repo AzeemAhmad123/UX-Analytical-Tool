@@ -664,10 +664,22 @@ export function SessionsList() {
         }, 0) / webSessions.length 
       : 0
 
-    // Page exits (web-specific: sessions that ended quickly)
+    // Page exits (web-specific: sessions that ended quickly or abruptly)
+    // A page exit is when a user leaves quickly (bounce) or the session ends unexpectedly
     const pageExits = webSessions.filter(s => {
-      const duration = (s.duration || 0) / 1000
-      return duration < 10 && s.event_count < 3
+      const duration = (s.duration || 0) / 1000 // Convert to seconds
+      const events = s.event_count || 0
+      const snapshots = s.snapshot_count || 0
+      
+      // Criteria for page exit:
+      // 1. Very short duration (< 10 seconds) AND very few events (< 5)
+      // 2. OR short duration (< 5 seconds) regardless of events (immediate bounce)
+      // 3. OR has snapshots but very short duration (loaded but left quickly)
+      const isQuickExit = duration < 10 && events < 5
+      const isImmediateBounce = duration < 5
+      const isLoadedButLeftQuickly = snapshots > 0 && duration < 8 && events < 3
+      
+      return isQuickExit || isImmediateBounce || isLoadedButLeftQuickly
     }).length
 
     // Screen transitions (mobile-specific: navigation between screens)
@@ -690,16 +702,52 @@ export function SessionsList() {
       ? (sessionsToCalculate.length > 0 ? totalTime / sessionsToCalculate.length : 0)
       : mobileAverageTime
 
-    // Screen visits (page views) - use page_view_count if available, otherwise estimate from event_count
-    // page_view_count is more accurate as it only counts actual page views, not all events
+    // Screen visits (page views) - use page_view_count if available, otherwise estimate from session activity
+    // Screen visits = number of unique pages/screens viewed during sessions
     const screenVisits = sessionsToCalculate.reduce((sum, s) => {
-      // Prefer page_view_count if available (from backend), otherwise estimate
-      if (s.page_view_count !== undefined && s.page_view_count !== null) {
+      // Prefer page_view_count if available and > 0 (from backend) - this is the most accurate
+      if (s.page_view_count !== undefined && s.page_view_count !== null && s.page_view_count > 0) {
         return sum + s.page_view_count
       }
-      // Fallback: estimate 1 page view per session (minimum) if no page_view_count
-      // This is better than counting all events, but still not perfect
-      return sum + 1
+      
+      // Fallback: Estimate screen visits from session activity
+      // Every active session has at least 1 screen visit (the initial page/screen)
+      const hasActivity = (s.duration && s.duration > 0) || (s.event_count && s.event_count > 0) || (s.snapshot_count && s.snapshot_count > 0)
+      
+      if (!hasActivity) {
+        // No activity = no screen visits
+        return sum + 0
+      }
+      
+      // Estimate additional screen visits based on activity
+      let estimatedVisits = 1 // At least 1 screen visit per active session
+      
+      // If we have snapshots, estimate based on snapshot batches
+      // Multiple snapshot batches might indicate page changes
+      if (s.snapshot_count && s.snapshot_count > 0) {
+        // Rough heuristic: every 20-30 snapshots might indicate a new page view
+        // But also consider duration - longer sessions = more likely to have multiple pages
+        const durationSeconds = (s.duration || 0) / 1000
+        const snapshotsPerPage = 25 // Average snapshots per page
+        const estimatedFromSnapshots = Math.max(1, Math.floor(s.snapshot_count / snapshotsPerPage))
+        
+        // Also consider duration: if session is > 30 seconds, likely multiple pages
+        const estimatedFromDuration = durationSeconds > 30 ? Math.floor(durationSeconds / 30) : 1
+        
+        // Take the higher estimate (more conservative)
+        estimatedVisits = Math.max(estimatedFromSnapshots, estimatedFromDuration, 1)
+      } else if (s.duration && s.duration > 0) {
+        // No snapshots but has duration - estimate from duration
+        const durationSeconds = s.duration / 1000
+        // Rough estimate: 1 page per 20-30 seconds of activity
+        estimatedVisits = Math.max(1, Math.floor(durationSeconds / 25))
+      } else if (s.event_count && s.event_count > 0) {
+        // No snapshots or duration, but has events - estimate from event count
+        // Rough heuristic: every 10-15 events might indicate a new page view
+        estimatedVisits = Math.max(1, Math.floor(s.event_count / 12))
+      }
+      
+      return sum + estimatedVisits
     }, 0)
     const averageScreenVisits = sessionsToCalculate.length > 0 
       ? screenVisits / sessionsToCalculate.length 
