@@ -1230,6 +1230,100 @@ export function SessionReplayPlayer() {
       wrapper.style.flex = '1' // Take full available space
       wrapper.style.minHeight = '0' // Important for flexbox
       wrapper.setAttribute('data-replay-wrapper', 'true')
+      
+      // Create an overlay to block all user interactions (like a video player)
+      const interactionBlocker = document.createElement('div')
+      interactionBlocker.className = 'replay-interaction-blocker'
+      interactionBlocker.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 999999;
+        pointer-events: auto;
+        cursor: default;
+        background: transparent;
+      `
+      interactionBlocker.setAttribute('data-interaction-blocker', 'true')
+      
+      // Prevent all mouse and keyboard events
+      interactionBlocker.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('mousedown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('mouseup', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('dblclick', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('contextmenu', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('keydown', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('keyup', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('keypress', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('submit', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('focus', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
+      
+      interactionBlocker.addEventListener('blur', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        return false
+      }, true)
       console.log('📦 Created wrapper div for replay player', {
         containerWidth: replayContainerRef.current?.offsetWidth,
         containerHeight: replayContainerRef.current?.offsetHeight,
@@ -1434,6 +1528,14 @@ export function SessionReplayPlayer() {
         overflow: hidden;
       `
       wrapper.appendChild(scrollContainer)
+      
+      // Ensure interaction blocker is always on top (after iframe is created)
+      // Move it to the end so it's the last child and highest z-index
+      setTimeout(() => {
+        if (interactionBlocker.parentElement) {
+          interactionBlocker.parentElement.appendChild(interactionBlocker)
+        }
+      }, 1000)
       
       // Store containers for cleanup
       ;(replayer as any)._clickContainer = clickContainer
@@ -2483,8 +2585,8 @@ export function SessionReplayPlayer() {
             if (iframe) {
               const iframeEl = iframe as HTMLElement
               iframeEl.style.zIndex = '1'
-              iframeEl.style.pointerEvents = 'auto'
-              console.log('✅ Set iframe z-index to 1')
+              iframeEl.style.pointerEvents = 'none' // Disable all interactions - replay is view-only
+              console.log('✅ Set iframe z-index to 1 and disabled pointer events')
             }
             // Ensure wrapper doesn't cover controls
             if (wrapper) {
