@@ -1991,9 +1991,18 @@ export function SessionReplayPlayer() {
       const processedClickEvents = new Set<number>()
       const processedScrollEvents = new Set<number>()
       
-      // Function to create click ripple effect with enhanced visualization
+      // Function to create click ripple effect with enhanced visualization and clear message
       const createClickRipple = (x: number, y: number, clickType: 'left' | 'right' | 'double' = 'left') => {
-        if (!clickContainer || !clickContainer.parentElement) return
+        if (!clickContainer || !clickContainer.parentElement) {
+          console.warn('Click container not available')
+          return
+        }
+        
+        // Ensure coordinates are valid numbers
+        if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
+          console.warn('Invalid click coordinates:', { x, y })
+          return
+        }
         
         const colors = {
           left: '#3b82f6',    // Blue for left click
@@ -2001,9 +2010,9 @@ export function SessionReplayPlayer() {
           double: '#10b981'   // Green for double click
         }
         const color = colors[clickType]
-        const clickLabel = clickType === 'double' ? 'Double' : clickType === 'right' ? 'Right' : 'Click'
+        const clickLabel = clickType === 'double' ? 'DOUBLE CLICK' : clickType === 'right' ? 'RIGHT CLICK' : 'BUTTON CLICKED'
         
-        // Create ripple effect
+        // Create large, prominent ripple effect
         const ripple = document.createElement('div')
         ripple.style.cssText = `
           position: absolute;
@@ -2013,62 +2022,88 @@ export function SessionReplayPlayer() {
           height: 0;
           border-radius: 50%;
           background: ${color};
-          opacity: 0.6;
+          opacity: 0.7;
           transform: translate(-50%, -50%);
           pointer-events: none;
           z-index: 999998;
-          animation: clickRipple 0.8s ease-out forwards;
+          animation: clickRipple 1s ease-out forwards;
         `
         
-        // Add click marker (circle) - larger and more visible
+        // Add large, visible click marker (circle)
         const marker = document.createElement('div')
         marker.style.cssText = `
           position: absolute;
           left: ${x}px;
           top: ${y}px;
-          width: 16px;
-          height: 16px;
+          width: 24px;
+          height: 24px;
           border-radius: 50%;
-          border: 3px solid ${color};
-          background: rgba(255, 255, 255, 0.95);
+          border: 4px solid ${color};
+          background: rgba(255, 255, 255, 1);
           transform: translate(-50%, -50%);
           pointer-events: none;
           z-index: 999999;
-          animation: clickMarker 1.2s ease-out forwards;
-          box-shadow: 0 0 0 4px rgba(${clickType === 'left' ? '59, 130, 246' : clickType === 'right' ? '239, 68, 68' : '16, 185, 129'}, 0.3);
+          animation: clickMarker 1.5s ease-out forwards;
+          box-shadow: 0 0 0 8px rgba(${clickType === 'left' ? '59, 130, 246' : clickType === 'right' ? '239, 68, 68' : '16, 185, 129'}, 0.4), 0 0 20px ${color};
         `
         
-        // Add click label for better visibility
+        // Add large, prominent click message banner
+        const messageBanner = document.createElement('div')
+        messageBanner.style.cssText = `
+          position: absolute;
+          left: ${x}px;
+          top: ${y - 60}px;
+          transform: translateX(-50%);
+          background: ${color};
+          color: white;
+          padding: 10px 16px;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 700;
+          pointer-events: none;
+          z-index: 1000000;
+          white-space: nowrap;
+          animation: clickMessageBanner 2s ease-out forwards;
+          border: 2px solid white;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 30px ${color};
+          text-transform: uppercase;
+          letter-spacing: 1px;
+        `
+        messageBanner.textContent = clickLabel
+        
+        // Add click label badge near the click point
         const label = document.createElement('div')
         label.style.cssText = `
           position: absolute;
-          left: ${x}px;
-          top: ${y - 30}px;
-          transform: translateX(-50%);
-          background: rgba(0, 0, 0, 0.8);
+          left: ${x + 20}px;
+          top: ${y - 10}px;
+          background: rgba(0, 0, 0, 0.9);
           color: ${color};
-          padding: 4px 8px;
-          border-radius: 4px;
-          font-size: 11px;
-          font-weight: 600;
+          padding: 6px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          font-weight: 700;
           pointer-events: none;
           z-index: 999999;
           white-space: nowrap;
-          animation: clickLabel 1.2s ease-out forwards;
-          border: 1px solid ${color};
+          animation: clickLabel 1.5s ease-out forwards;
+          border: 2px solid ${color};
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
         `
-        label.textContent = clickLabel
+        label.textContent = '✓ Click'
         
         clickContainer.appendChild(ripple)
         clickContainer.appendChild(marker)
+        clickContainer.appendChild(messageBanner)
         clickContainer.appendChild(label)
         
         // Remove after animation (longer duration for better visibility)
         setTimeout(() => {
           if (ripple.parentElement) ripple.remove()
           if (marker.parentElement) marker.remove()
+          if (messageBanner.parentElement) messageBanner.remove()
           if (label.parentElement) label.remove()
-        }, 1200)
+        }, 2000)
       }
       
       // Track scroll path for visualization
@@ -2076,7 +2111,16 @@ export function SessionReplayPlayer() {
       
       // Function to create enhanced scroll visualization with path
       const createScrollIndicator = (scrollX: number, scrollY: number, direction: 'up' | 'down' | 'left' | 'right') => {
-        if (!scrollContainer || !scrollContainer.parentElement) return
+        if (!scrollContainer || !scrollContainer.parentElement) {
+          console.warn('Scroll container not available')
+          return
+        }
+        
+        // Ensure coordinates are valid numbers
+        if (isNaN(scrollX) || isNaN(scrollY) || !isFinite(scrollX) || !isFinite(scrollY)) {
+          console.warn('Invalid scroll coordinates:', { scrollX, scrollY })
+          return
+        }
         
         const colors = {
           up: '#9333ea',      // Purple for up
@@ -2239,75 +2283,98 @@ export function SessionReplayPlayer() {
             const data = event.data
             const source = data.source
             
-            // Handle click events (source: 2)
+            // Handle click events - MouseInteraction events (source: 2)
+            // In rrweb, clicks are MouseInteraction events with type 0 (click), 1 (mousedown), 2 (mouseup), etc.
             if (source === 2 && !processedClickEvents.has(i)) {
-              processedClickEvents.add(i)
-              
-              // Get click coordinates
-              let clickX = data.x
-              let clickY = data.y
-              
-              // If coordinates are relative to an element, try to get absolute position
-              if (data.id && typeof data.id === 'number') {
-                try {
-                  const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
-                  if (iframe && iframe.contentDocument) {
-                    const element = iframe.contentDocument.querySelector(`[data-rrweb-id="${data.id}"]`)
-                    if (element) {
-                      const rect = element.getBoundingClientRect()
-                      clickX = rect.left + (rect.width / 2)
-                      clickY = rect.top + (rect.height / 2)
+              // Check if this is actually a click event (type 0 = click, type 1 = mousedown, type 2 = mouseup)
+              const mouseType = data.type
+              // Accept click (0), mousedown (1), and also check for any mouse interaction
+              if (mouseType === 0 || mouseType === 1 || mouseType === undefined) { // 0 = click, 1 = mousedown, undefined = default click
+                processedClickEvents.add(i)
+                
+                
+                // Get click coordinates - rrweb stores these relative to the viewport
+                let clickX = data.x || 0
+                let clickY = data.y || 0
+                
+                // Get iframe and wrapper for coordinate conversion
+                const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+                if (iframe) {
+                  const iframeRect = iframe.getBoundingClientRect()
+                  const wrapperRect = wrapper.getBoundingClientRect()
+                  
+                  // Try to get element position if we have an element ID
+                  if (data.id !== undefined && typeof data.id === 'number') {
+                    try {
+                      if (iframe.contentDocument) {
+                        const element = iframe.contentDocument.querySelector(`[data-rrweb-id="${data.id}"]`)
+                        if (element) {
+                          const elementRect = element.getBoundingClientRect()
+                          // Element rect is relative to viewport, convert to wrapper coordinates
+                          clickX = elementRect.left + (elementRect.width / 2) - wrapperRect.left
+                          clickY = elementRect.top + (elementRect.height / 2) - wrapperRect.top
+                        } else {
+                          // No element found, use provided coordinates and convert from iframe space
+                          clickX = clickX - wrapperRect.left + iframeRect.left
+                          clickY = clickY - wrapperRect.top + iframeRect.top
+                        }
+                      }
+                    } catch (e) {
+                      // Fallback: convert coordinates assuming they're relative to iframe
+                      clickX = clickX - wrapperRect.left + iframeRect.left
+                      clickY = clickY - wrapperRect.top + iframeRect.top
                     }
-              }
-            } catch (e) {
-                  // Fallback to provided coordinates
+                  } else {
+                    // No element ID, coordinates should be viewport-relative, convert to wrapper
+                    clickX = clickX - wrapperRect.left
+                    clickY = clickY - wrapperRect.top
+                  }
                 }
-              }
-              
-              // Determine click type
-              let clickType: 'left' | 'right' | 'double' = 'left'
-              if (data.type === 2) clickType = 'double'
-              else if (data.type === 3) clickType = 'right'
-              
-              // Get iframe position to adjust coordinates
-              const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
-              if (iframe) {
-                const iframeRect = iframe.getBoundingClientRect()
-                const wrapperRect = wrapper.getBoundingClientRect()
-                const adjustedX = clickX + (iframeRect.left - wrapperRect.left)
-                const adjustedY = clickY + (iframeRect.top - wrapperRect.top)
-                createClickRipple(adjustedX, adjustedY, clickType)
-              } else {
+                
+                // Determine click type
+                let clickType: 'left' | 'right' | 'double' = 'left'
+                // Check for double click or right click in the event data
+                if (data.type === 2) clickType = 'double'
+                else if (data.button === 2 || data.buttons === 2) clickType = 'right'
+                
                 createClickRipple(clickX, clickY, clickType)
               }
             }
             
-            // Handle scroll events (source: 3 or source: 5)
+            // Handle scroll events - Scroll events (source: 3) or Input events with scroll (source: 5)
             if ((source === 3 || source === 5) && !processedScrollEvents.has(i)) {
-              processedScrollEvents.add(i)
+              // Source 3 = Scroll event, Source 5 = Input event (can include scroll)
+              const isScrollEvent = source === 3 || (source === 5 && (data.x !== undefined || data.y !== undefined))
               
-              const scrollX = data.x || 0
-              const scrollY = data.y || 0
-              
-              // Determine scroll direction based on scroll deltas
-              // For vertical scroll, positive y means scrolled down
-              let direction: 'up' | 'down' | 'left' | 'right' = 'down'
-              
-              // Try to get scroll delta from data
-              if (data.id !== undefined) {
-                // If id contains scroll position, compare with previous
-                const prevScroll = (replayer as any)._lastScrollY || 0
-                if (scrollY < prevScroll) direction = 'up'
-                else if (scrollY > prevScroll) direction = 'down'
-                else if (scrollX > ((replayer as any)._lastScrollX || 0)) direction = 'right'
-                else if (scrollX < ((replayer as any)._lastScrollX || 0)) direction = 'left'
+              if (isScrollEvent) {
+                processedScrollEvents.add(i)
+                
+                const scrollX = data.x || 0
+                const scrollY = data.y || 0
+                
+                // Determine scroll direction based on scroll deltas
+                let direction: 'up' | 'down' | 'left' | 'right' = 'down'
+                
+                // Compare with previous scroll position
+                const prevScrollY = (replayer as any)._lastScrollY || 0
+                const prevScrollX = (replayer as any)._lastScrollX || 0
+                
+                if (Math.abs(scrollY - prevScrollY) > Math.abs(scrollX - prevScrollX)) {
+                  // Vertical scroll
+                  if (scrollY < prevScrollY) direction = 'up'
+                  else if (scrollY > prevScrollY) direction = 'down'
+                } else {
+                  // Horizontal scroll
+                  if (scrollX < prevScrollX) direction = 'left'
+                  else if (scrollX > prevScrollX) direction = 'right'
+                }
+                
+                // Store current scroll position for next comparison
+                ;(replayer as any)._lastScrollX = scrollX
+                ;(replayer as any)._lastScrollY = scrollY
+                
+                createScrollIndicator(scrollX, scrollY, direction)
               }
-              
-              // Store current scroll position for next comparison
-              ;(replayer as any)._lastScrollX = scrollX
-              ;(replayer as any)._lastScrollY = scrollY
-              
-              createScrollIndicator(scrollX, scrollY, direction)
             }
           }
           
@@ -2322,9 +2389,90 @@ export function SessionReplayPlayer() {
         if (isPlaying && !(replayer as any).destroyed) {
           checkForNewEvents()
         }
-      }, 100) // Check every 100ms
+      }, 50) // Check every 50ms for more responsive visualization
       
       ;(replayer as any)._eventCheckInterval = eventCheckInterval
+      
+      // Also listen to replayer's internal events to catch events in real-time
+      // Try multiple event names as rrweb versions may differ
+      const eventListeners = ['event-cast', 'fullsnapshot-rebuilded', 'incremental-snapshot']
+      eventListeners.forEach(eventName => {
+        try {
+          replayer.on(eventName as any, (event: any) => {
+        try {
+          if (!(replayer as any).destroyed && playerRef.current === replayer) {
+            // Handle incremental snapshot events
+            if (event && event.type === 3 && event.data) {
+              const data = event.data
+              const source = data.source
+              
+              // Handle click events immediately - catch all mouse interactions
+              if (source === 2) {
+                const mouseType = data.type
+                // Accept click (0), mousedown (1), and any mouse interaction that has coordinates
+                if ((mouseType === 0 || mouseType === 1 || mouseType === undefined) && (data.x !== undefined || data.y !== undefined)) {
+                  let clickX = data.x || 0
+                  let clickY = data.y || 0
+                  
+                  // Get iframe for coordinate conversion
+                  const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+                  if (iframe) {
+                    const iframeRect = iframe.getBoundingClientRect()
+                    const wrapperRect = wrapper.getBoundingClientRect()
+                    
+                    // Convert viewport coordinates to wrapper-relative coordinates
+                    clickX = clickX - wrapperRect.left
+                    clickY = clickY - wrapperRect.top
+                    
+                    // If coordinates seem to be within iframe, they might be iframe-relative
+                    if (clickX >= 0 && clickX <= iframeRect.width && clickY >= 0 && clickY <= iframeRect.height) {
+                      // Coordinates are already correct (within iframe bounds in wrapper space)
+                    } else {
+                      // Try converting as if they're viewport-relative
+                      clickX = clickX - wrapperRect.left + iframeRect.left
+                      clickY = clickY - wrapperRect.top + iframeRect.top
+                    }
+                  }
+                  
+                  let clickType: 'left' | 'right' | 'double' = 'left'
+                  if (data.button === 2 || data.buttons === 2) clickType = 'right'
+                  
+                  createClickRipple(clickX, clickY, clickType)
+                }
+              }
+              
+              // Handle scroll events immediately
+              if (source === 3 || (source === 5 && (data.x !== undefined || data.y !== undefined))) {
+                const scrollX = data.x || 0
+                const scrollY = data.y || 0
+                
+                const prevScrollY = (replayer as any)._lastScrollY || 0
+                const prevScrollX = (replayer as any)._lastScrollX || 0
+                
+                let direction: 'up' | 'down' | 'left' | 'right' = 'down'
+                if (Math.abs(scrollY - prevScrollY) > Math.abs(scrollX - prevScrollX)) {
+                  if (scrollY < prevScrollY) direction = 'up'
+                  else if (scrollY > prevScrollY) direction = 'down'
+                } else {
+                  if (scrollX < prevScrollX) direction = 'left'
+                  else if (scrollX > prevScrollX) direction = 'right'
+                }
+                
+                ;(replayer as any)._lastScrollX = scrollX
+                ;(replayer as any)._lastScrollY = scrollY
+                
+                createScrollIndicator(scrollX, scrollY, direction)
+              }
+            }
+          }
+        } catch (error) {
+          // Silently ignore errors
+        }
+          })
+        } catch (e) {
+          // Event name might not exist in this rrweb version, ignore
+        }
+      })
       
       // 2. Listen to state-change events (fallback)
       replayer.on('state-change', (state: any) => {
@@ -2392,9 +2540,10 @@ export function SessionReplayPlayer() {
           
           // Check if replayer is still valid before playing
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          replayer.play()
+          // Auto-play from the beginning (time 0) on initial load
+          replayer.play(0)
           setIsPlaying(true)
-          console.log('✅ Auto-playing replay')
+          console.log('✅ Auto-playing replay from start')
           } else {
             console.warn('⚠️ Cannot auto-play: replayer has been destroyed')
           }
@@ -2550,13 +2699,30 @@ export function SessionReplayPlayer() {
           return
         }
         
-      if (isPlaying) {
-        playerRef.current.pause()
-      } else {
-        playerRef.current.play()
-      }
-      setIsPlaying(!isPlaying)
-      setIsFinished(false) // Reset finished state when playing
+        if (isPlaying) {
+          // Pause the replay
+          playerRef.current.pause()
+          setIsPlaying(false)
+        } else {
+          // Resume from current time - get the current playback time before resuming
+          let resumeTime = currentTime
+          
+          // Try to get the actual current time from the replayer
+          try {
+            const replayerTime = playerRef.current.getCurrentTime()
+            if (typeof replayerTime === 'number' && replayerTime >= 0) {
+              resumeTime = replayerTime
+            }
+          } catch (e) {
+            // Fallback to state currentTime if getCurrentTime fails
+            resumeTime = currentTime
+          }
+          
+          // Resume playback from the current time
+          playerRef.current.play(resumeTime)
+          setIsPlaying(true)
+          setIsFinished(false) // Reset finished state when playing
+        }
       } catch (error) {
         console.error('Error toggling play:', error)
       }
