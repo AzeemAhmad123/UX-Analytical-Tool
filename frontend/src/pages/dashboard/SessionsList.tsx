@@ -107,26 +107,33 @@ const setCachedSessions = (projectId: string, sessions: any[]): void => {
 const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
   const sessionMap = new Map<string, any>()
   
+  // Helper to get unique session identifier (try id first, then session_id)
+  const getSessionKey = (session: any): string | null => {
+    return session?.id || session?.session_id || null
+  }
+  
   // Add existing sessions to map
   existing.forEach(session => {
-    if (session?.id) {
-      sessionMap.set(session.id, session)
+    const key = getSessionKey(session)
+    if (key) {
+      sessionMap.set(key, session)
     }
   })
   
   // Add/update with new sessions (newer sessions override older ones)
   newSessions.forEach(session => {
-    if (session?.id) {
-      const existingSession = sessionMap.get(session.id)
+    const key = getSessionKey(session)
+    if (key) {
+      const existingSession = sessionMap.get(key)
       if (!existingSession) {
         // New session, add it
-        sessionMap.set(session.id, session)
+        sessionMap.set(key, session)
       } else {
         // Existing session, keep the newer one
         const existingTime = new Date(existingSession.start_time || existingSession.created_at || 0).getTime()
         const newTime = new Date(session.start_time || session.created_at || 0).getTime()
         if (newTime > existingTime) {
-          sessionMap.set(session.id, session)
+          sessionMap.set(key, session)
         }
       }
     }
@@ -173,9 +180,14 @@ export function SessionsList() {
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set())
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>('all')
   const [previousMetrics, setPreviousMetrics] = useState<SessionMetrics | null>(null)
-  const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days by default
-    end: new Date()
+  const [dateRange, setDateRange] = useState(() => {
+    // Default to last 2 days including today (end date is always today)
+    const end = new Date()
+    end.setHours(23, 59, 59, 999) // End of today
+    const start = new Date(end)
+    start.setDate(start.getDate() - 2) // 2 days ago
+    start.setHours(0, 0, 0, 0) // Start of day
+    return { start, end }
   })
   const [isSearchVisible, setIsSearchVisible] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
@@ -183,16 +195,34 @@ export function SessionsList() {
   // CRITICAL: Load cached sessions for last selected project IMMEDIATELY on mount
   // This prevents "no sessions" flash even before projects load
   useLayoutEffect(() => {
+    // Check if page was just refreshed - if so, clear cache to force fresh load
+    const isPageRefresh = performance.navigation?.type === 1 || 
+                         (performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming)?.type === 'reload'
+    
     const lastProjectId = getLastSelectedProject()
     if (lastProjectId) {
+      // If page was refreshed, clear cache to ensure we get latest sessions
+      if (isPageRefresh) {
+        try {
+          const cacheKey = `${SESSIONS_CACHE_PREFIX}${lastProjectId}`
+          localStorage.removeItem(cacheKey)
+          console.log('🔄 Page refreshed - cleared cache to load fresh sessions')
+        } catch (error) {
+          // Ignore errors
+        }
+      }
+      
       const cachedSessions = getCachedSessions(lastProjectId)
-      if (cachedSessions.length > 0) {
+      if (cachedSessions.length > 0 && !isPageRefresh) {
         console.log(`⚡ Loading ${cachedSessions.length} cached sessions for last project (${lastProjectId}) immediately`)
         setAllSessions(cachedSessions)
         // Apply default filters to cached sessions (exclude < 10s and no video)
         const filteredCached = applyDefaultFilters(cachedSessions)
         setSessions(filteredCached)
         // Set project ID so other effects can use it
+        setSelectedProject(lastProjectId)
+      } else if (isPageRefresh) {
+        // On refresh, set project but don't use cache - force fresh load
         setSelectedProject(lastProjectId)
       }
     }
@@ -233,6 +263,19 @@ export function SessionsList() {
   useEffect(() => {
     if (!selectedProject) return
     
+    // Ensure date range includes today for new sessions
+    const now = new Date()
+    const endOfToday = new Date(now)
+    endOfToday.setHours(23, 59, 59, 999)
+    
+    // Update date range if end date is not today
+    if (dateRange.end.getTime() < now.getTime() - 60000) { // More than 1 minute ago
+      setDateRange(prev => ({
+        start: prev.start,
+        end: endOfToday
+      }))
+    }
+    
     // Load fresh sessions in background (non-blocking)
     // Cached sessions are already shown, so this just updates them
     loadSessions()
@@ -250,12 +293,23 @@ export function SessionsList() {
       }, 5000) // Check every 5 seconds for faster updates
     }, 2000) // Start interval after 2 seconds
     
+    // Also check when page becomes visible (user comes back to tab)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkForNewSessions()
+        loadSessions() // Also reload all sessions when tab becomes visible
+      }
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    
     return () => {
       clearTimeout(initialTimeout)
       clearTimeout(timeout)
       if (intervalId) {
         clearInterval(intervalId)
       }
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [selectedProject])
 
@@ -374,13 +428,13 @@ export function SessionsList() {
     if (!selectedProject) return
     
     try {
-      // Always check from the last 10 minutes to current time (not limited by dateRange)
+      // Always check from the last 30 minutes to current time (increased from 10 minutes)
       // This ensures new sessions are always found regardless of date range filter
-      const recentCheckTime = new Date(Date.now() - 10 * 60 * 1000) // Last 10 minutes
+      const recentCheckTime = new Date(Date.now() - 30 * 60 * 1000) // Last 30 minutes
       const now = new Date()
       
       const response = await sessionsAPI.getByProject(selectedProject, {
-        limit: 50, // Only check recent sessions
+        limit: 100, // Increased from 50 to catch more recent sessions
         start_date: recentCheckTime.toISOString(),
         end_date: now.toISOString() // Always use current time, not dateRange.end
       })
@@ -394,10 +448,16 @@ export function SessionsList() {
         return
       }
       
-      const currentSessionIds = new Set(allSessions.map((s: any) => s.id))
+      // Get all existing session identifiers (try id first, then session_id)
+      const currentSessionIds = new Set(
+        allSessions.map((s: any) => s.id || s.session_id).filter(Boolean)
+      )
       
       // Find truly new sessions (not in current list)
-      const trulyNewSessions = recentSessions.filter((s: any) => !currentSessionIds.has(s.id))
+      const trulyNewSessions = recentSessions.filter((s: any) => {
+        const sessionKey = s.id || s.session_id
+        return sessionKey && !currentSessionIds.has(sessionKey)
+      })
       
       // Mark as loaded since we successfully checked the database (even if no new sessions found)
       setHasLoadedFromDatabase(true)
@@ -406,7 +466,8 @@ export function SessionsList() {
         console.log(`🆕 Found ${trulyNewSessions.length} new session(s)`, trulyNewSessions.map((s: any) => ({
           id: s.id,
           start_time: s.start_time,
-          created_at: s.created_at
+          created_at: s.created_at,
+          session_id: s.session_id
         })))
         // Merge new sessions with existing ones
         const mergedSessions = mergeSessions(allSessions, trulyNewSessions)
