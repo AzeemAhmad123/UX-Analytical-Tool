@@ -29,13 +29,13 @@ if (typeof window !== 'undefined') {
 // be exposed in client-side code. Keep it secure in your backend environment variables.
 
 // Custom fetch with increased timeout for Supabase requests
-const customFetch = async (url: string, options: RequestInit = {}) => {
+const customFetch = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
   
   try {
-    const response = await fetch(url, {
-      ...options,
+    const response = await fetch(input, {
+      ...init,
       signal: controller.signal
     })
     clearTimeout(timeoutId)
