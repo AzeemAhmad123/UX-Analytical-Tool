@@ -1828,9 +1828,6 @@ export function SessionsList() {
                           <div style={{ fontSize: '0.8125rem', fontWeight: '500', color: '#111827' }}>
                             {formatDuration(durationSeconds)}
                           </div>
-                          <div style={{ fontSize: '0.6875rem', color: '#6b7280', fontFamily: 'monospace' }}>
-                            {session.session_id?.substring(0, 16) || session.id.substring(0, 16)}...
-                          </div>
                           <div style={{ fontSize: '0.6875rem', color: '#9ca3af' }}>
                             Session {index + 1}
                           </div>

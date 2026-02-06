@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, Minimize, MessageCircle, SkipBack, SkipForward } from 'lucide-react'
+import { Play, Pause, ChevronRight, FastForward, User, MapPin, Calendar, Tag, MousePointer, MousePointerClick, Scroll, Type, Move, Eye, Focus, Bookmark, Circle, Settings, Maximize, Minimize, MessageCircle, SkipBack, SkipForward, RotateCcw } from 'lucide-react'
 import { sessionsAPI } from '../../services/api'
 import { Replayer } from 'rrweb'
 import '../../components/dashboard/Dashboard.css'
@@ -139,6 +139,7 @@ export function SessionReplayPlayer() {
   const [events, setEvents] = useState<any[]>([]) // Events for activity timeline
   const [snapshots, setSnapshots] = useState<any[]>([])
   const [isPlaying, setIsPlaying] = useState(false)
+  const [isFinished, setIsFinished] = useState(false) // Track if replay has finished
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [playbackSpeed, setPlaybackSpeed] = useState(1)
@@ -244,6 +245,7 @@ export function SessionReplayPlayer() {
     // Reset state for new session (only if no cached data, or always reset to ensure clean state)
     setCurrentTime(0)
     setIsPlaying(false)
+    setIsFinished(false) // Reset finished state when loading new session
     setError(null)
     setHasVideo(false)
     setVideoUrl(null)
@@ -1691,6 +1693,7 @@ export function SessionReplayPlayer() {
       replayer.on('start', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
         setIsPlaying(true)
+        setIsFinished(false) // Reset finished state when replay starts
         }
       })
 
@@ -1703,12 +1706,14 @@ export function SessionReplayPlayer() {
       replayer.on('resume', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
         setIsPlaying(true)
+        setIsFinished(false) // Reset finished state when replay resumes
         }
       })
 
       replayer.on('finish', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
         setIsPlaying(false)
+        setIsFinished(true) // Mark replay as finished
           // Ensure progress bar shows final time when finished
           try {
             const finalTime = playerRef.current.getCurrentTime()
@@ -1908,7 +1913,44 @@ export function SessionReplayPlayer() {
     }
   }
 
+  const restartReplay = () => {
+    // Handle video player for mobile sessions
+    if (hasVideo && videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = 0
+      videoPlayerRef.current.play()
+      setIsPlaying(true)
+      setIsFinished(false)
+      setCurrentTime(0)
+      return
+    }
+    
+    // Handle rrweb replayer for web sessions
+    if (playerRef.current) {
+      try {
+        // Check if replayer is still valid
+        if ((playerRef.current as any).destroyed) {
+          console.warn('Replayer has been destroyed, cannot restart')
+          return
+        }
+        
+        // Restart from beginning
+        playerRef.current.play(0)
+        setIsPlaying(true)
+        setIsFinished(false)
+        setCurrentTime(0)
+      } catch (error) {
+        console.error('Error restarting replay:', error)
+      }
+    }
+  }
+
   const togglePlay = () => {
+    // If finished, restart instead of toggle
+    if (isFinished) {
+      restartReplay()
+      return
+    }
+    
     // Handle video player for mobile sessions
     if (hasVideo && videoPlayerRef.current) {
       if (isPlaying) {
@@ -1917,6 +1959,7 @@ export function SessionReplayPlayer() {
         videoPlayerRef.current.play()
       }
       setIsPlaying(!isPlaying)
+      setIsFinished(false) // Reset finished state when playing
       return
     }
     
@@ -1935,6 +1978,7 @@ export function SessionReplayPlayer() {
         playerRef.current.play()
       }
       setIsPlaying(!isPlaying)
+      setIsFinished(false) // Reset finished state when playing
       } catch (error) {
         console.error('Error toggling play:', error)
       }
@@ -2253,6 +2297,7 @@ export function SessionReplayPlayer() {
           // Use type assertion since seek() may not be in TypeScript definitions
           ;(playerRef.current as any).seek(timeOffset)
           setCurrentTime(timeOffset)
+          setIsFinished(false) // Reset finished state when seeking
           console.log(`🎯 Seeking to event at ${timeOffset}ms (${formatDuration(timeOffset)})`, { event, index })
           playerRef.current.play()
           setIsPlaying(true)
@@ -2262,12 +2307,14 @@ export function SessionReplayPlayer() {
           try {
             ;(playerRef.current as any).goto(timeOffset)
             setCurrentTime(timeOffset)
+            setIsFinished(false) // Reset finished state when seeking
             playerRef.current.play()
             setIsPlaying(true)
           } catch (error2) {
             // Last resort: use play with timeOffset
             playerRef.current.play(timeOffset)
             setIsPlaying(true)
+            setIsFinished(false) // Reset finished state when seeking
             setCurrentTime(timeOffset)
           }
         }
@@ -2350,7 +2397,7 @@ export function SessionReplayPlayer() {
         </div>
         
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {sessions.map((s) => {
+          {sessions.map((s, index) => {
             const isSelected = s.id === sessionId || s.session_id === sessionId
             const duration = s.duration ? Math.round(s.duration / 1000) : 0
             const mins = Math.floor(duration / 60)
@@ -2439,11 +2486,8 @@ export function SessionReplayPlayer() {
                   <div style={{ fontSize: '0.8125rem', fontWeight: '500', color: '#111827', lineHeight: '1.2' }}>
                     {mins}:{secs.toString().padStart(2, '0')}
                   </div>
-                  <div style={{ fontSize: '0.6875rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '1.2' }}>
-                    {s.session_id?.substring(0, 12) || s.id.substring(0, 12)}...
-                  </div>
                   <div style={{ fontSize: '0.6875rem', color: '#9ca3af', lineHeight: '1.2' }}>
-                    Session {s.session_number || 'N/A'}
+                    Session {index + 1}
                   </div>
                 </div>
               </div>
@@ -2871,6 +2915,7 @@ export function SessionReplayPlayer() {
                       // Update state immediately for instant UI feedback
                       // The continuous progress update will take over from here
                       setCurrentTime(targetTime)
+                      setIsFinished(false) // Reset finished state when seeking
                       if (wasPlaying) {
                         setIsPlaying(true)
                       }
@@ -2926,6 +2971,7 @@ export function SessionReplayPlayer() {
                   if (hasVideo && videoPlayerRef.current) {
                     videoPlayerRef.current.currentTime = Math.max(0, (currentTime - 5000) / 1000)
                     setCurrentTime(Math.max(0, currentTime - 5000))
+                    setIsFinished(false) // Reset finished state when skipping
                   } else if (playerRef.current) {
                     try {
                       // Check if replayer is still valid
@@ -2942,6 +2988,7 @@ export function SessionReplayPlayer() {
                       
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
+                      setIsFinished(false) // Reset finished state when skipping
                       if (wasPlaying) {
                         setIsPlaying(true)
                       }
@@ -2973,7 +3020,7 @@ export function SessionReplayPlayer() {
                   togglePlay()
                 }}
                 style={{
-                  background: '#3b82f6',
+                  background: isFinished ? '#10b981' : '#3b82f6',
                   border: 'none',
                   color: 'white',
                   cursor: 'pointer',
@@ -2985,8 +3032,15 @@ export function SessionReplayPlayer() {
                   height: '36px',
                   justifyContent: 'center'
                 }}
+                title={isFinished ? 'Replay' : isPlaying ? 'Pause' : 'Play'}
               >
-                {isPlaying ? <Pause style={{ width: '18px', height: '18px' }} /> : <Play style={{ width: '18px', height: '18px' }} />}
+                {isFinished ? (
+                  <RotateCcw style={{ width: '18px', height: '18px' }} />
+                ) : isPlaying ? (
+                  <Pause style={{ width: '18px', height: '18px' }} />
+                ) : (
+                  <Play style={{ width: '18px', height: '18px' }} />
+                )}
               </button>
               
               <button
@@ -2996,6 +3050,7 @@ export function SessionReplayPlayer() {
                   if (hasVideo && videoPlayerRef.current) {
                     videoPlayerRef.current.currentTime = Math.min(duration / 1000, (currentTime + 5000) / 1000)
                     setCurrentTime(Math.min(duration, currentTime + 5000))
+                    setIsFinished(false) // Reset finished state when skipping
                   } else if (playerRef.current) {
                     try {
                       // Check if replayer is still valid
@@ -3012,6 +3067,7 @@ export function SessionReplayPlayer() {
                       
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
+                      setIsFinished(false) // Reset finished state when skipping
                       if (wasPlaying) {
                         setIsPlaying(true)
                       }
