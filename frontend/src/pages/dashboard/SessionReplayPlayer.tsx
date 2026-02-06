@@ -132,7 +132,7 @@ export function SessionReplayPlayer() {
   const { projectId, sessionId } = useParams()
   const navigate = useNavigate()
   const replayContainerRef = useRef<HTMLDivElement>(null)
-  // Removed loading state - cached data loads instantly, no loading needed
+  const [isLoadingData, setIsLoadingData] = useState<boolean>(true) // Track if data is being loaded
   const [error, setError] = useState<string | null>(null)
   const [session, setSession] = useState<any>(null)
   const [sessions, setSessions] = useState<any[]>([]) // All sessions for left panel
@@ -260,6 +260,26 @@ export function SessionReplayPlayer() {
         setSelectedPlatform(detectedPlatform)
       }
       
+      // Check for video in cached data
+      const videoUrl = cachedSessionData.session?.video_url || cachedSessionData.session?.videoUrl || cachedSessionData.video_url || cachedSessionData.videoUrl || null
+      const hasVideoFlag = cachedSessionData.session?.has_video || cachedSessionData.session?.hasVideo || cachedSessionData.has_video || cachedSessionData.hasVideo || false
+      
+      if (hasVideoFlag && videoUrl) {
+        setHasVideo(true)
+        setVideoUrl(videoUrl)
+        const videoDuration = cachedSessionData.session?.video_duration || cachedSessionData.session?.videoDuration || cachedSessionData.video_duration || cachedSessionData.videoDuration
+        if (videoDuration) {
+          setDuration(videoDuration)
+        }
+      } else if (videoUrl) {
+        setHasVideo(true)
+        setVideoUrl(videoUrl)
+        const videoDuration = cachedSessionData.session?.video_duration || cachedSessionData.session?.videoDuration || cachedSessionData.video_duration || cachedSessionData.videoDuration
+        if (videoDuration) {
+          setDuration(videoDuration)
+        }
+      }
+      
       // Set duration
       if (cachedSessionData.session) {
         const startTime = new Date(cachedSessionData.session.start_time).getTime()
@@ -289,6 +309,13 @@ export function SessionReplayPlayer() {
     } else {
       setEvents([])
     }
+    
+    // If we have cached data (snapshots or video), we're not loading
+    // Otherwise, we need to fetch data, so set loading to true
+    // Check for video in cached data (we may have just set it above)
+    const cachedVideoUrl = cachedSessionData?.session?.video_url || cachedSessionData?.session?.videoUrl || cachedSessionData?.video_url || cachedSessionData?.videoUrl || null
+    const hasCachedData = cachedSnapshots.length > 0 || !!cachedVideoUrl
+    setIsLoadingData(!hasCachedData)
   }, [projectId, sessionId])
 
   useEffect(() => {
@@ -302,6 +329,16 @@ export function SessionReplayPlayer() {
       })
     }
     if (projectId && sessionId) {
+      // Set loading state when starting to fetch data
+      // (Only if we don't have cached data - useLayoutEffect already handled that)
+      const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
+      const cachedSessionData = getCachedSessionData(projectId, sessionId)
+      const hasCachedData = cachedSnapshots.length > 0 || (cachedSessionData?.session?.video_url || cachedSessionData?.session?.videoUrl)
+      
+      if (!hasCachedData) {
+        setIsLoadingData(true)
+      }
+      
       // Load fresh data in background (non-blocking)
       // Cached data is already shown, so this just updates it
       loadSessionData()
@@ -315,9 +352,16 @@ export function SessionReplayPlayer() {
             return loadEvents()
           }
         })
+        .then(() => {
+          // Data loading complete
+          if (isMounted) {
+            setIsLoadingData(false)
+          }
+        })
         .catch((error: any) => {
           if (error?.name !== 'AbortError' && isMounted) {
             console.error('Error loading session replay data:', error)
+            setIsLoadingData(false) // Stop loading on error
           }
         })
     }
@@ -2636,8 +2680,8 @@ export function SessionReplayPlayer() {
               </div>
             )}
             
-            {/* Show "no data" message only when not loading, no error, no snapshots, and no video */}
-            {snapshots.length === 0 && !error && !hasVideo && (
+            {/* Show loading message when data is being fetched */}
+            {isLoadingData && snapshots.length === 0 && !hasVideo && (
               <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -2653,7 +2697,40 @@ export function SessionReplayPlayer() {
                 zIndex: 10,
                 backgroundColor: 'white'
               }}>
-                <p>No replay data available</p>
+                <div style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  border: '3px solid #e5e7eb', 
+                  borderTop: '3px solid #9333ea', 
+                  borderRadius: '50%', 
+                  animation: 'spin 1s linear infinite',
+                  marginBottom: '1rem'
+                }}></div>
+                <p style={{ fontSize: '1rem', fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>Loading replay data...</p>
+                <p style={{ fontSize: '0.875rem', color: '#9ca3af' }}>
+                  Please wait while we fetch the session replay
+                </p>
+              </div>
+            )}
+            
+            {/* Show "no data" message only when NOT loading, no error, no snapshots, and no video */}
+            {!isLoadingData && snapshots.length === 0 && !error && !hasVideo && (
+              <div style={{ 
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                height: '100%',
+                flexDirection: 'column',
+                color: '#6b7280',
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                zIndex: 10,
+                backgroundColor: 'white'
+              }}>
+                <p style={{ fontSize: '1rem', fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>No replay data available</p>
                 <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginTop: '0.5rem' }}>
                   This session was recorded before visual replay was enabled
                 </p>
