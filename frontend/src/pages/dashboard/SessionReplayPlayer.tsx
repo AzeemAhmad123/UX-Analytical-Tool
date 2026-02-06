@@ -706,15 +706,23 @@ export function SessionReplayPlayer() {
         country: response.session?.device_info?.country || response.session?.location?.country,
       })
       
-      // Calculate duration from session timestamps
+      // Set duration from session data (prefer session.duration from database)
       if (response.session) {
-        const startTime = new Date(response.session.start_time).getTime()
-        const endTime = new Date(response.session.last_activity_time).getTime()
-        const calculatedDuration = endTime - startTime
-        if (calculatedDuration > 0) {
-          setDuration(calculatedDuration)
-        } else if (response.session.duration) {
+        // Prefer session.duration from database (most accurate)
+        if (response.session.duration) {
           setDuration(response.session.duration)
+          const durationSeconds = Math.round(response.session.duration / 1000)
+          console.log(`✅ Using session duration from database: ${response.session.duration}ms (${durationSeconds}s)`)
+        } else {
+          // Fallback: calculate from timestamps
+          const startTime = new Date(response.session.start_time).getTime()
+          const endTime = new Date(response.session.last_activity_time).getTime()
+          const calculatedDuration = endTime - startTime
+          if (calculatedDuration > 0) {
+            setDuration(calculatedDuration)
+            const durationSeconds = Math.round(calculatedDuration / 1000)
+            console.log(`✅ Calculated duration from timestamps: ${calculatedDuration}ms (${durationSeconds}s)`)
+          }
         }
         
         // Check for video (mobile sessions) - check multiple possible fields
@@ -980,28 +988,36 @@ export function SessionReplayPlayer() {
         }
       }
       
-      setSnapshots(events)
-      
-      // Cache snapshots
-      setCachedSnapshots(projectId, sessionId, events)
-      
-      // Calculate duration from actual event timestamps
+      // Normalize timestamps to be relative (starting from 0) for rrweb
+      // This is important because rrweb expects relative timestamps, not absolute Unix timestamps
       if (events.length > 0) {
         const timestamps = events
           .map((e: any) => e.timestamp)
           .filter((ts: any) => ts && typeof ts === 'number')
           .sort((a: number, b: number) => a - b)
         
-        if (timestamps.length >= 2) {
+        if (timestamps.length > 0) {
           const firstTimestamp = timestamps[0]
-          const lastTimestamp = timestamps[timestamps.length - 1]
-          const totalDuration = lastTimestamp - firstTimestamp
-          setDuration(totalDuration)
-          console.log(`Calculated duration from snapshots: ${totalDuration}ms (${formatDuration(totalDuration)})`)
-        } else if (timestamps.length === 1) {
-          setDuration(1000) // 1 second minimum
+          // Normalize all timestamps to be relative to the first event (start at 0)
+          events = events.map((event: any) => ({
+            ...event,
+            timestamp: event.timestamp ? event.timestamp - firstTimestamp : 0
+          }))
+          
+          console.log(`✅ Normalized event timestamps (first: ${firstTimestamp}, now relative starting from 0)`)
         }
       }
+      
+      setSnapshots(events)
+      
+      // Cache snapshots
+      setCachedSnapshots(projectId, sessionId, events)
+      
+      // DON'T recalculate duration from event timestamps - use the session duration from database
+      // The duration is already set correctly in loadSessionData() from session.duration
+      // or calculated from start_time and last_activity_time
+      // Event timestamps are now normalized to be relative, so calculating from them would be wrong
+      console.log(`✅ Using session duration from database (not recalculating from events)`)
     } catch (error: any) {
       // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
       if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
@@ -1664,24 +1680,12 @@ export function SessionReplayPlayer() {
 
       playerRef.current = replayer
 
-      // Calculate duration from actual event timestamps
-      if (validSnapshots.length > 0) {
-        const timestamps = validSnapshots
-          .map((e: any) => e.timestamp)
-          .filter((ts: any) => ts && typeof ts === 'number')
-          .sort((a: number, b: number) => a - b)
-        
-        if (timestamps.length >= 2) {
-          const firstTimestamp = timestamps[0]
-          const lastTimestamp = timestamps[timestamps.length - 1]
-          const totalDuration = lastTimestamp - firstTimestamp
-          setDuration(totalDuration)
-          console.log(`Calculated duration: ${totalDuration}ms (${formatDuration(totalDuration)}) from ${timestamps.length} events`)
-        } else if (timestamps.length === 1) {
-          // Single event, use a minimal duration
-          setDuration(1000) // 1 second minimum
-        }
-      }
+      // DON'T recalculate duration from event timestamps here either
+      // The duration is already set correctly from session.duration or calculated from
+      // start_time and last_activity_time in loadSessionData()
+      // Event timestamps are now normalized to be relative (starting from 0), so
+      // calculating duration from them would be incorrect
+      // The duration state should already have the correct value from the database
 
       // Set up event listeners with error handling (optimized - no console logs)
       replayer.on('start', () => {
