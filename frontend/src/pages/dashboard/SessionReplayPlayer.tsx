@@ -2330,7 +2330,7 @@ export function SessionReplayPlayer() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* Left Panel - Session List */}
       <div style={{ 
-        width: isReplayExpanded ? '0' : '300px',
+        width: isReplayExpanded ? '0' : '220px',
         overflow: isReplayExpanded ? 'hidden' : 'visible',
         backgroundColor: 'white', 
         borderRight: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
@@ -2340,11 +2340,11 @@ export function SessionReplayPlayer() {
         flexShrink: 0
       }}>
         <div style={{ 
-          padding: '1rem', 
+          padding: '0.75rem', 
           borderBottom: '1px solid #e5e7eb',
           fontWeight: '500',
           color: '#111827',
-          fontSize: '0.875rem'
+          fontSize: '0.8125rem'
         }}>
           Session
         </div>
@@ -2372,13 +2372,13 @@ export function SessionReplayPlayer() {
                   navigate(`/dashboard/sessions/${projectId}/${sessionIdForNav}`)
                 }}
                 style={{
-                  padding: '0.75rem 1rem',
+                  padding: '0.5rem 0.75rem',
                   borderBottom: '1px solid #e5e7eb',
                   cursor: 'pointer',
                   backgroundColor: isSelected ? '#eff6ff' : 'white',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '0.5rem',
+                  gap: '0.375rem',
                   transition: 'background-color 0.2s'
                 }}
                 onMouseEnter={(e) => !isSelected && (e.currentTarget.style.backgroundColor = '#f9fafb')}
@@ -2387,15 +2387,16 @@ export function SessionReplayPlayer() {
                 <input 
                   type="checkbox" 
                   onClick={(e) => e.stopPropagation()}
-                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                  style={{ cursor: 'pointer', width: '14px', height: '14px', flexShrink: 0 }}
                 />
                 <Circle 
                   className="icon-small" 
                   style={{ 
-                    width: '8px', 
-                    height: '8px', 
+                    width: '6px', 
+                    height: '6px', 
                     fill: isSelected ? '#3b82f6' : '#ef4444',
-                    color: isSelected ? '#3b82f6' : '#ef4444'
+                    color: isSelected ? '#3b82f6' : '#ef4444',
+                    flexShrink: 0
                   }} 
                 />
                 <button
@@ -2413,34 +2414,35 @@ export function SessionReplayPlayer() {
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
-                    padding: '0.25rem',
+                    padding: '0.125rem',
                     display: 'flex',
-                    alignItems: 'center'
+                    alignItems: 'center',
+                    flexShrink: 0
                   }}
                 >
                   <Bookmark 
                     className="icon-small" 
                     style={{ 
-                      width: '14px', 
-                      height: '14px',
+                      width: '12px', 
+                      height: '12px',
                       fill: isBookmarked ? '#ef4444' : 'none',
                       color: isBookmarked ? '#ef4444' : '#9ca3af'
                     }} 
                   />
                 </button>
                 {isSelected ? (
-                  <Pause className="icon-small" style={{ color: '#3b82f6', width: '16px', height: '16px' }} />
+                  <Pause className="icon-small" style={{ color: '#3b82f6', width: '14px', height: '14px', flexShrink: 0 }} />
                 ) : (
-                  <Play className="icon-small" style={{ color: '#6b7280', width: '16px', height: '16px' }} />
+                  <Play className="icon-small" style={{ color: '#6b7280', width: '14px', height: '14px', flexShrink: 0 }} />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
+                  <div style={{ fontSize: '0.8125rem', fontWeight: '500', color: '#111827', lineHeight: '1.2' }}>
                     {mins}:{secs.toString().padStart(2, '0')}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {s.session_id?.substring(0, 15) || s.id.substring(0, 15)}...
+                  <div style={{ fontSize: '0.6875rem', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: '1.2' }}>
+                    {s.session_id?.substring(0, 12) || s.id.substring(0, 12)}...
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: '#9ca3af' }}>
+                  <div style={{ fontSize: '0.6875rem', color: '#9ca3af', lineHeight: '1.2' }}>
                     Session {s.session_number || 'N/A'}
                   </div>
                 </div>
@@ -2451,51 +2453,51 @@ export function SessionReplayPlayer() {
         
         {/* Pagination */}
         <div style={{ 
-          padding: '1rem', 
+          padding: '0.75rem', 
           borderTop: '1px solid #e5e7eb',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: '0.5rem'
+          gap: '0.375rem'
         }}>
           <button style={{ 
-            padding: '0.25rem 0.5rem',
+            padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
             background: 'white',
             cursor: 'pointer',
-            fontSize: '0.875rem'
+            fontSize: '0.8125rem'
           }}>
             &lt;
           </button>
           <button style={{ 
-            padding: '0.25rem 0.5rem',
+            padding: '0.25rem 0.375rem',
             border: '1px solid #9333ea',
             borderRadius: '4px',
             background: '#9333ea',
             color: 'white',
             cursor: 'pointer',
-            fontSize: '0.875rem'
+            fontSize: '0.8125rem'
           }}>
             1
           </button>
           <button style={{ 
-            padding: '0.25rem 0.5rem',
+            padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
             background: 'white',
             cursor: 'pointer',
-            fontSize: '0.875rem'
+            fontSize: '0.8125rem'
           }}>
             2
           </button>
           <button style={{ 
-            padding: '0.25rem 0.5rem',
+            padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
             background: 'white',
             cursor: 'pointer',
-            fontSize: '0.875rem'
+            fontSize: '0.8125rem'
           }}>
             &gt;
           </button>
@@ -3191,7 +3193,7 @@ export function SessionReplayPlayer() {
 
       {/* Right Panel - Activity Timeline */}
       <div style={{ 
-        width: isReplayExpanded ? '0' : '350px',
+        width: isReplayExpanded ? '0' : '280px',
         overflow: isReplayExpanded ? 'hidden' : 'visible',
         backgroundColor: 'white', 
         borderLeft: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
@@ -3204,14 +3206,14 @@ export function SessionReplayPlayer() {
         <div style={{ 
           display: 'flex', 
           borderBottom: '1px solid #e5e7eb',
-          padding: '0 1rem'
+          padding: '0 0.75rem'
         }}>
           {(['activity', 'info', 'notes', 'logs'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               style={{
-                padding: '0.75rem 1rem',
+                padding: '0.5rem 0.75rem',
                 backgroundColor: 'transparent',
                 border: 'none',
                 borderBottom: activeTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
@@ -3219,7 +3221,7 @@ export function SessionReplayPlayer() {
                 fontWeight: activeTab === tab ? '500' : '400',
                 cursor: 'pointer',
                 textTransform: 'capitalize',
-                fontSize: '0.875rem'
+                fontSize: '0.8125rem'
               }}
             >
               {tab === 'info' ? 'Session Info' : tab === 'notes' ? 'Notes' : tab === 'logs' ? 'Logs' : 'Activity'}
@@ -3228,7 +3230,7 @@ export function SessionReplayPlayer() {
         </div>
 
         {/* Tab Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem' }}>
           {activeTab === 'activity' && (
             <>
               {/* Filter Buttons */}
