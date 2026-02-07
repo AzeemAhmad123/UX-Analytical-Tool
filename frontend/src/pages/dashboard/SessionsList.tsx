@@ -128,6 +128,40 @@ const setCachedSessions = (projectId: string, sessions: any[]): void => {
   }
 }
 
+const clearCachedSessions = (projectId: string): void => {
+  try {
+    const cacheKey = `${SESSIONS_CACHE_PREFIX}${projectId}`
+    // Clear from both memory and localStorage
+    memoryCache.delete(cacheKey)
+    localStorage.removeItem(cacheKey)
+    console.log(`🗑️ Cleared cached sessions for project ${projectId}`)
+  } catch (error) {
+    console.error('Error clearing cached sessions:', error)
+  }
+}
+
+// Clear session-specific caches (snapshots, events) for deleted sessions
+const clearSessionCaches = (projectId: string, sessionIds: string[]): void => {
+  try {
+    sessionIds.forEach(sessionId => {
+      // Clear snapshots cache
+      const snapshotsKey = `uxcam_snapshots_${projectId}_${sessionId}`
+      localStorage.removeItem(snapshotsKey)
+      
+      // Clear events cache
+      const eventsKey = `uxcam_events_${projectId}_${sessionId}`
+      localStorage.removeItem(eventsKey)
+      
+      // Clear session data cache
+      const sessionDataKey = `uxcam_session_data_${projectId}_${sessionId}`
+      localStorage.removeItem(sessionDataKey)
+    })
+    console.log(`🗑️ Cleared caches for ${sessionIds.length} deleted session(s)`)
+  } catch (error) {
+    console.error('Error clearing session caches:', error)
+  }
+}
+
 // Check if we should throttle the request (prevent too frequent fetches)
 const shouldThrottleFetch = (projectId: string): boolean => {
   const lastFetch = lastFetchTime.get(projectId) || 0
@@ -1241,12 +1275,37 @@ export function SessionsList() {
       return
     }
 
+    const sessionIdsToDelete = Array.from(selectedSessions)
+    
+    // OPTIMISTIC UI UPDATE: Remove sessions from UI immediately
+    console.log('🗑️ Optimistically removing sessions from UI:', sessionIdsToDelete)
+    const updatedSessions = sessions.filter(s => !sessionIdsToDelete.includes(s.id))
+    const updatedAllSessions = allSessions.filter(s => !sessionIdsToDelete.includes(s.id))
+    setSessions(updatedSessions)
+    setAllSessions(updatedAllSessions)
+    
+    // Clear selected sessions
+    setSelectedSessions(new Set())
+    
+    // Clear session-specific caches (snapshots, events) for deleted sessions
+    clearSessionCaches(selectedProject, sessionIdsToDelete)
+    
+    // Clear sessions cache to force fresh fetch
+    clearCachedSessions(selectedProject)
+    
     try {
-      await sessionsAPI.deleteMultiple(selectedProject, Array.from(selectedSessions))
-      loadSessions()
-      setSelectedSessions(new Set())
+      // Delete from backend
+      await sessionsAPI.deleteMultiple(selectedProject, sessionIdsToDelete)
+      console.log('✅ Sessions deleted successfully from backend')
+      
+      // Force refresh to get updated data (bypasses cache)
+      await loadSessions(true)
     } catch (error) {
       console.error('Error deleting sessions:', error)
+      
+      // ROLLBACK: Restore sessions if deletion failed
+      console.log('⚠️ Deletion failed, restoring sessions in UI')
+      await loadSessions(true) // Force refresh to get correct state
       alert('Failed to delete sessions. Please try again.')
     }
   }
