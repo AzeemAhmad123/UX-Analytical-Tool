@@ -3,46 +3,7 @@ import { Plus, Trash2, Copy, Check, ChevronDown, ChevronUp, Code, Activity, Exte
 import { projectsAPI, sessionsAPI } from '../../services/api'
 import '../../components/dashboard/Dashboard.css'
 
-// Get API URL - use tunnel URL if in local development, otherwise use production URL
-const getApiUrl = (): string => {
-  // Check if we have a backend tunnel URL (cloudflared or ngrok)
-  const backendTunnelUrl = import.meta.env.VITE_BACKEND_TUNNEL_URL
-  
-  // Check if we're in local development
-  const isLocalhost = typeof window !== 'undefined' && 
-                     (window.location.hostname === 'localhost' || 
-                      window.location.hostname === '127.0.0.1')
-  
-  if (isLocalhost && backendTunnelUrl) {
-    // Local development with tunnel - use tunnel URL so live websites can access it
-    return backendTunnelUrl
-  }
-  
-  // Check if VITE_API_URL is explicitly set
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL
-  }
-  
-  // Auto-detect production backend based on current hostname
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname
-    
-    // Auto-detect backend for Vercel deployments
-    if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
-      return 'https://ux-analytical-tool-gzsn.vercel.app'
-    }
-    
-    // If we're on localhost, use local backend
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return 'http://localhost:3001'
-    }
-  }
-  
-  // Default fallback
-  return 'https://ux-analytical-tool-gzsn.vercel.app'
-}
-
-const API_URL = getApiUrl()
+// API URL function is defined inside the component to access component state if needed
 
 interface Project {
   id: string
@@ -305,7 +266,8 @@ export function Projects() {
     setTimeout(() => setCopiedKey(null), 2000)
   }
 
-  const getApiUrl = (): string => {
+  // Use the API_URL constant defined at the top of the file
+  const getApiUrlForIntegration = (): string => {
     // Check if VITE_API_URL is explicitly set
     if (import.meta.env.VITE_API_URL) {
       return import.meta.env.VITE_API_URL
@@ -321,47 +283,19 @@ export function Projects() {
       return backendTunnelUrl
     }
     
-    // Auto-detect production backend based on current hostname
-    if (typeof window !== 'undefined') {
-      const hostname = window.location.hostname
-      
-      // Auto-detect backend for Vercel deployments
-      if (hostname.includes('ux-analytical-tool') && hostname.includes('.vercel.app')) {
-        return 'https://ux-analytical-tool-gzsn.vercel.app'
-      }
-    }
-    
-    // Default fallback
-    return API_URL || 'http://localhost:3001'
+    // Use the production backend URL
+    return 'https://ux-analytical-tool-zbgu.vercel.app'
   }
 
   const getSdkFileUrl = (): string => {
-    const isProduction = typeof window !== 'undefined' && 
-                        window.location.hostname !== 'localhost' && 
-                        window.location.hostname !== '127.0.0.1'
-    
-    if (isProduction) {
-      // In production, SDK is served from the same origin (Vercel)
-      return typeof window !== 'undefined' 
-        ? `${window.location.origin}/uxcam-sdk-rrweb.js`
-        : import.meta.env.VITE_FRONTEND_URL || 'https://your-app.vercel.app/uxcam-sdk-rrweb.js'
-    } else {
-      // Development: Check for tunnel URLs or use localhost
-      const cloudflareUrl = import.meta.env.VITE_CLOUDFLARE_TUNNEL_URL || ''
-      const ngrokUrl = import.meta.env.VITE_NGROK_URL || ''
-      
-      if (cloudflareUrl) {
-        return `${cloudflareUrl}/uxcam-sdk-rrweb.js`
-      } else if (ngrokUrl) {
-        return `${ngrokUrl}/uxcam-sdk-rrweb.js`
-      } else {
-        return 'http://localhost:5173/uxcam-sdk-rrweb.js'
-      }
-    }
+    // Use the same URL as the API - SDK file should be served from the same domain as the API
+    // This ensures they're always in sync and avoids CORS issues
+    const apiUrl = getApiUrlForIntegration()
+    return `${apiUrl}/uxcam-sdk-rrweb.js`
   }
 
   const getWebIntegrationCode = (sdkKey: string): string => {
-    const apiUrl = getApiUrl()
+    const apiUrl = getApiUrlForIntegration()
     const sdkFileUrl = getSdkFileUrl()
     // No version parameter - always gets the latest SDK version automatically
     
@@ -387,7 +321,7 @@ export function Projects() {
   }
 
   const getAndroidIntegrationCode = (sdkKey: string): string => {
-    const apiUrl = getApiUrl()
+    const apiUrl = getApiUrlForIntegration()
     // sdkKey is used in the template string below
     
     return `// Simple UXCam SDK for Android
@@ -448,7 +382,7 @@ class UXCamSDK {
   }
 
   const getIOSIntegrationCode = (sdkKey: string): string => {
-    const apiUrl = getApiUrl()
+    const apiUrl = getApiUrlForIntegration()
     // sdkKey is used in the template string below
     
     return `// Simple UXCam SDK for iOS

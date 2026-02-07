@@ -227,6 +227,60 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+// Serve SDK file - allow CORS for all origins
+app.get('/uxcam-sdk-rrweb.js', (req, res) => {
+  // Set CORS headers to allow loading from any origin
+  const origin = req.headers.origin
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+  res.setHeader('Cache-Control', 'public, max-age=3600') // Cache for 1 hour
+  
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end()
+  }
+  
+  // Try to read and serve the SDK file
+  try {
+    const fs = require('fs')
+    const path = require('path')
+    
+    // Try multiple possible paths (for different deployment scenarios)
+    const possiblePaths = [
+      path.join(__dirname, '../public/uxcam-sdk-rrweb.js'), // Local development
+      path.join(process.cwd(), 'public/uxcam-sdk-rrweb.js'), // Vercel
+      path.join(__dirname, '../../public/uxcam-sdk-rrweb.js'), // Alternative
+      path.join(process.cwd(), 'backend/public/uxcam-sdk-rrweb.js') // Monorepo
+    ]
+    
+    let sdkContent: string | null = null
+    for (const sdkPath of possiblePaths) {
+      if (fs.existsSync(sdkPath)) {
+        sdkContent = fs.readFileSync(sdkPath, 'utf8')
+        console.log('✅ Serving SDK file from:', sdkPath)
+        break
+      }
+    }
+    
+    if (sdkContent) {
+      res.send(sdkContent)
+    } else {
+      console.error('❌ SDK file not found in any of these paths:', possiblePaths)
+      // Fallback: return error message
+      res.status(404).send(`// SDK file not found. Please ensure the SDK file is in the backend/public directory.`)
+    }
+  } catch (error: any) {
+    console.error('Error serving SDK file:', error)
+    res.status(500).send(`// Error loading SDK: ${error.message}`)
+  }
+})
+
 // Routes
 import snapshotsRouter from './routes/snapshots'
 import sessionsRouter from './routes/sessions'

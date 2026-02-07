@@ -8,6 +8,10 @@
   ],
   "routes": [
     {
+      "src": "/uxcam-sdk-rrweb.js",
+      "dest": "api/index.ts"
+    },
+    {
       "src": "/(.*)",
       "dest": "api/index.ts"
     }
