@@ -316,19 +316,34 @@ export function SessionsList() {
     return () => window.removeEventListener('storage', handleStorageChange)
   }, [])
 
-  // Also listen for focus and visibility events to refresh when returning to the page
+  // Throttled refresh on focus/visibility - only refresh if it's been more than 5 minutes
+  // This prevents excessive database requests when user switches tabs frequently
   useEffect(() => {
+    let lastRefreshTime = 0
+    const MIN_REFRESH_INTERVAL = 5 * 60 * 1000 // 5 minutes minimum between refreshes
+    
     const handleFocus = () => {
-      // Refresh projects when page regains focus (user might have toggled projects on another tab)
-      console.log('🔄 Page focused, refreshing projects...')
-      loadProjects(true)
+      const now = Date.now()
+      if (now - lastRefreshTime > MIN_REFRESH_INTERVAL) {
+        console.log('🔄 Window focused, refreshing projects (throttled)...')
+        lastRefreshTime = now
+        loadProjects(true)
+      } else {
+        console.log(`⏸️ Focus refresh throttled: Next refresh in ${Math.round((MIN_REFRESH_INTERVAL - (now - lastRefreshTime)) / 1000)}s`)
+      }
     }
 
     const handleVisibilityChange = () => {
-      // Refresh when page becomes visible (user switched back to this tab)
+      // Only refresh when page becomes visible (user switched back to this tab)
       if (!document.hidden) {
-        console.log('🔄 Page visible, refreshing projects...')
-        loadProjects(true)
+        const now = Date.now()
+        if (now - lastRefreshTime > MIN_REFRESH_INTERVAL) {
+          console.log('🔄 Page visible, refreshing projects (throttled)...')
+          lastRefreshTime = now
+          loadProjects(true)
+        } else {
+          console.log(`⏸️ Visibility refresh throttled: Next refresh in ${Math.round((MIN_REFRESH_INTERVAL - (now - lastRefreshTime)) / 1000)}s`)
+        }
       }
     }
 
@@ -395,26 +410,49 @@ export function SessionsList() {
       console.log(`⏸️ Throttled: Next fetch in ${Math.round(timeUntilNextFetch / 1000)}s`)
     }
     
-    // Check for new sessions in background (throttled to 60 seconds minimum)
+    // Check for new sessions in background (throttled to 5 minutes minimum to reduce database load)
+    // Only poll if tab is visible and user is actively viewing the page
     let intervalId: number | null = null
-    const POLL_INTERVAL_MS = 60 * 1000 // 60 seconds minimum
+    const POLL_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes minimum (increased from 60s to reduce DB load)
     
     // Check immediately (if not throttled), then set up interval
     const checkOnce = () => {
-      if (!shouldThrottleFetch(selectedProject)) {
+      // Only check if page is visible (don't poll in background tabs)
+      if (!document.hidden && !shouldThrottleFetch(selectedProject)) {
         checkForNewSessions()
       }
     }
     
-    // Check immediately on mount
-    checkOnce()
-    
+    // Don't check immediately on mount - wait for first interval to reduce initial load
     // Then set up interval for periodic checks
     const timeout = setTimeout(() => {
-      intervalId = setInterval(() => {
-        checkOnce()
-      }, POLL_INTERVAL_MS)
+      // Only start interval if page is still visible
+      if (!document.hidden) {
+        intervalId = setInterval(() => {
+          checkOnce()
+        }, POLL_INTERVAL_MS)
+      }
     }, POLL_INTERVAL_MS) // Start interval after initial delay
+    
+    // Stop polling when tab becomes hidden, resume when visible
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab hidden - stop polling
+        if (intervalId) {
+          clearInterval(intervalId)
+          intervalId = null
+        }
+      } else {
+        // Tab visible - resume polling if not already running
+        if (!intervalId) {
+          intervalId = setInterval(() => {
+            checkOnce()
+          }, POLL_INTERVAL_MS)
+        }
+      }
+    }
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     
     // REMOVED: visibilitychange handler that was causing excessive refetches
     // Tab focus no longer triggers refetch - use manual refresh instead
@@ -424,6 +462,7 @@ export function SessionsList() {
       if (intervalId) {
         clearInterval(intervalId)
       }
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [selectedProject])
 
@@ -716,10 +755,10 @@ export function SessionsList() {
     if (!selectedProject) return
     
     // Throttling: Don't check if last check was too recent
-    // But allow if it's been more than 30 seconds (less strict for new session checks)
+    // Increased to 5 minutes to reduce database load
     const lastFetch = lastFetchTime.get(selectedProject) || 0
     const timeSinceLastFetch = Date.now() - lastFetch
-    const NEW_SESSION_CHECK_INTERVAL = 30 * 1000 // 30 seconds for new session checks (more frequent)
+    const NEW_SESSION_CHECK_INTERVAL = 5 * 60 * 1000 // 5 minutes for new session checks (reduced frequency)
     
     if (timeSinceLastFetch < NEW_SESSION_CHECK_INTERVAL) {
       console.log(`⏸️ New session check throttled: Next check in ${Math.round((NEW_SESSION_CHECK_INTERVAL - timeSinceLastFetch) / 1000)}s`)
