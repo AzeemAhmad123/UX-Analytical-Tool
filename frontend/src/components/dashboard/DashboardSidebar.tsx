@@ -2,6 +2,7 @@ import { Home, LayoutDashboard, TrendingUp, PlayCircle, Users, List, Monitor, Al
 import { Link, useLocation } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { auth } from '../../config/supabase'
+import { projectsAPI } from '../../services/api'
 import './Dashboard.css'
 
 interface DashboardSidebarProps {
@@ -13,9 +14,11 @@ export function DashboardSidebar({ collapsed = false, onToggleCollapse }: Dashbo
   const location = useLocation()
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [activeProject, setActiveProject] = useState<any>(null)
 
   useEffect(() => {
     loadUser()
+    loadActiveProject()
     
     // Listen for auth changes
     const { data: { subscription } } = auth.onAuthStateChange((_event, session) => {
@@ -26,7 +29,21 @@ export function DashboardSidebar({ collapsed = false, onToggleCollapse }: Dashbo
       }
     })
 
-    return () => subscription.unsubscribe()
+    // Listen for project changes (when project is toggled or created)
+    const handleProjectChange = () => {
+      loadActiveProject()
+    }
+    
+    window.addEventListener('storage', handleProjectChange)
+    window.addEventListener('project-toggled', handleProjectChange)
+    window.addEventListener('project-created', handleProjectChange)
+
+    return () => {
+      subscription.unsubscribe()
+      window.removeEventListener('storage', handleProjectChange)
+      window.removeEventListener('project-toggled', handleProjectChange)
+      window.removeEventListener('project-created', handleProjectChange)
+    }
   }, [])
 
   const loadUser = async () => {
@@ -45,6 +62,24 @@ export function DashboardSidebar({ collapsed = false, onToggleCollapse }: Dashbo
       console.error('Error loading user:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadActiveProject = async () => {
+    try {
+      const response = await projectsAPI.getAll()
+      const projects = response.projects || []
+      // Find the active project (is_active === true)
+      const active = projects.find((p: any) => p.is_active === true)
+      if (active) {
+        setActiveProject(active)
+      } else {
+        // If no active project, show the first project or null
+        setActiveProject(projects.length > 0 ? projects[0] : null)
+      }
+    } catch (error) {
+      console.error('Error loading active project:', error)
+      setActiveProject(null)
     }
   }
 
@@ -138,15 +173,17 @@ export function DashboardSidebar({ collapsed = false, onToggleCollapse }: Dashbo
       {/* App Selector */}
       {!collapsed && (
         <div className="app-selector">
-          <div className="app-selector-item">
+          <Link to="/dashboard/projects" className="app-selector-item" style={{ textDecoration: 'none', color: 'inherit' }}>
             <div className="app-selector-content">
               <div className="app-icon">
                 <Moon className="nav-icon" />
               </div>
-              <span className="app-name">Relaxed Sleep</span>
+              <span className="app-name" title={activeProject?.name || 'No active project'}>
+                {activeProject?.name || 'No Project'}
+              </span>
             </div>
             <ChevronDown className="nav-dropdown" />
-          </div>
+          </Link>
         </div>
       )}
 
