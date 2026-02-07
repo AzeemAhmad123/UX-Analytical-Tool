@@ -121,16 +121,19 @@ const corsOptions = {
         const domainPattern = protocolMatch?.[2] || ''
         
         // Replace * with .* and escape dots
+        // Important: Escape dots BEFORE replacing wildcards to avoid escaping the wildcard replacement
         const escapedDomain = domainPattern
           .replace(/\./g, '\\.')  // Escape dots first
-          .replace(/\*/g, '.*')   // Then replace wildcards
+          .replace(/\*/g, '.*')    // Then replace wildcards with regex "any characters"
         
         // Build regex pattern
         const regexPattern = `^${protocol}${escapedDomain}$`
         const regex = new RegExp(regexPattern, 'i')
         const matches = regex.test(origin)
         if (matches) {
-          console.log(`CORS: Wildcard match - ${allowed} matches ${origin}`)
+          console.log(`✅ CORS: Wildcard match - ${allowed} matches ${origin}`)
+        } else {
+          console.log(`❌ CORS: Wildcard pattern ${allowed} (regex: ${regexPattern}) did NOT match ${origin}`)
         }
         return matches
       }
