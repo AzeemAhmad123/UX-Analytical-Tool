@@ -265,7 +265,45 @@ export function SessionsList() {
   }, []) // Run only once on mount
 
   useEffect(() => {
-    loadProjects()
+    loadProjects(true) // Force refresh on mount to get latest project status
+  }, [])
+
+  // Listen for storage events (when projects are toggled on other tabs/pages)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'uxcam_projects_refresh' || e.key?.startsWith('uxcam_sessions_cache_')) {
+        // Projects were updated elsewhere, refresh
+        console.log('🔄 Projects updated elsewhere, refreshing...')
+        loadProjects(true) // Force refresh
+      }
+    }
+
+    window.addEventListener('storage', handleStorageChange)
+    return () => window.removeEventListener('storage', handleStorageChange)
+  }, [])
+
+  // Also listen for focus and visibility events to refresh when returning to the page
+  useEffect(() => {
+    const handleFocus = () => {
+      // Refresh projects when page regains focus (user might have toggled projects on another tab)
+      console.log('🔄 Page focused, refreshing projects...')
+      loadProjects(true)
+    }
+
+    const handleVisibilityChange = () => {
+      // Refresh when page becomes visible (user switched back to this tab)
+      if (!document.hidden) {
+        console.log('🔄 Page visible, refreshing projects...')
+        loadProjects(true)
+      }
+    }
+
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [])
 
   // CRITICAL: Load cached sessions synchronously BEFORE first render (useLayoutEffect)
@@ -369,12 +407,11 @@ export function SessionsList() {
           // Preserve current selection if it still exists, otherwise select first active project
           if (projectsList.length > 0) {
             const currentProjectId = selectedProject || getLastSelectedProject()
-            const currentProjectStillExists = currentProjectId && projectsList.some((p: any) => p.id === currentProjectId)
             
-            const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
+            const currentProject = currentProjectId ? projectsList.find((p: any) => p.id === currentProjectId) : null
             const currentProjectIsActive = currentProject && currentProject.is_active !== false
             
-            if (currentProjectIsActive) {
+            if (currentProjectIsActive && currentProjectId) {
               // Keep current selection - it's still active
               setSelectedProject(currentProjectId)
               setLastSelectedProject(currentProjectId)
@@ -404,12 +441,11 @@ export function SessionsList() {
           // Preserve current selection if it still exists
           if (projectsList.length > 0) {
             const currentProjectId = selectedProject || getLastSelectedProject()
-            const currentProjectStillExists = currentProjectId && projectsList.some((p: any) => p.id === currentProjectId)
             
-            const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
+            const currentProject = currentProjectId ? projectsList.find((p: any) => p.id === currentProjectId) : null
             const currentProjectIsActive = currentProject && currentProject.is_active !== false
             
-            if (currentProjectIsActive) {
+            if (currentProjectIsActive && currentProjectId) {
               setSelectedProject(currentProjectId)
               setLastSelectedProject(currentProjectId)
             } else {
@@ -448,7 +484,7 @@ export function SessionsList() {
         const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
         const currentProjectIsActive = currentProject && currentProject.is_active !== false
         
-        if (currentProjectIsActive) {
+        if (currentProjectIsActive && currentProjectId) {
           // Keep current selection - it's still active
           console.log(`✅ Preserving current active project selection: ${currentProjectId}`)
           setSelectedProject(currentProjectId)
@@ -459,6 +495,17 @@ export function SessionsList() {
           console.log(`🔄 Current project is inactive, selecting first active project: ${projectId}`)
           setSelectedProject(projectId)
           setLastSelectedProject(projectId)
+          // Clear cached sessions for the old inactive project
+          if (currentProjectId) {
+            try {
+              const oldCacheKey = `${SESSIONS_CACHE_PREFIX}${currentProjectId}`
+              localStorage.removeItem(oldCacheKey)
+              memoryCache.delete(oldCacheKey)
+              console.log(`🗑️ Cleared cache for inactive project: ${currentProjectId}`)
+            } catch (e) {
+              // Ignore errors
+            }
+          }
         } else {
           // No active projects - clear selection and show empty state
           console.log(`⚠️ No active projects available`)
@@ -482,7 +529,28 @@ export function SessionsList() {
   const loadSessions = async (forceRefresh: boolean = false) => {
     if (!selectedProject) {
       console.log('⚠️ loadSessions: No selected project')
+      setAllSessions([])
+      setSessions([])
+      setHasLoadedFromDatabase(true)
       return
+    }
+    
+    // Verify project is still active before loading sessions
+    try {
+      const cacheKey = 'projects:all'
+      const cached = memoryCache.get(cacheKey)
+      if (cached && Array.isArray(cached.data)) {
+        const project = cached.data.find((p: any) => p.id === selectedProject)
+        if (project && project.is_active === false) {
+          console.log(`⚠️ Project ${selectedProject} is inactive, not loading sessions`)
+          setAllSessions([])
+          setSessions([])
+          setHasLoadedFromDatabase(true)
+          return
+        }
+      }
+    } catch (e) {
+      // Continue if check fails
     }
     
     // Throttling: Don't fetch if last fetch was too recent (unless forced)

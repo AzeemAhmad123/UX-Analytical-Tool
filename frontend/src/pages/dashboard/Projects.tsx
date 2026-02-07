@@ -178,9 +178,26 @@ export function Projects() {
     e.preventDefault()
     try {
       const response = await projectsAPI.create(formData)
-      setProjects([response.project, ...projects])
+      // New project is active, all others are now inactive
+      const updatedProjects = projects.map(p => ({ ...p, is_active: false }))
+      setProjects([response.project, ...updatedProjects])
       setShowCreateModal(false)
       setFormData({ name: '', description: '', platform: 'all' })
+      
+      // Clear project cache to force refresh on other pages
+      try {
+        // Clear localStorage cache
+        const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('uxcam_sessions_cache_') || key === 'uxcam_last_selected_project')
+        cacheKeys.forEach(key => localStorage.removeItem(key))
+        
+        // Trigger storage event to notify other tabs/pages
+        window.localStorage.setItem('uxcam_projects_refresh', Date.now().toString())
+        setTimeout(() => window.localStorage.removeItem('uxcam_projects_refresh'), 100)
+        
+        console.log('🔄 Cleared project cache after creating new project')
+      } catch (e) {
+        // Ignore errors
+      }
     } catch (error: any) {
       console.error('Error creating project:', error)
       // Show more detailed error message
@@ -218,6 +235,21 @@ export function Projects() {
       })
       
       setProjects(updatedProjects)
+      
+      // Clear project cache to force refresh on other pages
+      try {
+        // Clear localStorage cache
+        const cacheKeys = Object.keys(localStorage).filter(key => key.startsWith('uxcam_sessions_cache_') || key === 'uxcam_last_selected_project')
+        cacheKeys.forEach(key => localStorage.removeItem(key))
+        
+        // Trigger storage event to notify other tabs/pages
+        window.localStorage.setItem('uxcam_projects_refresh', Date.now().toString())
+        setTimeout(() => window.localStorage.removeItem('uxcam_projects_refresh'), 100)
+        
+        console.log('🔄 Cleared project cache and notified other pages')
+      } catch (e) {
+        // Ignore errors
+      }
       
       // Show success message
       if (response.message) {
