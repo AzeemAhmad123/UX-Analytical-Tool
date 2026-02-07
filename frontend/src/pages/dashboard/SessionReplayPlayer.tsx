@@ -369,14 +369,14 @@ export function SessionReplayPlayer() {
       // Load fresh data in parallel for faster loading (non-blocking)
       // Cached data is already shown, so this just updates it
       
-      // Add timeout to prevent infinite loading (30 seconds)
+      // Add timeout to prevent infinite loading (70 seconds - longer than backend 60s timeout)
       const timeoutId = setTimeout(() => {
         if (isMounted) {
-          console.warn('⚠️ Session data loading timeout after 30 seconds')
+          console.warn('⚠️ Session data loading timeout after 70 seconds')
           setIsLoadingData(false)
-          setError('Loading timeout: The session data is taking too long to load. This may be due to network issues, CORS problems, or a large session. Please check the browser console for errors and try refreshing the page.')
+          setError('Loading timeout: The session data is taking too long to load. This may be due to network issues, CORS problems, or a very large session. Please check the browser console for errors and try refreshing the page.')
         }
-      }, 30000)
+      }, 70000)
       
       Promise.all([
         loadSessionData(),

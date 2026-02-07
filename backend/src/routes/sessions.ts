@@ -742,9 +742,26 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     })
   } catch (error: any) {
     console.error('Error in /api/sessions/:projectId/:sessionId:', error)
+    
+    // Ensure CORS headers are set even on error
+    const origin = req.headers.origin
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
+    }
+    
+    // Log detailed error for debugging
+    console.error('Detailed error:', {
+      message: error.message,
+      stack: error.stack?.substring(0, 500),
+      name: error.name,
+      projectId: req.params.projectId,
+      sessionId: req.params.sessionId
+    })
+    
     res.status(500).json({
       error: 'Failed to retrieve session',
-      message: error.message
+      message: error.message || 'An unexpected error occurred while retrieving session data'
     })
   }
 })
