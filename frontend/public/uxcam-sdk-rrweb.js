@@ -333,6 +333,13 @@
       flushOnUnload: true, // Flush all snapshots when user leaves
     };
     
+    // Storage & Performance Limits
+    const MAX_QUEUE_SIZE = 50000; // Maximum events/snapshots in memory (prevent memory bloat)
+    const MAX_SNAPSHOT_QUEUE_SIZE = 10000; // Maximum snapshots in queue
+    const MAX_EVENT_QUEUE_SIZE = 5000; // Maximum events in queue
+    const WARN_QUEUE_SIZE = 1000; // Warn when queue reaches this size
+    const MAX_UPLOAD_RETRIES = 3; // Maximum retry attempts for failed uploads
+    
     // Log configuration for debugging
     console.log('UXCam SDK: Configuration loaded', {
       apiUrl: config.apiUrl,
@@ -752,6 +759,26 @@
             
             // Process all events (including periodic full snapshots)
             events.push(event);
+            
+            // Storage management: Prevent queue from growing too large
+            if (snapshotQueue.length >= MAX_SNAPSHOT_QUEUE_SIZE) {
+              console.warn('UXCam SDK: ⚠️ Snapshot queue too large, forcing flush to prevent memory bloat', {
+                queueSize: snapshotQueue.length,
+                maxSize: MAX_SNAPSHOT_QUEUE_SIZE
+              });
+              // Remove oldest snapshots if queue is too large (keep most recent)
+              const excess = snapshotQueue.length - MAX_SNAPSHOT_QUEUE_SIZE;
+              snapshotQueue.splice(0, excess);
+              console.warn(`UXCam SDK: Removed ${excess} oldest snapshots to prevent memory bloat`);
+              // Force flush to free memory
+              flushSnapshots();
+            } else if (snapshotQueue.length >= WARN_QUEUE_SIZE) {
+              console.warn('UXCam SDK: ⚠️ Snapshot queue growing large', {
+                queueSize: snapshotQueue.length,
+                warningThreshold: WARN_QUEUE_SIZE
+              });
+            }
+            
             snapshotQueue.push(event);
             
             // Flush snapshots only when batch size is reached
@@ -1080,6 +1107,21 @@
           }
         };
 
+        // Storage management: Prevent event queue from growing too large
+        if (eventQueue.length >= MAX_EVENT_QUEUE_SIZE) {
+          console.warn('UXCam SDK: ⚠️ Event queue too large, forcing flush to prevent memory bloat', {
+            queueSize: eventQueue.length,
+            maxSize: MAX_EVENT_QUEUE_SIZE
+          });
+          // Force flush to free memory
+          flushEvents();
+        } else if (eventQueue.length >= WARN_QUEUE_SIZE) {
+          console.warn('UXCam SDK: ⚠️ Event queue growing large', {
+            queueSize: eventQueue.length,
+            warningThreshold: WARN_QUEUE_SIZE
+          });
+        }
+        
         eventQueue.push(event);
         lastActivityTime = Date.now();
 
@@ -1363,29 +1405,57 @@
           }
         }
         
-        // Calculate session duration from actual recording time (not session initialization time)
-        // Use recordingStartTime if available, otherwise fallback to sessionStartTime
+        // Calculate session duration from ACTUAL ACTIVITY TIME (not idle time)
+        // This prevents sessions from growing when user is inactive
+        
+        // Method 1: Calculate from first to last event (most accurate - only counts active time)
+        let eventBasedDuration = 0;
+        if (events.length > 0) {
+          const timestamps = events
+            .map(e => {
+              // Use event timestamp if available
+              if (e.timestamp && typeof e.timestamp === 'number') {
+                return e.timestamp;
+              }
+              // Try to get timestamp from event data
+              if (e.data && e.data.timestamp) {
+                return typeof e.data.timestamp === 'number' ? e.data.timestamp : Date.now();
+              }
+              return null;
+            })
+            .filter(ts => ts !== null && ts > 0)
+            .sort((a, b) => a - b);
+          
+          if (timestamps.length >= 2) {
+            // Duration from first event to last event (actual activity window)
+            eventBasedDuration = timestamps[timestamps.length - 1] - timestamps[0];
+            console.log('UXCam SDK: Event-based duration calculated', {
+              firstEvent: new Date(timestamps[0]).toISOString(),
+              lastEvent: new Date(timestamps[timestamps.length - 1]).toISOString(),
+              duration: Math.round(eventBasedDuration / 1000) + 's',
+              eventCount: events.length
+            });
+          } else if (timestamps.length === 1) {
+            // Only one event - use minimal duration (1 second)
+            eventBasedDuration = 1000;
+          }
+        }
+        
+        // Method 2: Fallback to recording duration (but this includes idle time)
         const recordingDuration = recordingStartTime 
           ? Date.now() - recordingStartTime 
           : (sessionStartTime ? Date.now() - sessionStartTime : 0);
         
-        // Also calculate duration from actual event timestamps (most accurate)
-        let eventBasedDuration = 0;
-        if (events.length > 0) {
-          const timestamps = events
-            .map(e => e.timestamp)
-            .filter(ts => ts && typeof ts === 'number')
-            .sort((a, b) => a - b);
-          
-          if (timestamps.length >= 2) {
-            eventBasedDuration = timestamps[timestamps.length - 1] - timestamps[0];
-          } else if (timestamps.length === 1) {
-            eventBasedDuration = Date.now() - timestamps[0];
-          }
-        }
-        
-        // Use event-based duration if available (most accurate), otherwise use recording duration
+        // Use event-based duration if available (most accurate - only active time)
+        // Otherwise use recording duration as fallback
         const finalDuration = eventBasedDuration > 0 ? eventBasedDuration : recordingDuration;
+        
+        console.log('UXCam SDK: Session duration calculation', {
+          eventBased: Math.round(eventBasedDuration / 1000) + 's',
+          recordingBased: Math.round(recordingDuration / 1000) + 's',
+          final: Math.round(finalDuration / 1000) + 's',
+          eventCount: events.length
+        });
         
         // Track session end with duration
         trackEvent('session_end', {
@@ -1394,7 +1464,7 @@
           event_duration: eventBasedDuration
         });
         
-        // Send session duration update to backend
+        // Send session end update to backend - mark as closed/ended
         if (sessionDbId && config.apiUrl) {
           fetch(`${config.apiUrl}/api/sessions/${sessionDbId}/end`, {
             method: 'POST',
@@ -1402,9 +1472,17 @@
               'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              duration: finalDuration, // Use event-based duration (most accurate)
-              end_time: new Date().toISOString()
+              duration: finalDuration, // Use event-based duration (most accurate - only active time)
+              end_time: new Date().toISOString(),
+              is_closed: true, // Mark session as closed/ended - cannot be edited
+              status: 'ended' // Session status: ended
             })
+          }).then(response => {
+            if (response.ok) {
+              console.log('UXCam SDK: ✅ Session marked as ended/closed in backend');
+            } else {
+              console.warn('UXCam SDK: Failed to mark session as ended:', response.status);
+            }
           }).catch(err => {
             if (window.UXCamSDK && window.UXCamSDK.debug) {
               console.warn('UXCam SDK: Failed to update session duration', err);
@@ -1412,23 +1490,57 @@
           });
         }
         
-        // Flush remaining data
-        flushEvents();
+        // CRITICAL: Flush all remaining data before ending session
+        // Use synchronous flushing to ensure data is uploaded
+        console.log('UXCam SDK: Ending session - flushing all remaining data', {
+          eventQueueSize: eventQueue.length,
+          snapshotQueueSize: snapshotQueue.length,
+          eventsCount: events.length
+        });
         
-        // Flush all collected snapshots when ending session manually
+        // Flush events first (smaller, faster)
+        if (eventQueue.length > 0) {
+          console.log('UXCam SDK: Flushing remaining events before session end');
+          flushEvents();
+        }
+        
+        // Flush all collected snapshots when ending session
         if (snapshotQueue.length > 0) {
           console.log('UXCam SDK: Ending session, flushing all collected snapshots', {
             snapshotCount: snapshotQueue.length
           });
           flushSnapshots();
         }
+        
+        // Wait a moment for uploads to complete (if possible)
+        // Note: This is best-effort - sendBeacon will handle final uploads
+        if (eventQueue.length > 0 || snapshotQueue.length > 0) {
+          console.warn('UXCam SDK: ⚠️ Still have data in queues after flush - will use sendBeacon on unload');
+        }
       
         // Clear session from localStorage when ending
+        // Also clean up any old session data to prevent localStorage bloat
         try {
           localStorage.removeItem('uxcam_session_id');
           localStorage.removeItem('uxcam_session_timestamp');
+          localStorage.removeItem('uxcam_last_url');
+          
+          // Clean up any other old localStorage keys (prevent bloat)
+          // Only remove keys that match our pattern and are old
+          const keysToCheck = ['uxcam_session_id', 'uxcam_session_timestamp', 'uxcam_last_url'];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('uxcam_') && !keysToCheck.includes(key)) {
+              try {
+                localStorage.removeItem(key);
+                console.log('UXCam SDK: Cleaned up old localStorage key:', key);
+              } catch (e) {
+                // Ignore cleanup errors
+              }
+            }
+          }
         } catch (e) {
-          // Ignore if localStorage fails
+          console.warn('UXCam SDK: Failed to clean up localStorage:', e);
         }
         
         sessionId = null;
@@ -1658,6 +1770,20 @@
               // Flush snapshots and events when user switches tabs or minimizes
               // Don't end session - user might come back
               if (sessionId && type2Uploaded) {
+                // Check queue sizes and warn if too large
+                if (snapshotQueue.length > WARN_QUEUE_SIZE) {
+                  console.warn('UXCam SDK: ⚠️ Large snapshot queue before flush', {
+                    size: snapshotQueue.length,
+                    warningThreshold: WARN_QUEUE_SIZE
+                  });
+                }
+                if (eventQueue.length > WARN_QUEUE_SIZE) {
+                  console.warn('UXCam SDK: ⚠️ Large event queue before flush', {
+                    size: eventQueue.length,
+                    warningThreshold: WARN_QUEUE_SIZE
+                  });
+                }
+                
                 if (snapshotQueue.length > 0) {
                   flushSnapshots();
                 }
@@ -1670,6 +1796,46 @@
               // Don't auto-start - user needs to interact again
             }
           });
+          
+          // Periodic cleanup: Monitor queue sizes and clean up old localStorage data
+          setInterval(() => {
+            // Monitor queue sizes
+            if (snapshotQueue.length > WARN_QUEUE_SIZE) {
+              console.warn('UXCam SDK: ⚠️ Snapshot queue is large', {
+                size: snapshotQueue.length,
+                maxSize: MAX_SNAPSHOT_QUEUE_SIZE,
+                warningThreshold: WARN_QUEUE_SIZE
+              });
+            }
+            if (eventQueue.length > WARN_QUEUE_SIZE) {
+              console.warn('UXCam SDK: ⚠️ Event queue is large', {
+                size: eventQueue.length,
+                maxSize: MAX_EVENT_QUEUE_SIZE,
+                warningThreshold: WARN_QUEUE_SIZE
+              });
+            }
+            
+            // Clean up old localStorage data (prevent bloat)
+            try {
+              const now = Date.now();
+              const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
+              
+              // Check if current session is expired
+              const storedTimestamp = localStorage.getItem('uxcam_session_timestamp');
+              if (storedTimestamp) {
+                const sessionAge = now - parseInt(storedTimestamp, 10);
+                if (sessionAge > SESSION_TIMEOUT) {
+                  // Session expired - clean up
+                  console.log('UXCam SDK: Cleaning up expired session from localStorage');
+                  localStorage.removeItem('uxcam_session_id');
+                  localStorage.removeItem('uxcam_session_timestamp');
+                  localStorage.removeItem('uxcam_last_url');
+                }
+              }
+            } catch (e) {
+              // Ignore cleanup errors
+            }
+          }, 5 * 60 * 1000); // Check every 5 minutes
 
           // Track page unload - flush data but DON'T clear session (for continuous recording across pages)
           window.addEventListener('beforeunload', () => {
@@ -1748,18 +1914,44 @@
               });
             }
             
-            // Send remaining data synchronously using sendBeacon as backup
+            // CRITICAL: Send remaining data synchronously using sendBeacon (reliable upload)
+            // sendBeacon is guaranteed to send even if page is closing
+            let pendingUploads = 0;
+            
             if (eventQueue.length > 0) {
-              const events = [...eventQueue];
+              const eventsToSend = [...eventQueue];
               eventQueue = [];
+              pendingUploads++;
+              
               const blob = new Blob([JSON.stringify({
                 sdk_key: config.sdkKey,
                 session_id: sessionId,
-                events: events,
+                events: eventsToSend,
                 device_info: deviceInfo,
                 user_properties: {}
               })], { type: 'application/json' });
-              navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
+              
+              const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
+              if (sent) {
+                console.log('UXCam SDK: ✅ Events sent via sendBeacon', { count: eventsToSend.length });
+              } else {
+                console.warn('UXCam SDK: ⚠️ sendBeacon failed for events, trying fetch with keepalive');
+                // Fallback: use fetch with keepalive
+                fetch(`${config.apiUrl}/api/events/ingest`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sdk_key: config.sdkKey,
+                    session_id: sessionId,
+                    events: eventsToSend,
+                    device_info: deviceInfo,
+                    user_properties: {}
+                  }),
+                  keepalive: true
+                }).catch(() => {
+                  console.error('UXCam SDK: ❌ Failed to send events on unload - data may be lost');
+                });
+              }
             }
 
             // CRITICAL: Send all collected snapshots via sendBeacon (UXCam-style)
@@ -1767,6 +1959,8 @@
             if (snapshotQueue.length > 0) {
               const snapshots = [...snapshotQueue];
               snapshotQueue = [];
+              pendingUploads++;
+              
               const compressed = compressSnapshots(snapshots);
               
               const blob = new Blob([JSON.stringify({
@@ -1779,9 +1973,13 @@
               
               const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
               if (sent) {
-                console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon');
+                console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon', {
+                  snapshotCount: snapshots.length,
+                  sizeKB: (blob.size / 1024).toFixed(2)
+                });
               } else {
-                console.warn('UXCam SDK: ⚠️ sendBeacon failed, trying fetch with keepalive');
+                console.warn('UXCam SDK: ⚠️ sendBeacon failed for snapshots, trying fetch with keepalive');
+                // Fallback: use fetch with keepalive
                 fetch(`${config.apiUrl}/api/snapshots/ingest`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -1794,9 +1992,17 @@
                   }),
                   keepalive: true
                 }).catch(() => {
-                  console.warn('UXCam SDK: Failed to send snapshots on unload');
+                  console.error('UXCam SDK: ❌ Failed to send snapshots on unload - data may be lost');
                 });
               }
+            }
+            
+            if (pendingUploads > 0) {
+              console.log('UXCam SDK: 📤 Final uploads initiated via sendBeacon', {
+                uploadCount: pendingUploads,
+                hasEvents: eventQueue.length > 0,
+                hasSnapshots: snapshotQueue.length > 0
+              });
             }
 
             if (stopRecording) {
@@ -1805,8 +2011,11 @@
           });
           
           // Also handle pagehide event (more reliable on mobile devices)
-          window.addEventListener('pagehide', () => {
-            console.log('UXCam SDK: Page hiding, flushing all data');
+          // This fires when page is actually being unloaded (browser close, tab close, navigation)
+          window.addEventListener('pagehide', (event) => {
+            console.log('UXCam SDK: Page hiding, flushing all data', {
+              persisted: event.persisted // true if page is being cached (navigation), false if closing
+            });
             stopPeriodicFlush();
             
             if (sessionId) {
@@ -1844,13 +2053,26 @@
                 navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
               }
               
-              // End session
+              // Stop recording
               if (stopRecording) {
                 try {
                   stopRecording();
+                  stopRecording = null;
                 } catch (e) {
                   console.warn('Error stopping recording on pagehide:', e);
                 }
+              }
+              
+              // If page is NOT being persisted (user is closing browser/tab, not navigating),
+              // end the session. Otherwise, keep it alive for next page.
+              if (!event.persisted) {
+                console.log('UXCam SDK: Page not persisted - user closing browser/tab, ending session');
+                // End session but don't clear localStorage immediately (let it expire naturally)
+                // The session will be marked as ended when it times out or when user returns
+                endSession();
+              } else {
+                console.log('UXCam SDK: Page persisted - navigation detected, keeping session alive');
+                // Session continues on next page
               }
             }
           });

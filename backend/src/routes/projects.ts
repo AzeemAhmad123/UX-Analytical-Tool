@@ -87,7 +87,18 @@ router.post('/', authenticateUser, async (req: Request, res: Response) => {
       throw new Error('Failed to generate unique SDK key after multiple attempts')
     }
 
-    // Create project (default to active)
+    // Before creating new project, deactivate all existing projects (only one active at a time)
+    const { error: deactivateError } = await supabase
+      .from('projects')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+
+    if (deactivateError) {
+      console.error('Error deactivating existing projects:', deactivateError)
+      // Don't fail the creation, just log the error
+    }
+
+    // Create project (default to active, and all others are now inactive)
     console.log('Inserting project with user_id:', userId)
     const { data: project, error } = await supabase
       .from('projects')
@@ -97,7 +108,7 @@ router.post('/', authenticateUser, async (req: Request, res: Response) => {
         platform: platformValue,
         sdk_key: sdkKey,
         user_id: userId, // Use authenticated user's ID
-        is_active: true // New projects are active by default
+        is_active: true // New projects are active by default, and all others are deactivated
       })
       .select()
       .single()
@@ -215,6 +226,21 @@ router.patch('/:id/toggle-active', authenticateUser, async (req: Request, res: R
     // Toggle is_active status
     const newStatus = !project.is_active
 
+    // If activating this project, deactivate all other projects (only one active at a time)
+    if (newStatus === true) {
+      // First, deactivate all other projects for this user
+      const { error: deactivateError } = await supabase
+        .from('projects')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('user_id', userId)
+        .neq('id', projectId)
+
+      if (deactivateError) {
+        throw new Error(`Failed to deactivate other projects: ${deactivateError.message}`)
+      }
+    }
+
+    // Update the current project
     const { data: updatedProject, error: updateError } = await supabase
       .from('projects')
       .update({ is_active: newStatus, updated_at: new Date().toISOString() })
@@ -229,7 +255,7 @@ router.patch('/:id/toggle-active', authenticateUser, async (req: Request, res: R
     res.json({
       success: true,
       project: updatedProject,
-      message: `Project "${project.name}" is now ${newStatus ? 'active' : 'inactive'}`
+      message: `Project "${project.name}" is now ${newStatus ? 'active' : 'inactive'}${newStatus ? '. All other projects have been deactivated.' : ''}`
     })
   } catch (error: any) {
     console.error('Error in PATCH /api/projects/:id/toggle-active:', error)

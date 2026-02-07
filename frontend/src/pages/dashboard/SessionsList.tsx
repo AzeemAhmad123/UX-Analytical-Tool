@@ -300,18 +300,19 @@ export function SessionsList() {
   useEffect(() => {
     if (!selectedProject) return
     
-    // Ensure date range includes today for new sessions
-    const now = new Date()
-    const endOfToday = new Date(now)
-    endOfToday.setHours(23, 59, 59, 999)
-    
-    // Update date range if end date is not today
-    if (dateRange.end.getTime() < now.getTime() - 60000) { // More than 1 minute ago
-      setDateRange(prev => ({
-        start: prev.start,
-        end: endOfToday
-      }))
-    }
+      // Ensure date range includes today for new sessions
+      const now = new Date()
+      const endOfToday = new Date(now)
+      endOfToday.setHours(23, 59, 59, 999)
+      
+      // Always update end date to include current time (for new sessions)
+      // This ensures new sessions created "now" are included in the query
+      if (dateRange.end.getTime() < now.getTime() - 1000) { // More than 1 second ago
+        setDateRange(prev => ({
+          start: prev.start,
+          end: endOfToday
+        }))
+      }
     
     // Stale-while-revalidate: Load fresh sessions in background only if not throttled
     // Cached sessions are already shown, so this just updates them silently
@@ -324,16 +325,24 @@ export function SessionsList() {
     
     // Check for new sessions in background (throttled to 60 seconds minimum)
     let intervalId: number | null = null
-    const POLL_INTERVAL_MS = 60 * 1000 // 60 seconds minimum (reduced from 5 seconds)
+    const POLL_INTERVAL_MS = 60 * 1000 // 60 seconds minimum
     
+    // Check immediately (if not throttled), then set up interval
+    const checkOnce = () => {
+      if (!shouldThrottleFetch(selectedProject)) {
+        checkForNewSessions()
+      }
+    }
+    
+    // Check immediately on mount
+    checkOnce()
+    
+    // Then set up interval for periodic checks
     const timeout = setTimeout(() => {
       intervalId = setInterval(() => {
-        // Only check if not throttled
-        if (!shouldThrottleFetch(selectedProject)) {
-          checkForNewSessions()
-        }
+        checkOnce()
       }, POLL_INTERVAL_MS)
-    }, POLL_INTERVAL_MS) // Start after initial delay
+    }, POLL_INTERVAL_MS) // Start interval after initial delay
     
     // REMOVED: visibilitychange handler that was causing excessive refetches
     // Tab focus no longer triggers refetch - use manual refresh instead
@@ -357,10 +366,30 @@ export function SessionsList() {
         if (age < 5 * 60 * 1000) {
           console.log(`⚡ Using cached projects (${cached.data.length} projects)`)
           const projectsList = cached.data
+          // Preserve current selection if it still exists, otherwise select first active project
           if (projectsList.length > 0) {
-            const projectId = projectsList[0].id
-            setSelectedProject(projectId)
-            setLastSelectedProject(projectId)
+            const currentProjectId = selectedProject || getLastSelectedProject()
+            const currentProjectStillExists = currentProjectId && projectsList.some((p: any) => p.id === currentProjectId)
+            
+            const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
+            const currentProjectIsActive = currentProject && currentProject.is_active !== false
+            
+            if (currentProjectIsActive) {
+              // Keep current selection - it's still active
+              setSelectedProject(currentProjectId)
+              setLastSelectedProject(currentProjectId)
+            } else {
+              // Current project is inactive or doesn't exist, select first active project
+              const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
+              if (activeProjects.length > 0) {
+                const projectId = activeProjects[0].id
+                setSelectedProject(projectId)
+                setLastSelectedProject(projectId)
+              } else {
+                // No active projects
+                setSelectedProject(null)
+              }
+            }
           }
           return
         }
@@ -372,10 +401,27 @@ export function SessionsList() {
         try {
           const response = await cached.promise as any
           const projectsList = response.projects || []
+          // Preserve current selection if it still exists
           if (projectsList.length > 0) {
-            const projectId = projectsList[0].id
-            setSelectedProject(projectId)
-            setLastSelectedProject(projectId)
+            const currentProjectId = selectedProject || getLastSelectedProject()
+            const currentProjectStillExists = currentProjectId && projectsList.some((p: any) => p.id === currentProjectId)
+            
+            const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
+            const currentProjectIsActive = currentProject && currentProject.is_active !== false
+            
+            if (currentProjectIsActive) {
+              setSelectedProject(currentProjectId)
+              setLastSelectedProject(currentProjectId)
+            } else {
+              const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
+              if (activeProjects.length > 0) {
+                const projectId = activeProjects[0].id
+                setSelectedProject(projectId)
+                setLastSelectedProject(projectId)
+              } else {
+                setSelectedProject(null)
+              }
+            }
           }
           return
         } catch (e) {
@@ -393,15 +439,35 @@ export function SessionsList() {
       // Cache projects in memory
       memoryCache.set(cacheKey, { data: projectsList, timestamp: Date.now() })
       
-      // setProjects(projectsList)
+      // Filter to only active projects for selection
+      const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
+      
+      // Preserve current selection if it still exists and is active, otherwise select first active project
       if (projectsList.length > 0) {
-        const projectId = projectsList[0].id
-        setSelectedProject(projectId)
-        // Remember this project for next time
-        setLastSelectedProject(projectId)
+        const currentProjectId = selectedProject || getLastSelectedProject()
+        const currentProject = projectsList.find((p: any) => p.id === currentProjectId)
+        const currentProjectIsActive = currentProject && currentProject.is_active !== false
+        
+        if (currentProjectIsActive) {
+          // Keep current selection - it's still active
+          console.log(`✅ Preserving current active project selection: ${currentProjectId}`)
+          setSelectedProject(currentProjectId)
+          setLastSelectedProject(currentProjectId)
+        } else if (activeProjects.length > 0) {
+          // Current project is inactive or doesn't exist, select first active project
+          const projectId = activeProjects[0].id
+          console.log(`🔄 Current project is inactive, selecting first active project: ${projectId}`)
+          setSelectedProject(projectId)
+          setLastSelectedProject(projectId)
         } else {
-          // No projects - nothing to do
+          // No active projects - clear selection and show empty state
+          console.log(`⚠️ No active projects available`)
+          setSelectedProject(null)
         }
+      } else {
+        // No projects - clear selection
+        setSelectedProject(null)
+      }
     } catch (error: any) {
       // Clear promise from cache on error
       memoryCache.delete('projects:all')
@@ -449,11 +515,14 @@ export function SessionsList() {
       // Mark fetch time for throttling
       markFetchTime(selectedProject)
       
+      // Always ensure end_date includes current time for new sessions
+      const queryEndDate = new Date(Math.max(dateRange.end.getTime(), Date.now()))
+      
       // Create request promise and store it for deduplication
       const requestPromise = sessionsAPI.getByProject(selectedProject, {
         limit: 50, // Reduced to 50 for faster initial load - can load more if needed
         start_date: dateRange.start.toISOString(),
-        end_date: dateRange.end.toISOString()
+        end_date: queryEndDate.toISOString() // Always include current time
       }) as Promise<any>
       
       // Store promise for deduplication
@@ -482,10 +551,16 @@ export function SessionsList() {
       const mergedSessions = mergeSessions(allSessions, sortedSessions)
       
       // Only update if data actually changed (stale-while-revalidate optimization)
-      const hasChanged = JSON.stringify(mergedSessions.map(s => s.id || s.session_id)) !== 
-                         JSON.stringify(allSessions.map(s => s.id || s.session_id))
+      // Compare session IDs more robustly
+      const existingIds = new Set(allSessions.map(s => s.id || s.session_id).filter(Boolean))
+      const newIds = new Set(mergedSessions.map(s => s.id || s.session_id).filter(Boolean))
       
-      if (hasChanged || allSessions.length === 0) {
+      // Check if there are new sessions or if count changed
+      const hasNewSessions = Array.from(newIds).some(id => !existingIds.has(id))
+      const countChanged = mergedSessions.length !== allSessions.length
+      const hasChanged = hasNewSessions || countChanged || allSessions.length === 0
+      
+      if (hasChanged) {
         // Update cache with merged sessions
         setCachedSessions(selectedProject, mergedSessions)
         
@@ -539,7 +614,13 @@ export function SessionsList() {
     if (!selectedProject) return
     
     // Throttling: Don't check if last check was too recent
-    if (shouldThrottleFetch(selectedProject)) {
+    // But allow if it's been more than 30 seconds (less strict for new session checks)
+    const lastFetch = lastFetchTime.get(selectedProject) || 0
+    const timeSinceLastFetch = Date.now() - lastFetch
+    const NEW_SESSION_CHECK_INTERVAL = 30 * 1000 // 30 seconds for new session checks (more frequent)
+    
+    if (timeSinceLastFetch < NEW_SESSION_CHECK_INTERVAL) {
+      console.log(`⏸️ New session check throttled: Next check in ${Math.round((NEW_SESSION_CHECK_INTERVAL - timeSinceLastFetch) / 1000)}s`)
       return
     }
     
@@ -1949,7 +2030,28 @@ export function SessionsList() {
       </div>
 
       {/* Sessions Table */}
-      {sessions.length === 0 ? (
+      {!selectedProject ? (
+        <div style={{ padding: '4rem', textAlign: 'center', backgroundColor: 'white' }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#111827', marginBottom: '0.5rem' }}>No Active Project</h3>
+          <p style={{ color: '#6b7280', marginBottom: '1rem' }}>All projects are inactive. Please activate a project to view sessions.</p>
+          <button
+            onClick={() => window.location.href = '/dashboard/projects'}
+            style={{
+              padding: '0.5rem 1rem',
+              backgroundColor: '#9333ea',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: '500'
+            }}
+          >
+            Go to Projects
+          </button>
+        </div>
+      ) : sessions.length === 0 ? (
         <div style={{ padding: '4rem', textAlign: 'center', backgroundColor: 'white' }}>
           {!hasLoadedFromDatabase ? (
             // Show loading state until we've checked the database

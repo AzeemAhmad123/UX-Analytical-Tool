@@ -3,19 +3,39 @@ import { supabase } from '../config/supabase'
 
 const router = Router()
 
-// Middleware to validate project exists (no auth required for analytics - public stats)
+// Middleware to validate project exists and is active (no auth required for analytics - public stats)
 async function validateProject(req: Request, res: Response, next: NextFunction) {
   try {
     const { projectId } = req.params
     
     const { data: project, error } = await supabase
       .from('projects')
-      .select('id')
+      .select('id, is_active')
       .eq('id', projectId)
       .single()
 
     if (error || !project) {
       return res.status(404).json({ error: 'Project not found' })
+    }
+
+    // If project is inactive, return empty data (don't show data for inactive projects)
+    if (project.is_active === false) {
+      return res.json({
+        sessions: 0,
+        activeUsers: 0,
+        sessionsTrend: 0,
+        activeUsersTrend: 0,
+        topEvents: [],
+        sessionsByDuration: [],
+        sessionsByWeekDay: [],
+        topAppVersion: { version: 'N/A', percentage: 0 },
+        sessionDuration: { avg: '0:00', change: 0 },
+        rageGestures: 0,
+        topWeekDay: { day: 'N/A', percentage: 0, breakdown: { morning: 0, afternoon: 0, evening: 0 } },
+        topScreen: { name: 'N/A', percentage: 0, breakdown: [] },
+        topCountry: { name: 'N/A', percentage: 0 },
+        topDevices: { name: 'N/A', percentage: 0 }
+      })
     }
 
     next()

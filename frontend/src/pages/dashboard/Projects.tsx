@@ -191,12 +191,38 @@ export function Projects() {
 
   const handleToggleActive = async (id: string) => {
     try {
+      const project = projects.find(p => p.id === id)
+      const isActivating = project?.is_active === false
+      
+      // If activating, warn user that all other projects will be deactivated
+      if (isActivating) {
+        const confirmMessage = 'Activating this project will deactivate all other projects. Only one project can be active at a time. Continue?'
+        if (!window.confirm(confirmMessage)) {
+          return
+        }
+      }
+      
       console.log('Toggling project status for:', id)
       const response = await projectsAPI.toggleActive(id)
       console.log('Toggle response:', response)
-      setProjects(projects.map(p => 
-        p.id === id ? { ...p, is_active: response.project.is_active } : p
-      ))
+      
+      // Update all projects: set the toggled one to new status, and if activating, set all others to inactive
+      const updatedProjects = projects.map(p => {
+        if (p.id === id) {
+          return { ...p, is_active: response.project.is_active }
+        } else if (isActivating && response.project.is_active === true) {
+          // If we're activating this project, deactivate all others
+          return { ...p, is_active: false }
+        }
+        return p
+      })
+      
+      setProjects(updatedProjects)
+      
+      // Show success message
+      if (response.message) {
+        console.log(response.message)
+      }
     } catch (error: any) {
       console.error('Error toggling project status:', error)
       console.error('Error details:', {

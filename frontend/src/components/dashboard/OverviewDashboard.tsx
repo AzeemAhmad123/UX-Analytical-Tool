@@ -70,10 +70,12 @@ export function OverviewDashboard() {
       const projectsList = response.projects || []
       const activeProjects = projectsList.filter((p: any) => p.is_active !== false)
       setProjects(projectsList)
+      // Only select from active projects
       if (activeProjects.length > 0) {
         setSelectedProject(activeProjects[0].id)
-      } else if (projectsList.length > 0) {
-        setSelectedProject(projectsList[0].id)
+      } else {
+        // No active projects - clear selection
+        setSelectedProject(null)
       }
     } catch (error) {
       console.error('Error loading projects:', error)
@@ -265,7 +267,19 @@ export function OverviewDashboard() {
         </div>
       </div>
 
-      {!data ? (
+      {!selectedProject ? (
+        <div className="text-center py-12">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h3 className="text-xl font-semibold text-gray-900 mb-2">No Active Project</h3>
+          <p className="text-gray-500 mb-4">All projects are inactive. Please activate a project to view analytics.</p>
+          <button
+            onClick={() => window.location.href = '/dashboard/projects'}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Go to Projects
+          </button>
+        </div>
+      ) : !data ? (
         <div className="text-center py-12">
           <p className="text-gray-500 mb-2">No data available</p>
           <p className="text-sm text-gray-400">

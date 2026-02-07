@@ -38,6 +38,30 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       })
     }
 
+    // Check if project exists and is active
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id, is_active')
+      .eq('id', projectId)
+      .single()
+
+    if (projectError || !project) {
+      return res.status(404).json({
+        error: 'Project not found',
+        message: `Project ${projectId} not found`
+      })
+    }
+
+    // If project is inactive, return empty sessions (don't show data for inactive projects)
+    if (project.is_active === false) {
+      return res.json({
+        sessions: [],
+        count: 0,
+        total: 0,
+        total_unfiltered: 0
+      })
+    }
+
     // Build query
     let query = supabase
       .from('sessions')
