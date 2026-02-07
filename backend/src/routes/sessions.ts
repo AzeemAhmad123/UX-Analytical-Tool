@@ -393,9 +393,13 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     const allEvents: any[] = []
     const startTime = Date.now()
     
-    console.log(`📦 Starting to decode ${snapshots.length} snapshot batches`)
-    
-    for (let i = 0; i < snapshots.length; i++) {
+    // Skip decoding if no snapshots (timeout or not found)
+    if (snapshots.length === 0) {
+      console.log(`⏭️ Skipping snapshot decoding - no snapshots to process`)
+    } else {
+        console.log(`📦 Starting to decode ${snapshots.length} snapshot batches`)
+      
+      for (let i = 0; i < snapshots.length; i++) {
       const snapshot = snapshots[i]
       
       // Log progress every 10 snapshots
@@ -620,10 +624,11 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         console.error(`❌ Error decoding snapshot ${snapshot.id}:`, error.message, error.stack)
         // Skip this snapshot if decode fails
       }
-    }
+      }
     
-    const totalTime = Date.now() - startTime
-    console.log(`✅ Decoding complete: ${allEvents.length} events from ${snapshots.length} snapshots in ${Math.round(totalTime/1000)}s`)
+      const totalTime = Date.now() - startTime
+      console.log(`✅ Decoding complete: ${allEvents.length} events from ${snapshots.length} snapshots in ${Math.round(totalTime/1000)}s`)
+    }
     
     if (allEvents.length === 0 && snapshots.length > 0) {
       console.error('❌ Failed to decode snapshots for session:', {
@@ -758,20 +763,22 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       }
     }
     
-    // Estimate response size
-    const estimatedSize = JSON.stringify(responseData).length
-    console.log(`📤 Preparing response: ${allEvents.length} events, estimated size: ${Math.round(estimatedSize / 1024)}KB`)
+    // Estimate response size (without stringifying - just estimate based on event count)
+    // Average event size is ~500 bytes, so estimate: events * 500 + session data (~2KB)
+    const estimatedSizeKB = Math.round((allEvents.length * 500 + 2000) / 1024)
+    console.log(`📤 Preparing response: ${allEvents.length} events, estimated size: ~${estimatedSizeKB}KB`)
     
     // Return session with all events combined
     try {
       res.json(responseData)
-      console.log(`✅ Response sent successfully`)
+      console.log(`✅ Response sent successfully: ${allEvents.length} events`)
     } catch (jsonError: any) {
       console.error('❌ Error serializing JSON response:', {
         error: jsonError.message,
         errorName: jsonError.name,
         eventsCount: allEvents.length,
-        estimatedSize: Math.round(estimatedSize / 1024) + 'KB'
+        estimatedSize: estimatedSizeKB + 'KB',
+        stack: jsonError.stack?.substring(0, 500)
       })
       throw jsonError
     }
