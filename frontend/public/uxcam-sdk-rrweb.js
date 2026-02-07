@@ -2243,47 +2243,88 @@
 
   // Start initialization immediately when script loads - SAFE: Won't break website
   // Check if SDK config is available and if we should record
-  safeExecute(function() {
-    // First check if we should exclude this page
-    if (shouldExcludeRecording()) {
-      if (window.UXCamSDK && window.UXCamSDK.debug) {
-        console.log('UXCam SDK: Recording disabled for this page/domain');
-      }
-      return; // Don't initialize SDK on dashboard/admin pages
+  // IMPROVED: More robust initialization that works on ALL pages (homepage, login, signup, etc.)
+  var initAttempts = 0;
+  var maxInitAttempts = 50; // Try for up to 5 seconds (50 * 100ms)
+  var isInitializing = false;
+  
+  function tryInitialize() {
+    // Prevent multiple simultaneous initialization attempts
+    if (isInitializing) {
+      return;
     }
     
-    if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
-      // Initialize SDK - domain validation disabled (works on any website)
-      if (window.UXCamSDK.debug) {
-        console.log('UXCam SDK: Configuration found, starting initialization...');
+    initAttempts++;
+    
+    safeExecute(function() {
+      // First check if we should exclude this page
+      if (shouldExcludeRecording()) {
+        if (window.UXCamSDK && window.UXCamSDK.debug) {
+          console.log('UXCam SDK: Recording disabled for this page/domain:', window.location.pathname);
+        }
+        return; // Don't initialize SDK if explicitly excluded
       }
-      initSDK();
-    } else {
-      if (window.UXCamSDK && window.UXCamSDK.debug) {
-        console.warn('UXCam SDK: Configuration not found. Waiting for window.UXCamSDK to be set...');
+      
+      // Check if config is available
+      if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
+        // Mark as initializing to prevent duplicate calls
+        isInitializing = true;
+        
+        // Initialize SDK - works on ANY page (homepage, login, signup, dashboard, etc.)
+        if (window.UXCamSDK.debug) {
+          console.log('UXCam SDK: ✅ Configuration found, starting initialization on:', window.location.pathname);
+        } else {
+          // Even without debug mode, log a simple message so users know SDK is working
+          console.log('UXCam SDK: Initializing on', window.location.pathname);
+        }
+        
+        try {
+          initSDK();
+          return true; // Success
+        } catch (e) {
+          isInitializing = false;
+          console.error('UXCam SDK: ❌ Initialization failed:', e);
+          return false;
+        }
+      } else {
+        // Config not ready yet - retry if we haven't exceeded max attempts
+        if (initAttempts < maxInitAttempts) {
+          setTimeout(tryInitialize, 100);
+        } else {
+          // Max attempts reached - log error (even without debug mode for visibility)
+          console.warn('UXCam SDK: ⚠️ Configuration not found after', initAttempts, 'attempts.');
+          console.warn('UXCam SDK: Please ensure window.UXCamSDK.key and window.UXCamSDK.apiUrl are set on ALL pages.');
+          console.warn('UXCam SDK: Current page:', window.location.href);
+          console.warn('UXCam SDK: To fix: Add this to EVERY page before the SDK script:');
+          console.warn('  <script>');
+          console.warn('    window.UXCamSDK = {');
+          console.warn('      key: "YOUR_SDK_KEY",');
+          console.warn('      apiUrl: "YOUR_API_URL"');
+          console.warn('    };');
+          console.warn('  </script>');
+        }
+        return false;
       }
-      // Wait a bit for config to be set (in case script loads before config)
-      setTimeout(function() {
-        safeExecute(function() {
-          // Check again if we should exclude
-          if (shouldExcludeRecording()) {
-            return;
-          }
-          
-          if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
-            // Initialize SDK - domain validation disabled (works on any website)
-            if (window.UXCamSDK.debug) {
-              console.log('UXCam SDK: Configuration found after delay, starting initialization...');
-            }
-            initSDK();
-          } else {
-            if (window.UXCamSDK && window.UXCamSDK.debug) {
-              console.error('UXCam SDK: ❌ Configuration still not found. Please set window.UXCamSDK.key and window.UXCamSDK.apiUrl');
-            }
-          }
-        }, null, null, 'SDK initialization check failed');
-      }, 100);
+    }, null, null, 'SDK initialization attempt failed');
+  }
+  
+  // Start trying to initialize immediately
+  tryInitialize();
+  
+  // Also try when DOM is ready (in case script loaded before DOM)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() {
+      if (!isInitializing && initAttempts < maxInitAttempts) {
+        tryInitialize();
+      }
+    });
+  }
+  
+  // Also try when page is fully loaded (in case config is set very late)
+  window.addEventListener('load', function() {
+    if (!isInitializing && initAttempts < maxInitAttempts) {
+      setTimeout(tryInitialize, 500);
     }
-  }, null, null, 'SDK initialization failed');
+  });
 })();
 
