@@ -348,7 +348,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           throw err
         }),
         new Promise<any[]>((_, reject) => 
-          setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 45000) // 45 second timeout
+          setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 60000) // 60 second timeout (increased for large sessions)
         )
       ])
     } catch (error: any) {
@@ -381,24 +381,29 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
 
     // Decode all snapshots using decodeSnapshot utility
     const allEvents: any[] = []
+    const startTime = Date.now()
     
     console.log(`📦 Starting to decode ${snapshots.length} snapshot batches`)
     
-    for (const snapshot of snapshots) {
+    for (let i = 0; i < snapshots.length; i++) {
+      const snapshot = snapshots[i]
+      
+      // Log progress every 10 snapshots
+      if (i > 0 && i % 10 === 0) {
+        const elapsed = Date.now() - startTime
+        const avgTimePerSnapshot = elapsed / i
+        const estimatedRemaining = avgTimePerSnapshot * (snapshots.length - i)
+        console.log(`⏳ Decoding progress: ${i}/${snapshots.length} snapshots (${Math.round(elapsed/1000)}s elapsed, ~${Math.round(estimatedRemaining/1000)}s remaining)`)
+      }
       try {
         const rawData = snapshot.snapshot_data
-        console.log(`📄 Processing snapshot ${snapshot.id}`, {
-          snapshotCount: snapshot.snapshot_count,
-          isInitial: snapshot.is_initial_snapshot,
-          dataType: typeof rawData,
-          isBuffer: Buffer.isBuffer(rawData),
-          dataLength: typeof rawData === 'string' ? rawData.length : 
-                     Buffer.isBuffer(rawData) ? rawData.length : 'unknown',
-          firstChars: typeof rawData === 'string' ? rawData.substring(0, 50) : 'not string',
-          firstBytes: typeof rawData === 'string' && rawData.length > 0 ? 
-                     Array.from(Buffer.from(rawData.substring(0, Math.min(20, rawData.length)), 'latin1'))
-                       .map(b => b.toString(16).padStart(2, '0')).join(' ') : 'N/A'
-        })
+        // Reduced logging for performance - only log first snapshot
+        if (i === 0) {
+          console.log(`📄 Processing snapshot ${snapshot.id} (${snapshots.length} total)`, {
+            snapshotCount: snapshot.snapshot_count,
+            isInitial: snapshot.is_initial_snapshot
+          })
+        }
         
         // getSessionSnapshots now returns strings (converted from hex BYTEA)
         // Use the same approach as getSessionDurationFromSnapshots: try LZString, then JSON
@@ -423,15 +428,10 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         const firstBytes = Array.from(Buffer.from(snapshotString.substring(0, Math.min(20, snapshotString.length)), 'latin1'))
           .map(b => b.toString(16).padStart(2, '0')).join(' ')
         
-        console.log(`🔍 Attempting to decode snapshot ${snapshot.id}:`, {
-          stringLength: snapshotString.length,
-          firstChars: firstChars,
-          startsWithBracket: snapshotString.trim().startsWith('[') || snapshotString.trim().startsWith('{'),
-          charCodes: charCodes,
-          firstBytes: firstBytes,
-          looksLikeHex: /^[0-9a-fA-F\s]+$/.test(firstChars),
-          hasNullBytes: charCodes.includes(0)
-        })
+        // Only log decode attempt for first snapshot
+        if (i === 0) {
+          console.log(`🔍 Attempting to decode snapshot ${snapshot.id} (${snapshots.length} total)`)
+        }
         
         try {
           // Check if it's already valid JSON (not compressed)
@@ -442,20 +442,23 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             // Try parsing as JSON first (might be stored as uncompressed JSON)
             try {
               events = JSON.parse(snapshotString)
-              console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (uncompressed)`, {
-                dataLength: snapshotString.length,
-                eventCount: Array.isArray(events) ? events.length : 1
-              })
+              // Only log for first snapshot
+              if (i === 0) {
+                console.log(`✅ Parsed snapshot ${snapshot.id} as JSON (uncompressed)`, {
+                  eventCount: Array.isArray(events) ? events.length : 1
+                })
+              }
             } catch (jsonError: any) {
               // JSON parse failed, try LZString decompression
-              console.log(`⚠️ JSON parse failed, trying LZString decompression for snapshot ${snapshot.id}`)
               const decompressed = LZString.decompress(snapshotString)
               if (decompressed && decompressed.length > 0) {
                 events = JSON.parse(decompressed)
-                console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
-                  decompressedLength: decompressed.length,
-                  eventCount: Array.isArray(events) ? events.length : 1
-                })
+                // Only log for first snapshot
+                if (i === 0) {
+                  console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+                    eventCount: Array.isArray(events) ? events.length : 1
+                  })
+                }
               } else {
                 throw new Error('Both JSON parse and LZString decompression failed')
               }
@@ -466,10 +469,12 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             if (decompressed && decompressed.length > 0) {
               try {
                 events = JSON.parse(decompressed)
-                console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
-                  decompressedLength: decompressed.length,
-                  eventCount: Array.isArray(events) ? events.length : 1
-                })
+                // Only log for first snapshot
+                if (i === 0) {
+                  console.log(`✅ LZString decompressed snapshot ${snapshot.id}`, {
+                    eventCount: Array.isArray(events) ? events.length : 1
+                  })
+                }
               } catch (parseError: any) {
                 console.error(`❌ Failed to parse LZString decompressed data for snapshot ${snapshot.id}:`, parseError.message)
                 // Last resort: try parsing original string as JSON
@@ -529,11 +534,12 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         
         // Handle Buffer object format (Supabase serializes Buffers as JSON)
         // If events is a Buffer object, convert it back to actual data
-        if (events && typeof events === 'object' && events.type === 'Buffer' && Array.isArray(events.data)) {
+        if (events && typeof events === 'object' && !Array.isArray(events) && 
+            (events as any).type === 'Buffer' && Array.isArray((events as any).data)) {
           console.log(`🔧 Detected Buffer object format, converting to actual data for snapshot ${snapshot.id}`)
           try {
             // Convert Buffer data array back to string
-            const bufferString = Buffer.from(events.data).toString('latin1')
+            const bufferString = Buffer.from((events as any).data).toString('latin1')
             // Now try to decompress/parse the actual data
             const decompressed = LZString.decompress(bufferString)
             if (decompressed && decompressed.length > 0) {
@@ -558,9 +564,9 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           } else {
             decoded = events
           }
-        } else if (events && typeof events === 'object') {
+        } else if (events && typeof events === 'object' && !Array.isArray(events)) {
           // Check if it's still a Buffer object (shouldn't happen after conversion above, but just in case)
-          if (events.type === 'Buffer' && Array.isArray(events.data)) {
+          if ((events as any).type === 'Buffer' && Array.isArray((events as any).data)) {
             console.error(`❌ Still have Buffer object after conversion for snapshot ${snapshot.id}`)
             continue
           }
@@ -585,14 +591,20 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         
         if (validEvents.length > 0) {
           allEvents.push(...validEvents) // Push flat array of events directly
-          console.log(`✅ Extracted ${validEvents.length} valid events from snapshot ${snapshot.id}`, {
-            type2Count: validEvents.filter((e: any) => e.type === 2).length,
-            eventTypes: [...new Set(validEvents.map((e: any) => e.type))]
-          })
+          // Only log for first few snapshots to reduce verbosity
+          if (i < 3) {
+            console.log(`✅ Extracted ${validEvents.length} valid events from snapshot ${snapshot.id}`, {
+              type2Count: validEvents.filter((e: any) => e.type === 2).length,
+              eventTypes: [...new Set(validEvents.map((e: any) => e.type))]
+            })
+          }
         } else {
-          console.warn(`⚠️ No valid events extracted from snapshot ${snapshot.id}`, {
-            decodedLength: decoded.length
-          })
+          // Only log warnings for first few snapshots
+          if (i < 3) {
+            console.warn(`⚠️ No valid events extracted from snapshot ${snapshot.id}`, {
+              decodedLength: decoded.length
+            })
+          }
         }
       } catch (error: any) {
         console.error(`❌ Error decoding snapshot ${snapshot.id}:`, error.message, error.stack)
@@ -600,7 +612,8 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       }
     }
     
-    console.log(`✅ Total decoded events: ${allEvents.length}`)
+    const totalTime = Date.now() - startTime
+    console.log(`✅ Decoding complete: ${allEvents.length} events from ${snapshots.length} snapshots in ${Math.round(totalTime/1000)}s`)
     
     if (allEvents.length === 0 && snapshots.length > 0) {
       console.error('❌ Failed to decode snapshots for session:', {

@@ -422,7 +422,7 @@ export async function getSessionDurationFromSnapshots(sessionDbId: string): Prom
   }
 }
 
-export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
+export async function getSessionSnapshots(sessionDbId: string, limit?: number): Promise<Array<{
   id: string
   snapshot_data: string // Return as string (converted from BYTEA, ready for decompression)
   snapshot_count: number
@@ -430,13 +430,20 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
   created_at: string
 }>> {
   try {
-    console.log(`🔍 getSessionSnapshots called with sessionDbId: ${sessionDbId}`)
+    console.log(`🔍 getSessionSnapshots called with sessionDbId: ${sessionDbId}${limit ? ` (limit: ${limit})` : ''}`)
     
-    const { data: snapshots, error } = await supabase
+    let query = supabase
       .from('session_snapshots')
       .select('id, snapshot_data, snapshot_count, is_initial_snapshot, created_at')
       .eq('session_id', sessionDbId)
       .order('created_at', { ascending: true })
+    
+    // Add limit if specified (for large sessions, fetch in batches)
+    if (limit) {
+      query = query.limit(limit)
+    }
+    
+    const { data: snapshots, error } = await query
 
     if (error) {
       console.error(`❌ Error querying snapshots:`, error)
@@ -447,8 +454,8 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
       sessionDbId,
       snapshotCount: snapshots?.length || 0,
       hasError: !!error,
-      errorMessage: error?.message,
-      snapshotIds: snapshots?.map((s: any) => s.id) || []
+      errorMessage: error ? (error as any).message : undefined,
+      limitApplied: !!limit
     })
 
     if (!snapshots || snapshots.length === 0) {
@@ -499,22 +506,20 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
 
     // Convert BYTEA to string - CRITICAL: Must preserve binary data exactly for LZString
     // LZString compressed data is binary-like and any corruption will prevent decompression
-    const processedSnapshots = snapshots.map((snapshot: any) => {
+    const processedSnapshots = snapshots.map((snapshot: any, index: number) => {
       let snapshotData: string
 
       // Handle Supabase BYTEA format
       let rawData: any = snapshot.snapshot_data
       
-      console.log(`🔧 Converting snapshot ${snapshot.id} data:`, {
-        rawDataType: typeof rawData,
-        isBuffer: Buffer.isBuffer(rawData),
-        isObject: typeof rawData === 'object' && rawData !== null,
-        hasType: rawData?.type,
-        length: typeof rawData === 'string' ? rawData.length : 
-                Buffer.isBuffer(rawData) ? rawData.length : 
-                rawData?.data?.length || 'unknown',
-        firstChars: typeof rawData === 'string' ? rawData.substring(0, 20) : 'not string'
-      })
+      // Reduced logging for performance (only log first snapshot)
+      if (index === 0) {
+        console.log(`🔧 Converting snapshot ${snapshot.id} data:`, {
+          rawDataType: typeof rawData,
+          isBuffer: Buffer.isBuffer(rawData),
+          totalSnapshots: snapshots.length
+        })
+      }
       
       if (typeof rawData === 'string' && rawData.length >= 2 && 
           rawData.charCodeAt(0) === 92 && rawData.charCodeAt(1) === 120) {
@@ -525,12 +530,14 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
           // CRITICAL: latin1 encoding preserves all byte values 0-255 exactly
           const buffer = Buffer.from(hexString, 'hex')
           snapshotData = buffer.toString('latin1')
-          console.log(`✅ Converted hex BYTEA to string for snapshot ${snapshot.id}`, {
-            hexLength: hexString.length,
-            bufferLength: buffer.length,
-            stringLength: snapshotData.length,
-            firstBytes: Array.from(buffer.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ')
-          })
+          // Only log for first snapshot to reduce verbosity
+          if (index === 0) {
+            console.log(`✅ Converted hex BYTEA to string for snapshot ${snapshot.id}`, {
+              hexLength: hexString.length,
+              bufferLength: buffer.length,
+              stringLength: snapshotData.length
+            })
+          }
         } catch (e) {
           console.error(`❌ Error converting hex BYTEA for snapshot ${snapshot.id}:`, e)
           snapshotData = rawData // Fallback to original
@@ -539,16 +546,16 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
         // JSON-serialized Buffer object
         const buffer = Buffer.from(rawData.data)
         snapshotData = buffer.toString('latin1')
-        console.log(`✅ Converted Buffer object to string for snapshot ${snapshot.id}`, {
-          bufferLength: buffer.length,
-          stringLength: snapshotData.length
-        })
+        // Only log for first snapshot
+        if (index === 0) {
+          console.log(`✅ Converted Buffer object to string for snapshot ${snapshot.id}`)
+        }
       } else if (Buffer.isBuffer(rawData)) {
         snapshotData = rawData.toString('latin1')
-        console.log(`✅ Converted Buffer to string for snapshot ${snapshot.id}`, {
-          bufferLength: rawData.length,
-          stringLength: snapshotData.length
-        })
+        // Only log for first snapshot
+        if (index === 0) {
+          console.log(`✅ Converted Buffer to string for snapshot ${snapshot.id}`)
+        }
       } else if (typeof rawData === 'string') {
         // Already a string - check if it looks like hex BYTEA without \x prefix
         // Supabase might return hex string directly in some cases
@@ -562,11 +569,11 @@ export async function getSessionSnapshots(sessionDbId: string): Promise<Array<{
             snapshotData = rawData
           }
         } else {
-          snapshotData = rawData
-          console.log(`✅ Using string as-is for snapshot ${snapshot.id}`, {
-            length: snapshotData.length,
-            looksLikeJson: snapshotData.trim().startsWith('[') || snapshotData.trim().startsWith('{')
-          })
+            snapshotData = rawData
+            // Only log for first snapshot
+            if (index === 0) {
+              console.log(`✅ Using string as-is for snapshot ${snapshot.id}`)
+            }
         }
       } else {
         snapshotData = String(rawData)
