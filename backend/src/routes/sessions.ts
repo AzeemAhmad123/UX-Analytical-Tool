@@ -279,11 +279,20 @@ router.get('/:projectId', async (req: Request, res: Response) => {
  * }
  */
 router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
+  const requestStartTime = Date.now()
+  console.log(`🚀 GET /api/sessions/:projectId/:sessionId called:`, {
+    projectId: req.params.projectId,
+    sessionId: req.params.sessionId,
+    origin: req.headers.origin,
+    userAgent: req.headers['user-agent']?.substring(0, 50)
+  })
+  
   try {
     const projectId = req.params.projectId
     const sessionId = req.params.sessionId
 
     if (!projectId || !sessionId) {
+      console.warn('⚠️ Missing parameters:', { projectId, sessionId })
       return res.status(400).json({
         error: 'Missing required parameters',
         message: 'projectId and sessionId are required'
@@ -293,6 +302,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     // Set a longer timeout for this endpoint (60 seconds)
     req.setTimeout(60000)
 
+    console.log(`🔍 Fetching session: projectId=${projectId}, sessionId=${sessionId}`)
     // Get session
     const session = await getSessionByProjectAndSessionId(String(projectId), String(sessionId))
 
@@ -683,8 +693,15 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       console.log(`📊 Using session timestamp duration: ${calculatedDuration}ms`)
     }
 
-    // Return session with all events combined
-    res.json({
+    // Ensure CORS headers are set before sending response
+    const origin = req.headers.origin
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin)
+      res.setHeader('Access-Control-Allow-Credentials', 'true')
+    }
+    
+    // Log response size before sending
+    const responseData = {
       session: {
         id: session.id,
         session_id: session.session_id,
@@ -739,7 +756,25 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           ]
         } : {})
       }
-    })
+    }
+    
+    // Estimate response size
+    const estimatedSize = JSON.stringify(responseData).length
+    console.log(`📤 Preparing response: ${allEvents.length} events, estimated size: ${Math.round(estimatedSize / 1024)}KB`)
+    
+    // Return session with all events combined
+    try {
+      res.json(responseData)
+      console.log(`✅ Response sent successfully`)
+    } catch (jsonError: any) {
+      console.error('❌ Error serializing JSON response:', {
+        error: jsonError.message,
+        errorName: jsonError.name,
+        eventsCount: allEvents.length,
+        estimatedSize: Math.round(estimatedSize / 1024) + 'KB'
+      })
+      throw jsonError
+    }
   } catch (error: any) {
     console.error('Error in /api/sessions/:projectId/:sessionId:', error)
     
