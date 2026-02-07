@@ -16,9 +16,20 @@ export async function validateSDKKey(sdkKey: string): Promise<{
   }
 
   try {
+    // Validate SDK key format (should start with 'ux_' and be at least 30 chars)
+    if (!sdkKey.startsWith('ux_') || sdkKey.length < 30) {
+      console.warn('⚠️ Invalid SDK key format:', {
+        sdkKey: sdkKey.substring(0, 30) + '...',
+        length: sdkKey.length,
+        startsWithUx: sdkKey.startsWith('ux_')
+      })
+      return { valid: false, error: 'Invalid SDK key format. SDK key should start with "ux_" and be at least 30 characters long.' }
+    }
+
     // Log which Supabase instance we're querying
     console.log('🔍 Validating SDK key:', {
       sdkKeyPrefix: sdkKey.substring(0, 20) + '...',
+      sdkKeyLength: sdkKey.length,
       supabaseUrl: SUPABASE_URL,
       isNewProject: SUPABASE_URL.includes('kkgdxfencpyabcmizytn'),
       isOldProject: SUPABASE_URL.includes('xrvmiyrsxwrruhdljkoz')
@@ -26,7 +37,7 @@ export async function validateSDKKey(sdkKey: string): Promise<{
 
     const { data: project, error } = await supabase
       .from('projects')
-      .select('id, name, sdk_key, allowed_domains')
+      .select('id, name, sdk_key, allowed_domains, is_active')
       .eq('sdk_key', sdkKey)
       .single()
 
@@ -37,23 +48,41 @@ export async function validateSDKKey(sdkKey: string): Promise<{
         details: error.details,
         hint: error.hint,
         sdkKey: sdkKey.substring(0, 20) + '...',
+        fullSdkKey: sdkKey, // Log full key for debugging (remove in production)
         supabaseUrl: SUPABASE_URL,
         isNewProject: SUPABASE_URL.includes('kkgdxfencpyabcmizytn'),
         isOldProject: SUPABASE_URL.includes('xrvmiyrsxwrruhdljkoz')
       })
       
+      // PGRST116 = no rows returned (SDK key not found)
+      if (error.code === 'PGRST116') {
+        console.warn('⚠️ SDK key not found in database:', sdkKey)
+        return { valid: false, error: 'Invalid SDK key. Please check your SDK key and ensure the project exists.' }
+      }
+      
       // Check if it's a connection error
-      if (error.message?.includes('520') || error.message?.includes('Web server') || error.code === 'PGRST116') {
+      if (error.message?.includes('520') || error.message?.includes('Web server') || error.message?.includes('connection')) {
         return { valid: false, error: 'Database connection error. Please try again later.' }
       }
       
-      return { valid: false, error: 'Invalid SDK key' }
+      return { valid: false, error: `Invalid SDK key: ${error.message || error.code || 'Unknown error'}` }
     }
     
     if (!project) {
-      console.warn('SDK key not found in database:', sdkKey.substring(0, 20) + '...')
-      return { valid: false, error: 'Invalid SDK key' }
+      console.warn('⚠️ SDK key not found in database (no project returned):', sdkKey.substring(0, 20) + '...')
+      return { valid: false, error: 'Invalid SDK key. Project not found.' }
     }
+
+    // Log project status for debugging
+    console.log('✅ SDK key validated:', {
+      projectId: project.id,
+      projectName: project.name,
+      isActive: project.is_active,
+      hasAllowedDomains: !!project.allowed_domains
+    })
+
+    // Note: We allow inactive projects to send data (they just won't show in dashboard)
+    // This allows users to reactivate projects without losing data
 
     // Parse allowed_domains (stored as JSON array or comma-separated string)
     let allowedDomains: string[] = []
