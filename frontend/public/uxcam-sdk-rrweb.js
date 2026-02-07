@@ -2202,25 +2202,9 @@
     try {
       var pathname = window.location.pathname;
       
-      // Only exclude specific dashboard/admin paths (generic, works for any website)
-      // This prevents recording the analytics tool dashboard itself
-      var excludedPaths = [
-        '/dashboard',      // Analytics dashboard
-        '/admin',          // Admin panels
-        '/login',          // Login pages (usually not user-facing content)
-        '/register'        // Registration pages
-      ];
-      
-      // Check if pathname starts with excluded paths
-      // This is generic and works for ANY website
-      for (var j = 0; j < excludedPaths.length; j++) {
-        if (pathname.startsWith(excludedPaths[j])) {
-          if (window.UXCamSDK && window.UXCamSDK.debug) {
-            console.log('UXCam SDK: Excluded from recording (dashboard/admin path: ' + excludedPaths[j] + ')');
-          }
-          return true;
-        }
-      }
+      // NO DEFAULT EXCLUSIONS - Track all pages by default
+      // Users can explicitly exclude paths via window.UXCamSDK.excludePaths if needed
+      // This allows tracking of dashboard, admin, login, and all other pages
       
       // Check if explicitly disabled by user
       if (window.UXCamSDK && window.UXCamSDK.disabled === true) {
@@ -2230,7 +2214,8 @@
         return true;
       }
       
-      // Check if user wants to exclude specific paths (custom exclusion)
+      // Check if user wants to exclude specific paths (custom exclusion only)
+      // Users can set window.UXCamSDK.excludePaths = ['/path1', '/path2'] to exclude specific paths
       if (window.UXCamSDK && window.UXCamSDK.excludePaths) {
         var customExcludePaths = window.UXCamSDK.excludePaths;
         if (Array.isArray(customExcludePaths)) {
@@ -2245,7 +2230,7 @@
         }
       }
       
-      // By default, allow recording on all other pages
+      // By default, allow recording on ALL pages (dashboard, admin, login, etc.)
       return false;
     } catch (e) {
       // If check fails, allow recording (fail open - don't break user websites)
