@@ -929,7 +929,17 @@ export function SessionReplayPlayer() {
           return // Don't show error, video will be displayed
         }
         
-        setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
+        // Check if this might be due to SDK key authentication failure
+        const sessionStartTime = data.session?.start_time ? new Date(data.session.start_time).getTime() : null
+        const now = Date.now()
+        const sessionAge = sessionStartTime ? now - sessionStartTime : null
+        
+        // If session is recent (within last hour), it might be due to SDK key/auth issues
+        if (sessionAge && sessionAge < 3600000) {
+          setError('No snapshots available. This session may have failed to upload snapshots due to authentication issues. Please verify your SDK key is correct and test with a new session.')
+        } else {
+          setError('No snapshots available for this session. This session was recorded before DOM recording was enabled or snapshots failed to upload.')
+        }
         return
       }
       
@@ -1022,7 +1032,12 @@ export function SessionReplayPlayer() {
       
       console.error('Error loading snapshots:', error)
       if (error.message?.includes('404') || error.message?.includes('not found')) {
-        setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
+        // Check if session exists but has no snapshots (might be due to upload failure)
+        if (session && session.duration && session.duration > 0) {
+          setError('No snapshots available. Session was recorded but snapshots failed to upload. This may be due to authentication issues or network problems during recording.')
+        } else {
+          setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
+        }
       } else {
         setError(error.message || 'Failed to load snapshots')
       }
@@ -3624,7 +3639,7 @@ export function SessionReplayPlayer() {
             )}
             
             {/* Show "no data" message only when NOT loading, no error, no snapshots, and no video */}
-            {!isLoadingData && snapshots.length === 0 && !error && !hasVideo && (
+            {!isLoadingData && snapshots.length === 0 && !hasVideo && (
               <div style={{ 
                 display: 'flex',
                 alignItems: 'center',
@@ -3638,12 +3653,20 @@ export function SessionReplayPlayer() {
                 right: 0,
                 bottom: 0,
                 zIndex: 10,
-                backgroundColor: 'white'
+                backgroundColor: 'white',
+                padding: '2rem'
               }}>
-                <p style={{ fontSize: '1rem', fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>No replay data available</p>
-                <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginTop: '0.5rem' }}>
-                  This session was recorded before visual replay was enabled
+                <p style={{ fontSize: '1rem', fontWeight: '500', color: '#111827', marginBottom: '0.5rem' }}>
+                  {error ? 'No Replay Data Available' : 'No replay data available'}
                 </p>
+                <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginTop: '0.5rem', textAlign: 'center', maxWidth: '500px' }}>
+                  {error || 'This session was recorded before visual replay was enabled or snapshots failed to upload.'}
+                </p>
+                {session && session.duration && session.duration > 0 && (
+                  <p style={{ fontSize: '0.75rem', color: '#9ca3af', marginTop: '1rem', fontStyle: 'italic' }}>
+                    Note: Session has duration ({Math.round(session.duration / 1000)}s) but no replay data. This may indicate snapshots failed to upload.
+                  </p>
+                )}
               </div>
             )}
             {/* Replay player will be rendered here by initializePlayer() when snapshots.length > 0 */}
