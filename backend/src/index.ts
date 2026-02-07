@@ -155,12 +155,18 @@ const corsOptions = {
                     isLocalNetwork
     } else {
       // Production: Allow configured origins and Vercel domains for dashboard
+      // Always allow Vercel app domains for dashboard requests (cross-deployment support)
       const hasAnyVercelOrigin = allowedOrigins.some(allowed => 
         allowed.includes('vercel.app')
       )
       
+      // Allow all *.vercel.app domains for dashboard (frontend can be on different Vercel deployment)
+      // This enables cross-deployment support where frontend and backend are on different Vercel URLs
+      const allowAllVercelDomains = isVercelDomain && origin.includes('ux-analytical-tool')
+      
       shouldAllow = allowedOrigins.length === 0 || 
                     originMatches || 
+                    allowAllVercelDomains ||
                     (isVercelDomain && (hasVercelWildcard || hasAnyVercelOrigin)) || 
                     isLocalhost
       
@@ -173,6 +179,7 @@ const corsOptions = {
         isVercelDomain,
         hasVercelWildcard,
         hasAnyVercelOrigin,
+        allowAllVercelDomains,
         shouldAllow
       })
     }
