@@ -368,6 +368,16 @@ export function SessionReplayPlayer() {
       
       // Load fresh data in parallel for faster loading (non-blocking)
       // Cached data is already shown, so this just updates it
+      
+      // Add timeout to prevent infinite loading (30 seconds)
+      const timeoutId = setTimeout(() => {
+        if (isMounted) {
+          console.warn('⚠️ Session data loading timeout after 30 seconds')
+          setIsLoadingData(false)
+          setError('Loading timeout: The session data is taking too long to load. This may be due to network issues, CORS problems, or a large session. Please check the browser console for errors and try refreshing the page.')
+        }
+      }, 30000)
+      
       Promise.all([
         loadSessionData(),
         loadSnapshots(),
@@ -375,14 +385,17 @@ export function SessionReplayPlayer() {
       ])
         .then(() => {
           // Data loading complete
+          clearTimeout(timeoutId)
           if (isMounted) {
             setIsLoadingData(false)
           }
         })
         .catch((error: any) => {
+          clearTimeout(timeoutId)
           if (error?.name !== 'AbortError' && isMounted) {
             console.error('Error loading session replay data:', error)
             setIsLoadingData(false) // Stop loading on error
+            // Error messages are already set by individual load functions
           }
         })
     }
@@ -1027,10 +1040,26 @@ export function SessionReplayPlayer() {
       if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
         // Don't set error state for abort errors - they're expected when component unmounts
         console.log('Request was cancelled (this is normal when navigating away)')
+        setIsLoadingData(false) // Clear loading state even on abort
         return
       }
       
       console.error('Error loading snapshots:', error)
+      
+      // Check for CORS errors
+      if (error.message?.includes('CORS') || error.message?.includes('Access-Control-Allow-Origin') || error.message?.includes('blocked by CORS')) {
+        setError('CORS error: Cannot load session data. The backend may not be allowing requests from this domain. Please check CORS configuration.')
+        setIsLoadingData(false)
+        return
+      }
+      
+      // Check for network errors
+      if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError') || error.message?.includes('ERR_FAILED')) {
+        setError('Network error: Cannot connect to the backend server. Please check your internet connection and try again.')
+        setIsLoadingData(false)
+        return
+      }
+      
       if (error.message?.includes('404') || error.message?.includes('not found')) {
         // Check if session exists but has no snapshots (might be due to upload failure)
         if (session && session.duration && session.duration > 0) {
@@ -1041,8 +1070,10 @@ export function SessionReplayPlayer() {
       } else {
         setError(error.message || 'Failed to load snapshots')
       }
+      
+      // CRITICAL: Always clear loading state on error
+      setIsLoadingData(false)
     }
-    // No finally block - we don't set loading state anymore
   }
 
   const initializePlayer = () => {
