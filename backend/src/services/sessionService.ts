@@ -241,7 +241,6 @@ export async function getSessionsByProject(
   }
 }
 
-
 /**
  * Check if a session should be filtered out (doesn't meet minimum criteria)
  * Sessions are filtered if:
@@ -260,7 +259,7 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
     // Check duration < 10 seconds
     const duration = (session.duration || 0) / 1000 // Convert to seconds
     if (duration < 10) {
-      console.log(\🚫 Session \ filtered: duration \s < 10s\)
+      console.log('🚫 Session ' + sessionDbId + ' filtered: duration ' + duration + 's < 10s')
       return true
     }
 
@@ -271,14 +270,14 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
       .eq('session_id', sessionDbId)
 
     if ((snapshotCount || 0) === 0) {
-      console.log(\🚫 Session \ filtered: no snapshots\)
+      console.log('🚫 Session ' + sessionDbId + ' filtered: no snapshots')
       return true
     }
 
     // Check event count < 2
     const eventCount = session.event_count || 0
     if (eventCount < 2) {
-      console.log(\🚫 Session \ filtered: event_count \ < 2\)
+      console.log('🚫 Session ' + sessionDbId + ' filtered: event_count ' + eventCount + ' < 2')
       return true
     }
 
@@ -296,7 +295,7 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
  */
 export async function deleteSessionAndRelatedData(sessionDbId: string): Promise<void> {
   try {
-    console.log(\🗑️ Deleting session \ and all related data\)
+    console.log('🗑️ Deleting session ' + sessionDbId + ' and all related data')
 
     // Delete related data first (foreign key constraints)
     // Note: If CASCADE is set up, deleting the session will automatically delete related data
@@ -339,10 +338,10 @@ export async function deleteSessionAndRelatedData(sessionDbId: string): Promise<
       .eq('id', sessionDbId)
 
     if (sessionError) {
-      throw new Error(\Failed to delete session: \\)
+      throw new Error('Failed to delete session: ' + sessionError.message)
     }
 
-    console.log(\✅ Successfully deleted session \ and all related data\)
+    console.log('✅ Successfully deleted session ' + sessionDbId + ' and all related data')
   } catch (error: any) {
     console.error('Error deleting session and related data:', error)
     throw error
