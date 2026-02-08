@@ -36,6 +36,9 @@ export interface CohortFilter {
 /**
  * Get or create user properties
  */
+// Track if device_type column exists (cache to avoid repeated failures)
+let deviceTypeColumnExists: boolean | null = null
+
 export async function getOrCreateUserProperties(
   projectId: string,
   userId: string,
@@ -64,8 +67,9 @@ export async function getOrCreateUserProperties(
         })
       }
       
-      // Only include device_type if provided (make it optional to avoid schema errors)
-      if (initialProperties?.device_type || existing.device_type) {
+      // Only include device_type if we know the column exists AND it's provided
+      // Skip device_type entirely if we've previously detected it doesn't exist
+      if (deviceTypeColumnExists !== false && (initialProperties?.device_type || existing.device_type)) {
         updateData.device_type = initialProperties?.device_type || existing.device_type
       }
       
@@ -77,9 +81,11 @@ export async function getOrCreateUserProperties(
         .select()
         .single()
 
-      // If error is about device_type column not existing, retry without it
+      // If error is about device_type column not existing, retry without it and cache the result
       if (updateError && (updateError.code === 'PGRST204' || updateError.message?.includes('device_type'))) {
         console.warn('⚠️ device_type column not found, retrying update without device_type')
+        deviceTypeColumnExists = false // Cache that column doesn't exist
+        
         // Remove device_type from update data and retry
         const { device_type, ...updateDataWithoutDeviceType } = updateData
         const retryResult = await supabase
@@ -91,6 +97,11 @@ export async function getOrCreateUserProperties(
         
         updated = retryResult.data
         updateError = retryResult.error
+      } else if (!updateError && deviceTypeColumnExists === null) {
+        // If update succeeded and we included device_type, column exists
+        if (updateData.device_type !== undefined) {
+          deviceTypeColumnExists = true
+        }
       }
 
       if (updateError && updateError.code !== 'PGRST116') {
@@ -119,8 +130,9 @@ export async function getOrCreateUserProperties(
       updated_at: now
     }
     
-    // Only include device_type if provided (make it optional to avoid schema errors)
-    if (initialProperties?.device_type) {
+    // Only include device_type if we know the column exists AND it's provided
+    // Skip device_type entirely if we've previously detected it doesn't exist
+    if (deviceTypeColumnExists !== false && initialProperties?.device_type) {
       insertData.device_type = initialProperties.device_type
     }
     
@@ -131,9 +143,11 @@ export async function getOrCreateUserProperties(
       .select()
       .single()
 
-    // If error is about device_type column not existing, retry without it
+    // If error is about device_type column not existing, retry without it and cache the result
     if (createError && (createError.code === 'PGRST204' || createError.message?.includes('device_type'))) {
       console.warn('⚠️ device_type column not found, retrying insert without device_type')
+      deviceTypeColumnExists = false // Cache that column doesn't exist
+      
       // Remove device_type from insert data and retry
       const { device_type, ...insertDataWithoutDeviceType } = insertData
       const retryResult = await supabase
@@ -144,6 +158,11 @@ export async function getOrCreateUserProperties(
       
       created = retryResult.data
       createError = retryResult.error
+    } else if (!createError && deviceTypeColumnExists === null) {
+      // If insert succeeded and we included device_type, column exists
+      if (insertData.device_type !== undefined) {
+        deviceTypeColumnExists = true
+      }
     }
 
     if (createError) {
@@ -152,6 +171,26 @@ export async function getOrCreateUserProperties(
 
     return created
   } catch (error: any) {
+    // Check if this is a device_type error - handle gracefully without breaking the request
+    const isDeviceTypeError = error && (
+      error.code === 'PGRST204' || 
+      (typeof error.message === 'string' && (
+        error.message.includes('device_type') || 
+        error.message.includes('Could not find') ||
+        error.message.includes('schema cache')
+      ))
+    )
+    
+    if (isDeviceTypeError) {
+      // Log as warning, not error - this is expected when column doesn't exist
+      console.warn('⚠️ device_type column not found in user_properties table - skipping device_type update')
+      deviceTypeColumnExists = false // Cache that column doesn't exist
+      // Don't throw - return null to indicate failure without breaking the request
+      // The calling code in events.ts already handles this gracefully with .catch()
+      return null as any
+    }
+    
+    // For other errors, log and throw
     console.error('Error getting/creating user properties:', error)
     throw error
   }
