@@ -69,13 +69,33 @@ export async function getOrCreateUserProperties(
         updateData.device_type = initialProperties?.device_type || existing.device_type
       }
       
-      // Update last_seen
-      const { data: updated } = await supabase
+      // Try to update - if device_type column doesn't exist, retry without it
+      let { data: updated, error: updateError } = await supabase
         .from('user_properties')
         .update(updateData)
         .eq('id', existing.id)
         .select()
         .single()
+
+      // If error is about device_type column not existing, retry without it
+      if (updateError && (updateError.code === 'PGRST204' || updateError.message?.includes('device_type'))) {
+        console.warn('⚠️ device_type column not found, retrying update without device_type')
+        // Remove device_type from update data and retry
+        const { device_type, ...updateDataWithoutDeviceType } = updateData
+        const retryResult = await supabase
+          .from('user_properties')
+          .update(updateDataWithoutDeviceType)
+          .eq('id', existing.id)
+          .select()
+          .single()
+        
+        updated = retryResult.data
+        updateError = retryResult.error
+      }
+
+      if (updateError && updateError.code !== 'PGRST116') {
+        throw updateError
+      }
 
       return updated || existing
     }
@@ -104,11 +124,27 @@ export async function getOrCreateUserProperties(
       insertData.device_type = initialProperties.device_type
     }
     
-    const { data: created, error: createError } = await supabase
+    // Try to insert - if device_type column doesn't exist, retry without it
+    let { data: created, error: createError } = await supabase
       .from('user_properties')
       .insert(insertData)
       .select()
       .single()
+
+    // If error is about device_type column not existing, retry without it
+    if (createError && (createError.code === 'PGRST204' || createError.message?.includes('device_type'))) {
+      console.warn('⚠️ device_type column not found, retrying insert without device_type')
+      // Remove device_type from insert data and retry
+      const { device_type, ...insertDataWithoutDeviceType } = insertData
+      const retryResult = await supabase
+        .from('user_properties')
+        .insert(insertDataWithoutDeviceType)
+        .select()
+        .single()
+      
+      created = retryResult.data
+      createError = retryResult.error
+    }
 
     if (createError) {
       throw createError

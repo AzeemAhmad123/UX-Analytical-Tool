@@ -181,11 +181,29 @@ export async function applyAdditionalFilters(
   const userIds = Array.from(new Set(eventsWithUsers.map(e => e.user_id).filter(Boolean)))
   
   // Fetch user properties
-  const { data: userProps } = await supabase
+  // Try to select device_type, but handle if column doesn't exist
+  let { data: userProps, error: userPropsError } = await supabase
     .from('user_properties')
     .select('user_id, country, app_version, device_type')
     .eq('project_id', projectId)
     .in('user_id', userIds)
+  
+  // If device_type column doesn't exist, retry without it
+  if (userPropsError && (userPropsError.code === 'PGRST204' || userPropsError.message?.includes('device_type'))) {
+    console.warn('⚠️ device_type column not found in user_properties, querying without it')
+    const retryResult: any = await supabase
+      .from('user_properties')
+      .select('user_id, country, app_version')
+      .eq('project_id', projectId)
+      .in('user_id', userIds)
+    userProps = retryResult.data as any
+    userPropsError = retryResult.error
+  }
+  
+  if (userPropsError) {
+    console.error('Error fetching user properties:', userPropsError)
+    userProps = []
+  }
 
   // Create user_id to properties map
   const userPropsMap = new Map<string, any>()
@@ -201,7 +219,8 @@ export async function applyAdditionalFilters(
     if (countryFilter && props.country !== countryFilter) {
       return false
     }
-    if (deviceFilter && props.device_type && !props.device_type.toLowerCase().includes(deviceFilter.toLowerCase())) {
+    // device_type is optional - only filter if it exists
+    if (deviceFilter && props.device_type && typeof props.device_type === 'string' && !props.device_type.toLowerCase().includes(deviceFilter.toLowerCase())) {
       return false
     }
     if (appVersionFilter && props.app_version !== appVersionFilter) {

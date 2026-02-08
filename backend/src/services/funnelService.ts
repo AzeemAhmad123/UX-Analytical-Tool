@@ -696,11 +696,30 @@ export async function analyzeFunnel(
         let userPropertiesMap = new Map<string, any>()
         
         if (userIds.length > 0) {
-          const { data: userProps } = await supabase
+          // Try to select device_type, but handle if column doesn't exist
+          let { data: userProps, error: userPropsError } = await supabase
             .from('user_properties')
             .select('user_id, platform, country, app_version, device_type, is_new_user, acquisition_source, properties')
             .eq('project_id', funnel.project_id)
             .in('user_id', userIds)
+          
+          // If device_type column doesn't exist, retry without it
+          if (userPropsError && (userPropsError.code === 'PGRST204' || userPropsError.message?.includes('device_type'))) {
+            console.warn('⚠️ device_type column not found in user_properties, querying without it')
+            const retryResult: any = await supabase
+              .from('user_properties')
+              .select('user_id, platform, country, app_version, is_new_user, acquisition_source, properties')
+              .eq('project_id', funnel.project_id)
+              .in('user_id', userIds)
+            userProps = retryResult.data as any
+            userPropsError = retryResult.error
+          }
+          
+          if (userPropsError) {
+            console.error('Error fetching user properties:', userPropsError)
+            // Continue without user properties filtering
+            userProps = []
+          }
           
           userProps?.forEach(up => {
             userPropertiesMap.set(up.user_id, up)
