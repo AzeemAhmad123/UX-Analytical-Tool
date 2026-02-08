@@ -333,6 +333,12 @@
       flushOnUnload: true, // Flush all snapshots when user leaves
     };
     
+    // CRITICAL: Helper function to always get the current SDK key from window.UXCamSDK
+    // This prevents using a cached/stale SDK key if it was changed after SDK initialization
+    function getCurrentSdkKey() {
+      return window.UXCamSDK?.key || config.sdkKey || '';
+    }
+    
     // Storage & Performance Limits
     const MAX_QUEUE_SIZE = 50000; // Maximum events/snapshots in memory (prevent memory bloat)
     const MAX_SNAPSHOT_QUEUE_SIZE = 10000; // Maximum snapshots in queue
@@ -909,7 +915,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sdk_key: config.sdkKey,
+            sdk_key: getCurrentSdkKey(),
             session_id: sessionId,
             snapshots: compressed,
             snapshot_count: eventsToUpload.length,
@@ -1270,7 +1276,7 @@
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sdk_key: config.sdkKey,
+          sdk_key: getCurrentSdkKey(),
           session_id: sessionId,
           snapshots: compressed,
           snapshot_count: validSnapshots.length
@@ -1304,7 +1310,7 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            sdk_key: config.sdkKey,
+            sdk_key: getCurrentSdkKey(),
             session_id: sessionId,
             events: events,
             device_info: deviceInfo,
@@ -1924,7 +1930,7 @@
               pendingUploads++;
               
               const blob = new Blob([JSON.stringify({
-                sdk_key: config.sdkKey,
+                sdk_key: getCurrentSdkKey(),
                 session_id: sessionId,
                 events: eventsToSend,
                 device_info: deviceInfo,
@@ -1941,7 +1947,7 @@
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    sdk_key: config.sdkKey,
+                    sdk_key: getCurrentSdkKey(),
                     session_id: sessionId,
                     events: eventsToSend,
                     device_info: deviceInfo,
@@ -1964,7 +1970,7 @@
               const compressed = compressSnapshots(snapshots);
               
               const blob = new Blob([JSON.stringify({
-                sdk_key: config.sdkKey,
+                sdk_key: getCurrentSdkKey(),
                 session_id: sessionId,
                 snapshots: compressed,
                 snapshot_count: snapshots.length,
@@ -1984,7 +1990,7 @@
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    sdk_key: config.sdkKey,
+                    sdk_key: getCurrentSdkKey(),
                     session_id: sessionId,
                     snapshots: compressed,
                     snapshot_count: snapshots.length,
@@ -2024,7 +2030,7 @@
                 const events = [...eventQueue];
                 eventQueue = [];
                 const blob = new Blob([JSON.stringify({
-                  sdk_key: config.sdkKey,
+                  sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
                   events: events,
                   device_info: deviceInfo,
@@ -2043,7 +2049,7 @@
                 const compressed = compressSnapshots(snapshots);
                 
                 const blob = new Blob([JSON.stringify({
-                  sdk_key: config.sdkKey,
+                  sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
                   snapshots: compressed,
                   snapshot_count: snapshots.length,
