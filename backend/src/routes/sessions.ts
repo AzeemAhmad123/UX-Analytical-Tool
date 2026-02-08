@@ -84,20 +84,26 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       throw new Error(`Failed to retrieve sessions: ${error.message}`)
     }
 
-    // Get snapshot counts for all sessions in one query
+    // OPTIMIZATION FOR FREE TIER: Single query to get snapshot counts (only session_id, not full data)
+    // This is efficient - we only fetch session_id column, then count in memory
+    // Much better than 50+ separate COUNT queries
     const sessionIds = (sessions || []).map(s => s.id)
-    const { data: snapshotCounts } = await supabase
-      .from('session_snapshots')
-      .select('session_id')
-      .in('session_id', sessionIds)
-    
-    // Count snapshots per session and filter out sessions without snapshots
     const snapshotCountMap = new Map<string, number>()
-    if (snapshotCounts) {
-      snapshotCounts.forEach((snapshot: any) => {
-        const count = snapshotCountMap.get(snapshot.session_id) || 0
-        snapshotCountMap.set(snapshot.session_id, count + 1)
-      })
+    
+    if (sessionIds.length > 0) {
+      // Single query to get all snapshot session_ids (only fetches session_id column, not full data)
+      const { data: snapshotCounts } = await supabase
+        .from('session_snapshots')
+        .select('session_id') // Only select session_id (minimal data transfer)
+        .in('session_id', sessionIds)
+      
+      // Count in memory (fast, no additional database queries)
+      if (snapshotCounts) {
+        snapshotCounts.forEach((snapshot: any) => {
+          const count = snapshotCountMap.get(snapshot.session_id) || 0
+          snapshotCountMap.set(snapshot.session_id, count + 1)
+        })
+      }
     }
     
     // Filter out sessions without snapshots (recording never started)
@@ -181,74 +187,40 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       }
     }
 
-    // Calculate accurate duration for each session from actual event timestamps
-    // REMOVED STRICT FILTER: Show ALL sessions (including videos without snapshots)
-    // Use Promise.allSettled to prevent one slow session from blocking all others
-    const sessionsWithAccurateDuration = await Promise.allSettled(
-      filteredSessions.map(async (session: any) => {
-        // REMOVED: No longer filtering out sessions without snapshots
-        // Videos and other session types should be visible
-
-        // Try to get duration from event timestamps (most accurate)
-        // Add timeout to prevent hanging
-        const durationPromise = getSessionDurationFromSnapshots(session.id)
-        const timeoutPromise = new Promise<null>((resolve) => 
-          setTimeout(() => resolve(null), 2000) // 2 second timeout
-        )
-        
-        const eventBasedDuration = await Promise.race([durationPromise, timeoutPromise])
-        
-        if (eventBasedDuration && eventBasedDuration > 0) {
-          // Use event-based duration (most accurate)
-          const videoInfo = videoMap.get(session.id) || {}
-          const pageViewCount = pageViewCounts.get(session.id) || 0
-          return {
-            ...session,
-            duration: eventBasedDuration,
-            snapshot_count: snapshotCountMap.get(session.id) || 0,
-            page_view_count: pageViewCount, // Add page_view count for accurate screen visits
-            ...videoInfo
-          }
-        }
-        
-        // Fallback: use stored duration or calculate from timestamps
+    // OPTIMIZATION FOR FREE TIER: Use stored duration instead of calculating from snapshots
+    // Calculating duration from snapshots requires fetching/decompressing snapshots for EACH session
+    // This is very expensive for free tier (50 sessions = 50+ database queries)
+    // Instead, use the stored duration field which is already calculated and stored
+    const sessionsWithAccurateDuration = filteredSessions.map((session: any) => {
+      // Use stored duration from database (already calculated and stored)
+      // This avoids expensive snapshot queries for list view
+      let finalDuration = session.duration || 0
+      
+      // Fallback: calculate from timestamps if stored duration is missing
+      if (finalDuration === 0) {
         const startTime = new Date(session.start_time).getTime()
         const lastActivityTime = new Date(session.last_activity_time).getTime()
         const timeBasedDuration = lastActivityTime - startTime
         
-        // Use stored duration if it's reasonable, otherwise use time-based
-        let finalDuration = session.duration || 0
-        
-        // Cap at reasonable maximum (10 minutes)
+        // Cap at reasonable maximum (10 minutes) to prevent unrealistic durations
         const maxReasonableDuration = 10 * 60 * 1000
-        
-        if (finalDuration === 0) {
-          finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
-        } else if (finalDuration > maxReasonableDuration) {
-          finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
-        }
-
-        // Get video info for this session
-        const videoInfo = videoMap.get(session.id) || {}
-        
-        // Get page_view count for this session (for screen visits metric)
-        const pageViewCount = pageViewCounts.get(session.id) || 0
-        
-        return {
-          ...session,
-          duration: finalDuration,
-          snapshot_count: snapshotCountMap.get(session.id) || 0,
-          page_view_count: pageViewCount, // Add page_view count for accurate screen visits
-          ...videoInfo
-        }
-      })
-    ).then(results => 
-      results
-        .filter(result => result.status === 'fulfilled')
-        .map(result => (result as PromiseFulfilledResult<any>).value)
-        .filter(session => session && typeof session === 'object' && session.id && session !== null)
-        // REMOVED: No duration filtering - show all sessions including videos
-    )
+        finalDuration = Math.min(timeBasedDuration, maxReasonableDuration)
+      }
+      
+      // Get video info for this session
+      const videoInfo = videoMap.get(session.id) || {}
+      
+      // Get page_view count for this session (for screen visits metric)
+      const pageViewCount = pageViewCounts.get(session.id) || 0
+      
+      return {
+        ...session,
+        duration: finalDuration,
+        snapshot_count: snapshotCountMap.get(session.id) || 0,
+        page_view_count: pageViewCount,
+        ...videoInfo
+      }
+    }).filter(session => session && typeof session === 'object' && session.id && session !== null)
 
     res.json({
       success: true,
@@ -349,18 +321,21 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })) || []
     })
 
-    // Get all snapshots for this session with timeout handling
+    // OPTIMIZATION: Fetch only initial snapshots (first 20) for fast loading
+    // Large sessions can have hundreds of snapshots - we don't need all of them to start replay
+    const INITIAL_SNAPSHOT_LIMIT = 20 // Load first 20 snapshots to start replay quickly
     let snapshots: any[] = []
     try {
-      console.log(`🔍 Looking up snapshots for session:`, {
+      console.log(`🔍 Looking up snapshots for session (limit: ${INITIAL_SNAPSHOT_LIMIT} for fast loading):`, {
         sessionDbId: session.id,
         sessionId: session.session_id,
         projectId: session.project_id
       })
       
       // Use Promise.race to add timeout, but also catch Supabase query timeouts
+      // LIMIT initial fetch to 20 snapshots for fast loading
       snapshots = await Promise.race([
-        getSessionSnapshots(session.id).catch((err: any) => {
+        getSessionSnapshots(session.id, INITIAL_SNAPSHOT_LIMIT).catch((err: any) => {
           // Check if it's a Supabase timeout - catch ALL timeout-related errors
           const errorMsg = err.message || err.toString() || ''
           if (errorMsg.includes('timeout') || 
@@ -373,7 +348,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           throw err
         }),
         new Promise<any[]>((_, reject) => 
-          setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 60000) // 60 second timeout (increased for large sessions)
+          setTimeout(() => reject(new Error('Snapshot retrieval timeout')), 30000) // 30 second timeout (reduced since we're limiting snapshots)
         )
       ])
     } catch (error: any) {
@@ -418,7 +393,8 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       })
     }
 
-    // Decode all snapshots using decodeSnapshot utility
+    // OPTIMIZATION: Decode snapshots in PARALLEL instead of sequentially
+    // This is much faster - all snapshots decode at the same time
     const allEvents: any[] = []
     const startTime = Date.now()
     
@@ -426,19 +402,12 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     if (snapshots.length === 0) {
       console.log(`⏭️ Skipping snapshot decoding - no snapshots to process`)
     } else {
-        console.log(`📦 Starting to decode ${snapshots.length} snapshot batches`)
+      console.log(`📦 Starting PARALLEL decoding of ${snapshots.length} snapshot batches`)
       
-      for (let i = 0; i < snapshots.length; i++) {
-      const snapshot = snapshots[i]
-      
-      // Log progress every 10 snapshots
-      if (i > 0 && i % 10 === 0) {
-        const elapsed = Date.now() - startTime
-        const avgTimePerSnapshot = elapsed / i
-        const estimatedRemaining = avgTimePerSnapshot * (snapshots.length - i)
-        console.log(`⏳ Decoding progress: ${i}/${snapshots.length} snapshots (${Math.round(elapsed/1000)}s elapsed, ~${Math.round(estimatedRemaining/1000)}s remaining)`)
-      }
-      try {
+      // OPTIMIZATION: Decode all snapshots in parallel using Promise.all
+      // This is MUCH faster than sequential decoding
+      const decodePromises = snapshots.map(async (snapshot: any, i: number) => {
+        try {
         const rawData = snapshot.snapshot_data
         // Reduced logging for performance - only log first snapshot
         if (i === 0) {
@@ -461,7 +430,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             isNull: snapshotString === null,
             isUndefined: snapshotString === undefined
           })
-          continue
+          return [] // Return empty array instead of continue
         }
         
         // Log what we're trying to decode
@@ -571,7 +540,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             }
           } catch (fallbackError: any) {
             console.error(`❌ All decoding strategies failed for snapshot ${snapshot.id}`)
-            continue // Skip this snapshot
+            return [] // Return empty array instead of continue
           }
         }
         
@@ -595,7 +564,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             }
           } catch (bufferError: any) {
             console.error(`❌ Failed to convert Buffer object for snapshot ${snapshot.id}:`, bufferError.message)
-            continue
+            return [] // Return empty array instead of continue
           }
         }
         
@@ -611,7 +580,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
           // Check if it's still a Buffer object (shouldn't happen after conversion above, but just in case)
           if ((events as any).type === 'Buffer' && Array.isArray((events as any).data)) {
             console.error(`❌ Still have Buffer object after conversion for snapshot ${snapshot.id}`)
-            continue
+            return [] // Return empty array instead of continue
           }
           decoded = [events] // Single event object
         }
@@ -624,39 +593,45 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
             isArray: Array.isArray(events),
             eventsKeys: events && typeof events === 'object' ? Object.keys(events) : []
           })
-          continue
+          return [] // Return empty array instead of continue
         }
         
-        // decodeSnapshot returns a flat array - filter valid events and push directly
+        // decodeSnapshot returns a flat array - filter valid events
         const validEvents = decoded.filter((e: any) => 
           e && typeof e.type === 'number' && typeof e.timestamp === 'number' && e.data !== undefined
         )
         
-        if (validEvents.length > 0) {
-          allEvents.push(...validEvents) // Push flat array of events directly
-          // Only log for first few snapshots to reduce verbosity
-          if (i < 3) {
-            console.log(`✅ Extracted ${validEvents.length} valid events from snapshot ${snapshot.id}`, {
-              type2Count: validEvents.filter((e: any) => e.type === 2).length,
-              eventTypes: [...new Set(validEvents.map((e: any) => e.type))]
-            })
-          }
-        } else {
-          // Only log warnings for first few snapshots
-          if (i < 3) {
-            console.warn(`⚠️ No valid events extracted from snapshot ${snapshot.id}`, {
-              decodedLength: decoded.length
-            })
-          }
+        // Only log for first few snapshots to reduce verbosity
+        if (i < 3 && validEvents.length > 0) {
+          console.log(`✅ Extracted ${validEvents.length} valid events from snapshot ${snapshot.id}`, {
+            type2Count: validEvents.filter((e: any) => e.type === 2).length,
+            eventTypes: [...new Set(validEvents.map((e: any) => e.type))]
+          })
+        } else if (i < 3 && validEvents.length === 0) {
+          console.warn(`⚠️ No valid events extracted from snapshot ${snapshot.id}`, {
+            decodedLength: decoded.length
+          })
         }
+        
+        return validEvents // Return events for this snapshot
       } catch (error: any) {
-        console.error(`❌ Error decoding snapshot ${snapshot.id}:`, error.message, error.stack)
-        // Skip this snapshot if decode fails
+        console.error(`❌ Error decoding snapshot ${snapshot.id}:`, error.message)
+        return [] // Return empty array on error
       }
-      }
+    })
     
-      const totalTime = Date.now() - startTime
-      console.log(`✅ Decoding complete: ${allEvents.length} events from ${snapshots.length} snapshots in ${Math.round(totalTime/1000)}s`)
+    // Wait for all snapshots to decode in parallel
+    const decodedResults = await Promise.all(decodePromises)
+    
+    // Flatten all results into single array
+    for (const events of decodedResults) {
+      if (events && events.length > 0) {
+        allEvents.push(...events)
+      }
+    }
+    
+    const totalTime = Date.now() - startTime
+    console.log(`✅ PARALLEL decoding complete: ${allEvents.length} events from ${snapshots.length} snapshots in ${Math.round(totalTime/1000)}s`)
     }
     
     if (allEvents.length === 0 && snapshots.length > 0) {
@@ -807,12 +782,17 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       throw jsonError
     }
   } catch (error: any) {
-    console.error('Error in /api/sessions/:projectId/:sessionId:', {
+    const errorDetails = {
       error: error?.message || error?.toString(),
+      errorName: error?.name,
+      errorCode: (error as any)?.code,
+      originalError: (error as any)?.originalError?.message,
       stack: error?.stack?.substring(0, 1000),
       projectId: req.params.projectId,
       sessionId: req.params.sessionId
-    })
+    }
+    
+    console.error('❌ Error in /api/sessions/:projectId/:sessionId:', errorDetails)
     
     // CORS headers already set at the start of the function - ensure they're still set
     const origin = req.headers.origin
@@ -823,18 +803,18 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     }
     
-    // Log detailed error for debugging
-    console.error('Detailed error:', {
-      message: error.message,
-      stack: error.stack?.substring(0, 500),
-      name: error.name,
-      projectId: req.params.projectId,
-      sessionId: req.params.sessionId
-    })
+    // Provide more helpful error message
+    let errorMessage = error.message || 'An unexpected error occurred while retrieving session data'
+    if (error.message?.includes('timeout') || error.message?.includes('Snapshot retrieval timeout')) {
+      errorMessage = 'Session data retrieval timed out. This may be due to a very large session. Please try again or contact support.'
+    } else if (error.message?.includes('Failed to retrieve snapshots')) {
+      errorMessage = 'Failed to retrieve session snapshots. The session may not have any recorded data yet.'
+    }
     
     res.status(500).json({
       error: 'Failed to retrieve session',
-      message: error.message || 'An unexpected error occurred while retrieving session data'
+      message: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? errorDetails : undefined // Only show details in dev
     })
   }
 })

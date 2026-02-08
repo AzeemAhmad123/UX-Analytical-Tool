@@ -91,7 +91,8 @@ export async function storeSnapshot(
       console.warn('⚠️ No project_id available for snapshot insert')
     }
     
-    // Insert with timeout handling - increased timeout to 45 seconds for large snapshots
+    // Insert with timeout handling - increased timeout to 90 seconds for very large snapshots
+    // Vercel has a 10-second timeout for serverless functions, but Supabase can take longer
     let { data: snapshot, error } = await Promise.race([
       supabase
         .from('session_snapshots')
@@ -99,14 +100,15 @@ export async function storeSnapshot(
         .select()
         .single(),
       new Promise<{ data: any, error: any }>((_, reject) => 
-        setTimeout(() => reject(new Error('upstream request timeout')), 45000) // 45 second timeout (increased from 30s)
+        setTimeout(() => reject(new Error('upstream request timeout')), 90000) // 90 second timeout (increased from 45s for very large snapshots)
       )
     ]).catch((timeoutError: any) => {
       // If timeout, return error object
       console.error('⏱️ Snapshot insert timeout:', {
         sessionDbId,
         snapshotCount,
-        insertDataSize: JSON.stringify(insertData).length,
+        bufferSize: buffer.length,
+        bufferSizeKB: Math.round(buffer.length / 1024),
         timeoutError: timeoutError.message
       })
       return { data: null, error: { message: timeoutError.message || 'upstream request timeout' } }
@@ -614,8 +616,21 @@ export async function getSessionSnapshots(sessionDbId: string, limit?: number): 
 
     return processedSnapshots
   } catch (error: any) {
-    console.error('Error in getSessionSnapshots:', error)
-    throw error
+    console.error('❌ Error in getSessionSnapshots:', {
+      error: error.message || error.toString(),
+      errorName: error.name,
+      errorCode: (error as any).code,
+      errorDetails: (error as any).details,
+      errorHint: (error as any).hint,
+      stack: error.stack?.substring(0, 500),
+      sessionDbId
+    })
+    
+    // Re-throw with more context
+    const enhancedError = new Error(`Failed to retrieve snapshots for session ${sessionDbId}: ${error.message || error.toString()}`)
+    enhancedError.name = error.name || 'SnapshotRetrievalError'
+    ;(enhancedError as any).originalError = error
+    throw enhancedError
   }
 }
 
