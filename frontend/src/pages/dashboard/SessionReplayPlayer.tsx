@@ -148,6 +148,11 @@ const setCachedPosition = (projectId: string, sessionId: string, position: numbe
 // Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
+    // Filter out sessions with insufficient events (event_count < 2)
+    const eventCount = s.event_count || 0
+    if (eventCount < 2) {
+      return false
+    }
     // Exclude sessions with duration < 10 seconds
     const duration = (s.duration || 0) / 1000 // Convert to seconds
     if (duration < 10) {
@@ -1795,6 +1800,75 @@ export function SessionReplayPlayer() {
       // Store observer and interval for cleanup
       ;(replayer as any)._sandboxObserver = observer
       ;(replayer as any)._sandboxCheckInterval = checkInterval
+
+      // CRITICAL: Handle container resize to ensure proper scaling
+      // When the container is resized (minimized/maximized), the replayer needs to update
+      const handleResize = () => {
+        if (!(replayer as any).destroyed && playerRef.current === replayer && replayContainerRef.current) {
+          const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+          if (iframe) {
+            // Force replayer to recalculate dimensions
+            // The replayer should handle this automatically, but we ensure it happens
+            const containerWidth = replayContainerRef.current.offsetWidth
+            const containerHeight = replayContainerRef.current.offsetHeight
+            
+            // Ensure iframe matches container size
+            if (iframe.style.width !== '100%' || iframe.style.height !== '100%') {
+              iframe.style.width = '100%'
+              iframe.style.height = '100%'
+            }
+            
+            // Trigger a re-render by accessing the replayer's mirror
+            try {
+              const mirror = (replayer as any).getMirror?.()
+              if (mirror && mirror.iframe) {
+                // Force iframe to update its dimensions
+                const replayIframe = mirror.iframe as HTMLIFrameElement
+                if (replayIframe) {
+                  replayIframe.style.width = '100%'
+                  replayIframe.style.height = '100%'
+                }
+              }
+            } catch (e) {
+              // Ignore errors - replayer might not expose mirror
+            }
+            
+            console.log('🔄 Container resized, updated replayer dimensions', {
+              containerWidth,
+              containerHeight,
+              iframeWidth: iframe.offsetWidth,
+              iframeHeight: iframe.offsetHeight
+            })
+          }
+        }
+      }
+      
+      // Use ResizeObserver for efficient resize detection
+      const resizeObserver = new ResizeObserver(() => {
+        // Debounce resize handling
+        if ((replayer as any)._resizeTimeout) {
+          clearTimeout((replayer as any)._resizeTimeout)
+        }
+        ;(replayer as any)._resizeTimeout = setTimeout(() => {
+          handleResize()
+        }, 100) // 100ms debounce
+      })
+      
+      // Observe the replay container for size changes
+      if (replayContainerRef.current) {
+        resizeObserver.observe(replayContainerRef.current)
+        console.log('👀 ResizeObserver attached to replay container')
+      }
+      
+      // Also listen to window resize as fallback
+      const windowResizeHandler = () => {
+        handleResize()
+      }
+      window.addEventListener('resize', windowResizeHandler)
+      
+      // Store resize handlers for cleanup
+      ;(replayer as any)._resizeObserver = resizeObserver
+      ;(replayer as any)._windowResizeHandler = windowResizeHandler
 
       playerRef.current = replayer
 

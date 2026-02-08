@@ -268,6 +268,33 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       if (updateError) {
         console.error('Error updating session:', updateError)
         // Don't throw - snapshot was stored successfully
+      } else {
+        // Check if session should be filtered out (doesn't meet minimum criteria)
+        // Only check if this is NOT the initial snapshot (give session time to accumulate events)
+        if (!isInitialSnapshot) {
+          try {
+            const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+            const shouldFilter = await shouldFilterSession(session.id)
+            if (shouldFilter) {
+              console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
+              await deleteSessionAndRelatedData(session.id)
+              // Return success but indicate session was filtered
+              return res.json({
+                success: true,
+                session_id: session.id,
+                project_id: projectId,
+                session_created: created,
+                snapshot_count: snapshotCount,
+                is_initial_snapshot: isInitialSnapshot,
+                filtered: true,
+                message: 'Session was filtered and deleted (did not meet minimum criteria)'
+              })
+            }
+          } catch (filterError: any) {
+            // Log error but don't fail the request - session was already updated
+            console.error('Error checking/filtering session:', filterError)
+          }
+        }
       }
     } catch (updateError: any) {
       console.error('Error updating session:', updateError)

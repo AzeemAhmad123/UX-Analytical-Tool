@@ -244,9 +244,11 @@ export async function getSessionsByProject(
 /**
  * Check if a session should be filtered out (doesn't meet minimum criteria)
  * Sessions are filtered if:
- * - Duration < 10 seconds
+ * - Duration < 10 seconds (if duration is set)
  * - No snapshots (snapshot_count === 0)
  * - Insufficient events (event_count < 2)
+ * 
+ * Note: Duration check is optional - sessions without duration set are not filtered by duration alone
  */
 export async function shouldFilterSession(sessionDbId: string): Promise<boolean> {
   try {
@@ -256,29 +258,32 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
       return true // Filter out non-existent sessions
     }
 
-    // Check duration < 10 seconds
-    const duration = (session.duration || 0) / 1000 // Convert to seconds
-    if (duration < 10) {
-      console.log('🚫 Session ' + sessionDbId + ' filtered: duration ' + duration + 's < 10s')
-      return true
-    }
-
-    // Check snapshot count
+    // Check snapshot count first (most important - no snapshots = no replay)
     const { count: snapshotCount } = await supabase
       .from('session_snapshots')
       .select('*', { count: 'exact', head: true })
       .eq('session_id', sessionDbId)
 
     if ((snapshotCount || 0) === 0) {
-      console.log('🚫 Session ' + sessionDbId + ' filtered: no snapshots')
+      console.log(`🚫 Session ${sessionDbId} filtered: no snapshots`)
       return true
     }
 
-    // Check event count < 2
+    // Check event count < 2 (insufficient activity)
     const eventCount = session.event_count || 0
     if (eventCount < 2) {
-      console.log('🚫 Session ' + sessionDbId + ' filtered: event_count ' + eventCount + ' < 2')
+      console.log(`🚫 Session ${sessionDbId} filtered: event_count ${eventCount} < 2`)
       return true
+    }
+
+    // Check duration < 10 seconds (only if duration is set)
+    // Don't filter by duration alone if duration is 0 or null (session might still be active)
+    if (session.duration && session.duration > 0) {
+      const duration = session.duration / 1000 // Convert to seconds
+      if (duration < 10) {
+        console.log(`🚫 Session ${sessionDbId} filtered: duration ${duration}s < 10s`)
+        return true
+      }
     }
 
     return false // Session meets all criteria

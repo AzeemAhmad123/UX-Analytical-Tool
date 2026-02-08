@@ -222,6 +222,11 @@ const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
 // Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
+    // Filter out sessions with insufficient events (event_count < 2)
+    const eventCount = s.event_count || 0
+    if (eventCount < 2) {
+      return false
+    }
     // Exclude sessions with duration < 10 seconds
     const duration = (s.duration || 0) / 1000 // Convert to seconds
     if (duration < 10) {

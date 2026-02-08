@@ -340,6 +340,29 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     // Update session activity
     await updateSessionActivity(session.id, session.event_count + events.length)
 
+    // Check if session should be filtered out (doesn't meet minimum criteria)
+    // Check after events are ingested to ensure we have accurate event count
+    try {
+      const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+      const shouldFilter = await shouldFilterSession(session.id)
+      if (shouldFilter) {
+        console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
+        await deleteSessionAndRelatedData(session.id)
+        // Return success but indicate session was filtered
+        return res.json({
+          success: true,
+          session_id: session.id,
+          project_id: projectId,
+          events_processed: events.length,
+          filtered: true,
+          message: 'Session was filtered and deleted (did not meet minimum criteria)'
+        })
+      }
+    } catch (filterError: any) {
+      // Log error but don't fail the request - events were already stored
+      console.error('Error checking/filtering session:', filterError)
+    }
+
     // Return success response with project_id for SDK
     res.json({
       success: true,
