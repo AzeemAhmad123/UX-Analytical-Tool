@@ -341,22 +341,46 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     await updateSessionActivity(session.id, session.event_count + events.length)
 
     // Check if session should be filtered out (doesn't meet minimum criteria)
-    // Check after events are ingested to ensure we have accurate event count
+    // IMPORTANT: Only check if session has had time to accumulate data
+    // Don't filter immediately after first events - wait for initial snapshot to be uploaded
+    // This prevents race conditions where session is deleted before initial snapshot is stored
     try {
-      const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
-      const shouldFilter = await shouldFilterSession(session.id)
-      if (shouldFilter) {
-        console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
-        await deleteSessionAndRelatedData(session.id)
-        // Return success but indicate session was filtered
-        return res.json({
-          success: true,
-          session_id: session.id,
-          project_id: projectId,
-          events_processed: events.length,
-          filtered: true,
-          message: 'Session was filtered and deleted (did not meet minimum criteria)'
-        })
+      // Get updated session to check current state
+      const { data: updatedSession, error: fetchError } = await supabase
+        .from('sessions')
+        .select('event_count, duration, start_time')
+        .eq('id', session.id)
+        .single()
+      
+      if (!fetchError && updatedSession) {
+        // Only filter if session has been active for at least a few seconds
+        // This ensures initial snapshot has time to be uploaded
+        const sessionAge = Date.now() - new Date(updatedSession.start_time).getTime()
+        const minAgeForFiltering = 5000 // 5 seconds - give initial snapshot time to upload
+        
+        if (sessionAge >= minAgeForFiltering) {
+          const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+          const shouldFilter = await shouldFilterSession(session.id)
+          if (shouldFilter) {
+            console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database`, {
+              sessionAge: `${Math.round(sessionAge / 1000)}s`,
+              eventCount: updatedSession.event_count,
+              duration: updatedSession.duration
+            })
+            await deleteSessionAndRelatedData(session.id)
+            // Return success but indicate session was filtered
+            return res.json({
+              success: true,
+              session_id: session.id,
+              project_id: projectId,
+              events_processed: events.length,
+              filtered: true,
+              message: 'Session was filtered and deleted (did not meet minimum criteria)'
+            })
+          }
+        } else {
+          console.log(`⏳ Session ${session.id} too new to filter (${Math.round(sessionAge / 1000)}s < 5s) - waiting for initial snapshot`)
+        }
       }
     } catch (filterError: any) {
       // Log error but don't fail the request - events were already stored
