@@ -270,8 +270,48 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     // Store snapshot in database
-    // Note: Session was just created/found via findOrCreateSession, so it exists
-    // No need to verify again - this saves a database query for free tier optimization
+    // CRITICAL: Verify session exists and is committed before storing snapshot
+    // This prevents foreign key constraint errors if session was deleted or not committed
+    try {
+      // Quick check: verify session exists (lightweight query, only selects id)
+      const { data: sessionCheck, error: checkError } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('id', session.id)
+        .single()
+      
+      if (checkError || !sessionCheck) {
+        console.error('❌ Session does not exist when trying to store snapshot:', {
+          sessionId: session.id,
+          error: checkError?.message,
+          sessionCreated: created
+        })
+        // Try to recreate session if it was just created
+        if (created) {
+          console.log('🔄 Attempting to recreate session...')
+          try {
+            const recreateResult = await findOrCreateSession(projectId, sessionId, deviceInfo)
+            if (recreateResult.session && recreateResult.session.id) {
+              session = recreateResult.session
+              console.log('✅ Session recreated:', { sessionId: session.id })
+            } else {
+              throw new Error('Failed to recreate session')
+            }
+          } catch (recreateError: any) {
+            throw new Error(`Session ${session.id} does not exist and could not be recreated: ${recreateError.message}`)
+          }
+        } else {
+          throw new Error(`Session ${session.id} does not exist in database`)
+        }
+      }
+    } catch (verifyErr: any) {
+      console.error('❌ Error verifying session existence:', verifyErr)
+      return res.status(500).json({
+        error: 'Session verification failed',
+        message: verifyErr.message || 'Failed to verify session exists before storing snapshot'
+      })
+    }
+
     try {
       console.log('💾 Storing snapshot to database', {
         sessionId: session.id,
