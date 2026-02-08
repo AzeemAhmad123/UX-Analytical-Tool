@@ -153,10 +153,20 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       country: sessionDeviceInfo.country || userProperties.country,
       platform: platform as any,
       app_version: deviceInfo.appVersion || deviceInfo.app_version || userProperties.app_version,
-      device_type: sessionDeviceInfo.deviceType || userProperties.device_type,
+      // Only include device_type if it exists in the schema (make it optional to avoid schema errors)
+      ...(sessionDeviceInfo.deviceType || userProperties.device_type ? {
+        device_type: sessionDeviceInfo.deviceType || userProperties.device_type
+      } : {}),
       acquisition_source: userProperties.acquisition_source,
       properties: userProperties
-    }).catch(err => console.error('Error updating user properties:', err))
+    }).catch(err => {
+      // Log error but don't fail the request - user_properties is optional
+      if (err.message?.includes('device_type')) {
+        console.warn('⚠️ device_type column not found in user_properties table - skipping device_type update')
+      } else {
+        console.error('Error updating user properties:', err)
+      }
+    })
 
     // Only find existing session - don't create new ones
     // Sessions should only be created when Type 2 snapshot is uploaded (recording confirmed)

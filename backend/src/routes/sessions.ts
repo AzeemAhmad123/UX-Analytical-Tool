@@ -280,6 +280,16 @@ router.get('/:projectId', async (req: Request, res: Response) => {
  */
 router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
   const requestStartTime = Date.now()
+  
+  // CRITICAL: Set CORS headers IMMEDIATELY to prevent CORS errors on 500 responses
+  const origin = req.headers.origin
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  }
+  
   console.log(`🚀 GET /api/sessions/:projectId/:sessionId called:`, {
     projectId: req.params.projectId,
     sessionId: req.params.sessionId,
@@ -340,7 +350,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
     })
 
     // Get all snapshots for this session with timeout handling
-    let snapshots: any[]
+    let snapshots: any[] = []
     try {
       console.log(`🔍 Looking up snapshots for session:`, {
         sessionDbId: session.id,
@@ -351,8 +361,13 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       // Use Promise.race to add timeout, but also catch Supabase query timeouts
       snapshots = await Promise.race([
         getSessionSnapshots(session.id).catch((err: any) => {
-          // Check if it's a Supabase timeout
-          if (err.message?.includes('timeout') || err.message?.includes('canceling statement')) {
+          // Check if it's a Supabase timeout - catch ALL timeout-related errors
+          const errorMsg = err.message || err.toString() || ''
+          if (errorMsg.includes('timeout') || 
+              errorMsg.includes('canceling statement') || 
+              errorMsg.includes('statement timeout') ||
+              errorMsg.includes('Failed to retrieve snapshots')) {
+            console.warn('⏱️ Supabase timeout detected in getSessionSnapshots:', errorMsg)
             throw new Error('Snapshot retrieval timeout')
           }
           throw err
@@ -362,14 +377,28 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
         )
       ])
     } catch (error: any) {
-      if (error.message === 'Snapshot retrieval timeout' || error.message?.includes('timeout') || error.message?.includes('canceling statement')) {
-        console.error('⏱️ Timeout retrieving snapshots for session:', session.id, error.message)
+      // Catch ALL timeout-related errors, including database statement timeouts
+      const errorMsg = error?.message || error?.toString() || ''
+      const isTimeout = errorMsg.includes('timeout') || 
+                        errorMsg.includes('canceling statement') || 
+                        errorMsg.includes('statement timeout') ||
+                        errorMsg.includes('Failed to retrieve snapshots')
+      
+      if (isTimeout) {
+        console.error('⏱️ Timeout retrieving snapshots for session:', session.id, errorMsg)
         // Return empty snapshots array instead of error - session exists but snapshots timed out
         snapshots = []
         console.warn('⚠️ Returning empty snapshots array due to timeout - session will show but no replay data')
+        // Don't throw - continue with empty snapshots so session can still be displayed
       } else {
-        console.error('❌ Error retrieving snapshots:', error)
-        throw error
+        console.error('❌ Error retrieving snapshots (non-timeout):', {
+          error: errorMsg,
+          stack: error?.stack?.substring(0, 500)
+        })
+        // For non-timeout errors, still set snapshots to empty and continue
+        // This prevents the entire request from failing
+        snapshots = []
+        console.warn('⚠️ Returning empty snapshots array due to error - session will show but no replay data')
       }
     }
 
@@ -698,12 +727,7 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       console.log(`📊 Using session timestamp duration: ${calculatedDuration}ms`)
     }
 
-    // Ensure CORS headers are set before sending response
-    const origin = req.headers.origin
-    if (origin) {
-      res.setHeader('Access-Control-Allow-Origin', origin)
-      res.setHeader('Access-Control-Allow-Credentials', 'true')
-    }
+    // CORS headers already set at the start of the function - no need to set again
     
     // Log response size before sending
     const responseData = {
@@ -783,13 +807,20 @@ router.get('/:projectId/:sessionId', async (req: Request, res: Response) => {
       throw jsonError
     }
   } catch (error: any) {
-    console.error('Error in /api/sessions/:projectId/:sessionId:', error)
+    console.error('Error in /api/sessions/:projectId/:sessionId:', {
+      error: error?.message || error?.toString(),
+      stack: error?.stack?.substring(0, 1000),
+      projectId: req.params.projectId,
+      sessionId: req.params.sessionId
+    })
     
-    // Ensure CORS headers are set even on error
+    // CORS headers already set at the start of the function - ensure they're still set
     const origin = req.headers.origin
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Access-Control-Allow-Credentials', 'true')
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     }
     
     // Log detailed error for debugging

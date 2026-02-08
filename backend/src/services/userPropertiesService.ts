@@ -51,21 +51,28 @@ export async function getOrCreateUserProperties(
       .single()
 
     if (existing && !fetchError) {
+      // Build update object, excluding device_type if not in schema
+      const updateData: any = {
+        last_seen: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        ...(initialProperties && {
+          country: initialProperties.country || existing.country,
+          platform: initialProperties.platform || existing.platform,
+          app_version: initialProperties.app_version || existing.app_version,
+          acquisition_source: initialProperties.acquisition_source || existing.acquisition_source,
+          properties: { ...existing.properties, ...(initialProperties.properties || {}) }
+        })
+      }
+      
+      // Only include device_type if provided (make it optional to avoid schema errors)
+      if (initialProperties?.device_type || existing.device_type) {
+        updateData.device_type = initialProperties?.device_type || existing.device_type
+      }
+      
       // Update last_seen
       const { data: updated } = await supabase
         .from('user_properties')
-        .update({
-          last_seen: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          ...(initialProperties && {
-            country: initialProperties.country || existing.country,
-            platform: initialProperties.platform || existing.platform,
-            app_version: initialProperties.app_version || existing.app_version,
-            device_type: initialProperties.device_type || existing.device_type,
-            acquisition_source: initialProperties.acquisition_source || existing.acquisition_source,
-            properties: { ...existing.properties, ...(initialProperties.properties || {}) }
-          })
-        })
+        .update(updateData)
         .eq('id', existing.id)
         .select()
         .single()
@@ -75,23 +82,31 @@ export async function getOrCreateUserProperties(
 
     // Create new
     const now = new Date().toISOString()
+    
+    // Build insert object, excluding device_type if not provided (column may not exist in schema)
+    const insertData: any = {
+      project_id: projectId,
+      user_id: userId,
+      country: initialProperties?.country,
+      platform: initialProperties?.platform,
+      app_version: initialProperties?.app_version,
+      acquisition_source: initialProperties?.acquisition_source,
+      properties: initialProperties?.properties || {},
+      first_seen: now,
+      last_seen: now,
+      is_new_user: true,
+      created_at: now,
+      updated_at: now
+    }
+    
+    // Only include device_type if provided (make it optional to avoid schema errors)
+    if (initialProperties?.device_type) {
+      insertData.device_type = initialProperties.device_type
+    }
+    
     const { data: created, error: createError } = await supabase
       .from('user_properties')
-      .insert({
-        project_id: projectId,
-        user_id: userId,
-        country: initialProperties?.country,
-        platform: initialProperties?.platform,
-        app_version: initialProperties?.app_version,
-        device_type: initialProperties?.device_type,
-        acquisition_source: initialProperties?.acquisition_source,
-        properties: initialProperties?.properties || {},
-        first_seen: now,
-        last_seen: now,
-        is_new_user: true,
-        created_at: now,
-        updated_at: now
-      })
+      .insert(insertData)
       .select()
       .single()
 

@@ -91,7 +91,7 @@ export async function storeSnapshot(
       console.warn('⚠️ No project_id available for snapshot insert')
     }
     
-    // Insert with timeout handling
+    // Insert with timeout handling - increased timeout to 45 seconds for large snapshots
     let { data: snapshot, error } = await Promise.race([
       supabase
         .from('session_snapshots')
@@ -99,10 +99,16 @@ export async function storeSnapshot(
         .select()
         .single(),
       new Promise<{ data: any, error: any }>((_, reject) => 
-        setTimeout(() => reject(new Error('upstream request timeout')), 30000) // 30 second timeout
+        setTimeout(() => reject(new Error('upstream request timeout')), 45000) // 45 second timeout (increased from 30s)
       )
     ]).catch((timeoutError: any) => {
       // If timeout, return error object
+      console.error('⏱️ Snapshot insert timeout:', {
+        sessionDbId,
+        snapshotCount,
+        insertDataSize: JSON.stringify(insertData).length,
+        timeoutError: timeoutError.message
+      })
       return { data: null, error: { message: timeoutError.message || 'upstream request timeout' } }
     })
     
@@ -446,7 +452,24 @@ export async function getSessionSnapshots(sessionDbId: string, limit?: number): 
     const { data: snapshots, error } = await query
 
     if (error) {
-      console.error(`❌ Error querying snapshots:`, error)
+      console.error(`❌ Error querying snapshots:`, {
+        error: error.message,
+        code: (error as any).code,
+        details: (error as any).details,
+        hint: (error as any).hint
+      })
+      
+      // Check if it's a timeout error - preserve the timeout message for proper handling upstream
+      const errorMsg = error.message || ''
+      if (errorMsg.includes('timeout') || 
+          errorMsg.includes('canceling statement') || 
+          errorMsg.includes('statement timeout')) {
+        // Preserve the timeout error message so upstream can catch it
+        const timeoutError = new Error(`Failed to retrieve snapshots: ${error.message}`)
+        timeoutError.name = 'SnapshotTimeoutError'
+        throw timeoutError
+      }
+      
       throw new Error(`Failed to retrieve snapshots: ${error.message}`)
     }
 

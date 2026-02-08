@@ -22,6 +22,15 @@ const router = Router()
  * }
  */
 router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
+  // CRITICAL: Set CORS headers IMMEDIATELY to prevent CORS errors on error responses
+  const origin = req.headers.origin
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  }
+  
   try {
     const snapshotSize = typeof req.body.snapshots === 'string' ? req.body.snapshots.length : 0
     const snapshotSizeKB = (snapshotSize / 1024).toFixed(2)
