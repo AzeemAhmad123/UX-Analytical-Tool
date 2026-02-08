@@ -239,12 +239,6 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
       return false
     }
     
-    // Exclude sessions with insufficient events (rrweb requires at least 2 events for replay)
-    const eventCount = s.event_count || 0
-    if (eventCount < 2) {
-      return false
-    }
-    
     return true
   })
 }
