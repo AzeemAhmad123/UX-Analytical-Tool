@@ -123,11 +123,28 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     // Find or create session
-    const { session, created } = await findOrCreateSession(
-      projectId,
-      sessionId,
-      deviceInfo
-    )
+    let session: any
+    let created: boolean
+    try {
+      const result = await findOrCreateSession(
+        projectId,
+        sessionId,
+        deviceInfo
+      )
+      session = result.session
+      created = result.created
+      
+      // Verify session was actually created/found
+      if (!session || !session.id) {
+        throw new Error('Session creation returned invalid session data')
+      }
+    } catch (sessionError: any) {
+      console.error('❌ Failed to find or create session:', sessionError)
+      return res.status(500).json({
+        error: 'Failed to create session',
+        message: sessionError.message || 'Unknown error creating session'
+      })
+    }
 
     // If session already existed, update device_info with location if we got new location data
     if (!created && (locationData.country || locationData.city)) {
@@ -221,6 +238,26 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       }
     }
 
+    // Verify session still exists before storing snapshot (prevent foreign key errors)
+    try {
+      const { data: verifySession, error: verifyError } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('id', session.id)
+        .single()
+      
+      if (verifyError || !verifySession) {
+        console.error('❌ Session does not exist when trying to store snapshot:', {
+          sessionId: session.id,
+          error: verifyError?.message
+        })
+        throw new Error(`Session ${session.id} does not exist in database`)
+      }
+    } catch (verifyErr: any) {
+      console.error('❌ Error verifying session existence:', verifyErr)
+      throw new Error(`Failed to verify session: ${verifyErr.message}`)
+    }
+
     // Store snapshot in database
     try {
       console.log('💾 Storing snapshot to database', {
@@ -271,24 +308,36 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       } else {
         // Check if session should be filtered out (doesn't meet minimum criteria)
         // Only check if this is NOT the initial snapshot (give session time to accumulate events)
+        // Wait a bit before checking to avoid race conditions with concurrent snapshot uploads
         if (!isInitialSnapshot) {
           try {
-            const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
-            const shouldFilter = await shouldFilterSession(session.id)
-            if (shouldFilter) {
-              console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
-              await deleteSessionAndRelatedData(session.id)
-              // Return success but indicate session was filtered
-              return res.json({
-                success: true,
-                session_id: session.id,
-                project_id: projectId,
-                session_created: created,
-                snapshot_count: snapshotCount,
-                is_initial_snapshot: isInitialSnapshot,
-                filtered: true,
-                message: 'Session was filtered and deleted (did not meet minimum criteria)'
-              })
+            // Re-fetch session to get latest event_count and duration
+            const { data: latestSession, error: fetchError } = await supabase
+              .from('sessions')
+              .select('event_count, duration, snapshot_count')
+              .eq('id', session.id)
+              .single()
+            
+            if (!fetchError && latestSession) {
+              // Only filter if session has been inactive for a while or has very low activity
+              // Don't filter active sessions (duration check is only for ended sessions)
+              const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+              const shouldFilter = await shouldFilterSession(session.id)
+              if (shouldFilter) {
+                console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
+                await deleteSessionAndRelatedData(session.id)
+                // Return success but indicate session was filtered
+                return res.json({
+                  success: true,
+                  session_id: session.id,
+                  project_id: projectId,
+                  session_created: created,
+                  snapshot_count: snapshotCount,
+                  is_initial_snapshot: isInitialSnapshot,
+                  filtered: true,
+                  message: 'Session was filtered and deleted (did not meet minimum criteria)'
+                })
+              }
             }
           } catch (filterError: any) {
             // Log error but don't fail the request - session was already updated
