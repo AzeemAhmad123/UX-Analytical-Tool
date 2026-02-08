@@ -148,13 +148,26 @@ const setCachedPosition = (projectId: string, sessionId: string, position: numbe
 // Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
+    // Calculate duration: use stored duration, or calculate from timestamps for active sessions
+    let duration = (s.duration || 0) / 1000 // Convert to seconds
+    
+    // If duration is 0 or missing, calculate from timestamps (for active sessions)
+    if (duration === 0 && s.start_time && s.last_activity_time) {
+      const startTime = new Date(s.start_time).getTime()
+      const lastActivityTime = new Date(s.last_activity_time).getTime()
+      const calculatedDuration = (lastActivityTime - startTime) / 1000 // Convert to seconds
+      if (calculatedDuration > 0) {
+        duration = calculatedDuration
+      }
+    }
+    
     // Filter out sessions with insufficient events (event_count < 2)
     const eventCount = s.event_count || 0
     if (eventCount < 2) {
       return false
     }
+    
     // Exclude sessions with duration < 10 seconds
-    const duration = (s.duration || 0) / 1000 // Convert to seconds
     if (duration < 10) {
       return false
     }

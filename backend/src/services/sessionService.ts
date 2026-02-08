@@ -269,21 +269,30 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
       return true
     }
 
-    // Check event count < 2 (insufficient activity)
+    // Check event count < 2 (insufficient activity - user interactions like clicks, scrolls, inputs)
     const eventCount = session.event_count || 0
     if (eventCount < 2) {
       console.log(`🚫 Session ${sessionDbId} filtered: event_count ${eventCount} < 2`)
       return true
     }
 
-    // Check duration < 10 seconds (only if duration is set)
-    // Don't filter by duration alone if duration is 0 or null (session might still be active)
-    if (session.duration && session.duration > 0) {
-      const duration = session.duration / 1000 // Convert to seconds
-      if (duration < 10) {
-        console.log(`🚫 Session ${sessionDbId} filtered: duration ${duration}s < 10s`)
-        return true
+    // Check duration < 10 seconds
+    // Calculate duration: use stored duration, or calculate from timestamps for active sessions
+    let duration = (session.duration || 0) / 1000 // Convert to seconds
+    
+    // If duration is 0 or missing, calculate from timestamps (for active sessions)
+    if (duration === 0 && session.start_time && session.last_activity_time) {
+      const startTime = new Date(session.start_time).getTime()
+      const lastActivityTime = new Date(session.last_activity_time).getTime()
+      const calculatedDuration = (lastActivityTime - startTime) / 1000 // Convert to seconds
+      if (calculatedDuration > 0) {
+        duration = calculatedDuration
       }
+    }
+    
+    if (duration < 10) {
+      console.log(`🚫 Session ${sessionDbId} filtered: duration ${duration.toFixed(1)}s < 10s`)
+      return true
     }
 
     return false // Session meets all criteria

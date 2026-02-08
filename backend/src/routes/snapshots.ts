@@ -287,18 +287,20 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     // Update session activity and calculate duration
+    // NOTE: Do NOT update event_count here - snapshots are recording data, not user interaction events
+    // event_count should only be updated when actual user events (clicks, scrolls, inputs) are ingested via /api/events/ingest
     const now = new Date()
     const startTime = new Date(session.start_time)
     const duration = Math.round((now.getTime() - startTime.getTime()))
     
-    // Update session with new event count and duration
+    // Update session with last activity time and duration (but NOT event_count)
     try {
       const { error: updateError } = await supabase
         .from('sessions')
         .update({
           last_activity_time: now.toISOString(),
-          event_count: session.event_count + snapshotCount,
           duration: duration
+          // Do NOT update event_count - that's only for user interaction events (clicks, scrolls, inputs)
         })
         .eq('id', session.id)
       

@@ -222,20 +222,54 @@ const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
 // Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
+    // Calculate duration: use stored duration, or calculate from timestamps for active sessions
+    let duration = (s.duration || 0) / 1000 // Convert to seconds
+    
+    // If duration is 0 or missing, calculate from timestamps (for active sessions)
+    if (duration === 0 && s.start_time && s.last_activity_time) {
+      const startTime = new Date(s.start_time).getTime()
+      const lastActivityTime = new Date(s.last_activity_time).getTime()
+      const calculatedDuration = (lastActivityTime - startTime) / 1000 // Convert to seconds
+      if (calculatedDuration > 0) {
+        duration = calculatedDuration
+      }
+    }
+    
     // Filter out sessions with insufficient events (event_count < 2)
     const eventCount = s.event_count || 0
     if (eventCount < 2) {
+      console.log(`🚫 Session ${s.id} filtered: event_count ${eventCount} < 2`, {
+        sessionId: s.id,
+        eventCount,
+        duration: `${duration.toFixed(1)}s`,
+        snapshotCount: s.snapshot_count || 0
+      })
       return false
     }
+    
     // Exclude sessions with duration < 10 seconds
-    const duration = (s.duration || 0) / 1000 // Convert to seconds
     if (duration < 10) {
+      console.log(`🚫 Session ${s.id} filtered: duration ${duration.toFixed(1)}s < 10s`, {
+        sessionId: s.id,
+        eventCount,
+        duration: `${duration.toFixed(1)}s`,
+        snapshotCount: s.snapshot_count || 0,
+        storedDuration: s.duration,
+        startTime: s.start_time,
+        lastActivityTime: s.last_activity_time
+      })
       return false
     }
     
     // Exclude sessions without video recordings (no snapshots)
     const snapshotCount = s.snapshot_count || 0
     if (snapshotCount === 0) {
+      console.log(`🚫 Session ${s.id} filtered: snapshot_count ${snapshotCount} === 0`, {
+        sessionId: s.id,
+        eventCount,
+        duration: `${duration.toFixed(1)}s`,
+        snapshotCount
+      })
       return false
     }
     
