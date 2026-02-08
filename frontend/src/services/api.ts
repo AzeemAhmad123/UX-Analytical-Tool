@@ -64,35 +64,21 @@ async function apiRequest(
   const isGetRequest = !options.method || options.method === 'GET'
   const cacheKey = isGetRequest ? `${options.method || 'GET'}:${url}` : null
   
-  // For projects endpoint, don't use cache on hard refresh
-  // This ensures fresh data is always fetched
-  const isProjectsEndpoint = endpoint === '/api/projects' && isGetRequest
-  
-  if (isProjectsEndpoint) {
-    console.log('🔄 Fetching fresh projects data (cache bypassed)')
-  }
-  
-  // Check if we have cached data (stale-while-revalidate)
-  if (cacheKey && !isProjectsEndpoint && requestCache.has(cacheKey)) {
+  // CRITICAL: Request deduplication - always check if request is in progress
+  if (cacheKey && requestCache.has(cacheKey)) {
     const cached = requestCache.get(cacheKey)!
     const age = Date.now() - cached.timestamp
     
-    // If request is in progress, return the existing promise
-    if (cached.promise && age < 5000) { // Request started less than 5 seconds ago
+    // If request is in progress (started less than 10 seconds ago), reuse it
+    if (cached.promise && age < 10000) {
       console.log('📦 Reusing in-progress request for:', url)
       return cached.promise
     }
     
-    // If we have cached data and it's fresh, return it immediately
-    if (cached.data && age < CACHE_DURATION_MS) {
+    // If we have cached data and it's fresh (less than 30 seconds), return it immediately
+    // This prevents excessive requests even for projects endpoint
+    if (cached.data && age < 30000) { // 30 second cache for all endpoints
       console.log(`⚡ Returning cached data for: ${url} (age: ${Math.round(age / 1000)}s)`)
-      // Still fetch in background for stale-while-revalidate (but don't block)
-      if (age > CACHE_DURATION_MS / 2) { // If cache is more than 50% expired, refresh in background
-        // Background refresh - don't await
-        apiRequest(endpoint, options).catch(() => {
-          // Silently fail background refresh
-        })
-      }
       return Promise.resolve(cached.data)
     }
   }
@@ -118,9 +104,41 @@ async function apiRequest(
         clearTimeout(timeoutId)
         
         if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
-          // Use message if available, otherwise use error, otherwise use status
-          let errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+          // Check if response is HTML (Cloudflare error page, Supabase 520 error, etc.)
+          const contentType = response.headers.get('content-type') || ''
+          const isHtmlResponse = contentType.includes('text/html')
+          
+          let error: any
+          let errorMessage: string
+          
+          if (isHtmlResponse) {
+            // Supabase is down (520 Cloudflare error) - return cached data if available
+            const text = await response.text()
+            if (text.includes('520') || text.includes('Web server is returning an unknown error')) {
+              errorMessage = 'Supabase database is temporarily unavailable. Using cached data if available.'
+              console.error('❌ Supabase 520 Error - Database is down:', {
+                status: response.status,
+                url,
+                message: 'Supabase is experiencing issues. Please try again later.'
+              })
+              
+              // If we have cached data, return it instead of throwing error
+              if (cacheKey && requestCache.has(cacheKey)) {
+                const cached = requestCache.get(cacheKey)!
+                if (cached.data) {
+                  console.warn('⚠️ Returning cached data due to Supabase downtime')
+                  return cached.data
+                }
+              }
+            } else {
+              errorMessage = `Server error (${response.status}). Please try again later.`
+            }
+            error = { error: errorMessage, message: errorMessage }
+          } else {
+            // Try to parse JSON error
+            error = await response.json().catch(() => ({ error: 'Unknown error', message: 'Failed to parse error response' }))
+            errorMessage = error.message || error.error || `HTTP error! status: ${response.status}`
+          }
           
           // Provide more helpful messages for common timeout/error codes
           if (response.status === 504) {
@@ -129,6 +147,8 @@ async function apiRequest(
             errorMessage = 'Service temporarily unavailable. Please try again in a few moments.'
           } else if (response.status === 502) {
             errorMessage = 'Bad gateway - server connection issue. Please try again.'
+          } else if (response.status === 520) {
+            errorMessage = 'Supabase database is temporarily unavailable. Please try again in a few minutes.'
           } else if (response.status === 522) {
             errorMessage = 'Connection timed out. Please check your internet connection.'
           }
@@ -139,7 +159,8 @@ async function apiRequest(
               status: response.status,
               statusText: response.statusText,
               error,
-              url
+              url,
+              isHtmlResponse
             })
           }
           
@@ -174,25 +195,25 @@ async function apiRequest(
         }
       }
       
-      // Store in cache after successful response (stale-while-revalidate)
-      // For projects endpoint, cache in memory but with shorter duration
+      // Store in cache after successful response
       if (cacheKey) {
-        if (isProjectsEndpoint) {
-          // Projects: cache for 5 minutes (they don't change often)
-          requestCache.set(cacheKey, { promise: Promise.resolve(data), timestamp: Date.now(), data })
-          setTimeout(() => requestCache.delete(cacheKey), 5 * 60 * 1000)
-        } else {
-          // Other endpoints: cache for 60 seconds
-          requestCache.set(cacheKey, { promise: Promise.resolve(data), timestamp: Date.now(), data })
-          setTimeout(() => requestCache.delete(cacheKey), CACHE_DURATION_MS)
-        }
+        requestCache.set(cacheKey, { promise: Promise.resolve(data), timestamp: Date.now(), data })
+        // Auto-cleanup after cache expires
+        setTimeout(() => requestCache.delete(cacheKey), CACHE_DURATION_MS)
       }
       
       return data
     } catch (error: any) {
       clearTimeout(timeoutId)
-      // Remove from cache on error
-      if (cacheKey && !isProjectsEndpoint) {
+      
+      // Don't remove cache on Supabase 520 errors - keep cached data available
+      const isSupabaseDown = error.status === 520 || 
+                            error.message?.includes('520') ||
+                            error.message?.includes('Supabase') ||
+                            error.message?.includes('Web server is returning')
+      
+      // Remove from cache on error (unless it's a Supabase downtime issue)
+      if (cacheKey && !isSupabaseDown) {
         requestCache.delete(cacheKey)
       }
       

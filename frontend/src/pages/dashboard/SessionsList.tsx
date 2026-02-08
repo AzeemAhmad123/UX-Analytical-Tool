@@ -467,9 +467,25 @@ export function SessionsList() {
   }, [selectedProject])
 
   const loadProjects = async (forceRefresh: boolean = false) => {
+    // CRITICAL: Request deduplication - prevent multiple simultaneous requests
+    const cacheKey = 'projects:all'
+    const existingRequest = memoryCache.get(cacheKey)
+    if (existingRequest?.promise && !forceRefresh) {
+      const age = Date.now() - (existingRequest.timestamp || 0)
+      // If request started less than 5 seconds ago, reuse it
+      if (age < 5000) {
+        console.log('🔄 Reusing in-progress projects request')
+        try {
+          await existingRequest.promise
+          return
+        } catch (e) {
+          // If request failed, continue to make new request
+        }
+      }
+    }
+    
     try {
       // Check memory cache first (projects don't change often)
-      const cacheKey = 'projects:all'
       const cached = memoryCache.get(cacheKey)
       if (!forceRefresh && cached && Array.isArray(cached.data)) {
         const age = Date.now() - cached.timestamp
