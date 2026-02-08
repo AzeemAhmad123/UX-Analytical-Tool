@@ -81,8 +81,17 @@ export async function getOrCreateUserProperties(
         .select()
         .single()
 
-      // If error is about device_type column not existing, retry without it and cache the result
-      if (updateError && (updateError.code === 'PGRST204' || updateError.message?.includes('device_type'))) {
+      // Check if error is about device_type column not existing
+      const isDeviceTypeError = updateError && (
+        updateError.code === 'PGRST204' || 
+        (typeof updateError.message === 'string' && (
+          updateError.message.includes('device_type') || 
+          updateError.message.includes('Could not find') ||
+          updateError.message.includes('schema cache')
+        ))
+      )
+      
+      if (isDeviceTypeError) {
         console.warn('⚠️ device_type column not found, retrying update without device_type')
         deviceTypeColumnExists = false // Cache that column doesn't exist
         
@@ -97,14 +106,23 @@ export async function getOrCreateUserProperties(
         
         updated = retryResult.data
         updateError = retryResult.error
-      } else if (!updateError && deviceTypeColumnExists === null) {
-        // If update succeeded and we included device_type, column exists
-        if (updateData.device_type !== undefined) {
-          deviceTypeColumnExists = true
+        
+        // If retry succeeded, return the updated record
+        if (!updateError && updated) {
+          return updated
         }
+        // If retry failed, return existing record (don't throw error)
+        if (updateError) {
+          console.warn('⚠️ Retry without device_type failed, returning existing record')
+          return existing
+        }
+      } else if (!updateError && deviceTypeColumnExists === null && updateData.device_type !== undefined) {
+        // If update succeeded and we included device_type, column exists
+        deviceTypeColumnExists = true
       }
 
-      if (updateError && updateError.code !== 'PGRST116') {
+      // Only throw non-device_type errors
+      if (updateError && updateError.code !== 'PGRST116' && !isDeviceTypeError) {
         throw updateError
       }
 
