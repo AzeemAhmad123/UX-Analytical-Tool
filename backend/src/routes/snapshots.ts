@@ -214,6 +214,37 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       decompressedSnapshots = [decompressedSnapshots]
     }
 
+    // Count user interaction events from rrweb incremental events (type 3, 4, 5)
+    // Type 3 = incremental snapshot (DOM mutations)
+    // Type 4 = meta event (navigation, etc.)
+    // Type 5 = custom event (user interactions like clicks, scrolls, inputs)
+    // These are user interactions and should count toward event_count
+    let incrementalEventCount = 0
+    try {
+      for (const snapshot of decompressedSnapshots) {
+        if (Array.isArray(snapshot)) {
+          // If snapshot is an array of events, count incremental events
+          for (const event of snapshot) {
+            if (event && typeof event === 'object' && typeof event.type === 'number') {
+              // Count type 3 (incremental), 4 (meta), 5 (custom) as user interactions
+              // Type 2 is full snapshot, not a user interaction
+              if (event.type >= 3 && event.type <= 5) {
+                incrementalEventCount++
+              }
+            }
+          }
+        } else if (snapshot && typeof snapshot === 'object' && typeof snapshot.type === 'number') {
+          // Single event
+          if (snapshot.type >= 3 && snapshot.type <= 5) {
+            incrementalEventCount++
+          }
+        }
+      }
+    } catch (countError: any) {
+      console.warn('Error counting incremental events from snapshots:', countError.message)
+      // Continue - event count is not critical for snapshot storage
+    }
+
     // Store snapshot in database
     // Store the compressed version to save space
     try {
@@ -238,27 +269,9 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       }
     }
 
-    // Verify session still exists before storing snapshot (prevent foreign key errors)
-    try {
-      const { data: verifySession, error: verifyError } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('id', session.id)
-        .single()
-      
-      if (verifyError || !verifySession) {
-        console.error('❌ Session does not exist when trying to store snapshot:', {
-          sessionId: session.id,
-          error: verifyError?.message
-        })
-        throw new Error(`Session ${session.id} does not exist in database`)
-      }
-    } catch (verifyErr: any) {
-      console.error('❌ Error verifying session existence:', verifyErr)
-      throw new Error(`Failed to verify session: ${verifyErr.message}`)
-    }
-
     // Store snapshot in database
+    // Note: Session was just created/found via findOrCreateSession, so it exists
+    // No need to verify again - this saves a database query for free tier optimization
     try {
       console.log('💾 Storing snapshot to database', {
         sessionId: session.id,
@@ -287,20 +300,23 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     }
 
     // Update session activity and calculate duration
-    // NOTE: Do NOT update event_count here - snapshots are recording data, not user interaction events
-    // event_count should only be updated when actual user events (clicks, scrolls, inputs) are ingested via /api/events/ingest
+    // IMPORTANT: Count incremental events (type 3, 4, 5) from snapshots as user interactions
+    // These represent clicks, scrolls, inputs, DOM mutations - actual user activity
     const now = new Date()
     const startTime = new Date(session.start_time)
     const duration = Math.round((now.getTime() - startTime.getTime()))
     
-    // Update session with last activity time and duration (but NOT event_count)
+    // Update session with last activity time, duration, and event_count (from incremental events)
     try {
+      // Increment event_count by the number of incremental events in this snapshot batch
+      const newEventCount = (session.event_count || 0) + incrementalEventCount
+      
       const { error: updateError } = await supabase
         .from('sessions')
         .update({
           last_activity_time: now.toISOString(),
-          duration: duration
-          // Do NOT update event_count - that's only for user interaction events (clicks, scrolls, inputs)
+          duration: duration,
+          event_count: newEventCount // Update event_count with incremental events (user interactions)
         })
         .eq('id', session.id)
       
@@ -308,6 +324,9 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         console.error('Error updating session:', updateError)
         // Don't throw - snapshot was stored successfully
       } else {
+        if (incrementalEventCount > 0) {
+          console.log(`✅ Updated session event_count: ${session.event_count || 0} + ${incrementalEventCount} = ${newEventCount}`)
+        }
         // Check if session should be filtered out (doesn't meet minimum criteria)
         // Only check if this is NOT the initial snapshot (give session time to accumulate events)
         // Wait a bit before checking to avoid race conditions with concurrent snapshot uploads
