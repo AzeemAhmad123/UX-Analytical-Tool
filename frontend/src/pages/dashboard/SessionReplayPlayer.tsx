@@ -348,15 +348,8 @@ export function SessionReplayPlayer() {
   useEffect(() => {
     let isMounted = true
     
-    if (projectId) {
-      loadAllSessions().catch((error: any) => {
-        if (error?.name !== 'AbortError' && isMounted) {
-          console.error('Error loading sessions:', error)
-        }
-      })
-    }
     if (projectId && sessionId) {
-      // Set loading state when starting to fetch data
+      // PRIORITY: Load the selected session's replay data FIRST
       // (Only if we don't have cached data - useLayoutEffect already handled that)
       const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
       const cachedSessionData = getCachedSessionData(projectId, sessionId)
@@ -378,16 +371,157 @@ export function SessionReplayPlayer() {
         }
       }, 70000)
       
-      Promise.all([
-        loadSessionData(),
-        loadSnapshots(),
-        loadEvents()
-      ])
+      // OPTIMIZATION: Make a SINGLE API call instead of 3 duplicate calls
+      // This significantly reduces loading time and database load
+      const loadSessionReplayData = async () => {
+        if (!projectId || !sessionId) return
+        
+        try {
+          // Single API call that returns all data we need
+          const response = await sessionsAPI.getById(projectId, sessionId)
+          
+          // Cache the full response
+          setCachedSessionData(projectId, sessionId, response)
+          
+          // Process session data
+          if (response.session) {
+            setSession(response.session)
+            
+            // Detect platform from device_info
+            if (response.session?.device_info) {
+              const deviceInfo = response.session.device_info
+              const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
+              const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
+              setSelectedPlatform(detectedPlatform)
+            }
+            
+            // Debug: Log location data
+            console.log('📍 Session location data:', {
+              device_info: response.session?.device_info,
+              location: response.session?.location,
+              city: response.session?.device_info?.city || response.session?.location?.city,
+              country: response.session?.device_info?.country || response.session?.location?.country,
+            })
+            
+            // Set duration from session data
+            if (response.session.duration) {
+              setDuration(response.session.duration)
+              const durationSeconds = Math.round(response.session.duration / 1000)
+              console.log(`✅ Using session duration from database: ${response.session.duration}ms (${durationSeconds}s)`)
+            } else {
+              // Fallback: calculate from timestamps
+              const startTime = new Date(response.session.start_time).getTime()
+              const endTime = new Date(response.session.last_activity_time).getTime()
+              const calculatedDuration = endTime - startTime
+              if (calculatedDuration > 0) {
+                setDuration(calculatedDuration)
+                const durationSeconds = Math.round(calculatedDuration / 1000)
+                console.log(`✅ Calculated duration from timestamps: ${calculatedDuration}ms (${durationSeconds}s)`)
+              }
+            }
+            
+            // Check for video (mobile sessions)
+            const videoUrl = response.session.video_url || response.session.videoUrl || null
+            const hasVideoFlag = response.session.has_video || response.session.hasVideo || false
+            
+            if (hasVideoFlag && videoUrl) {
+              setHasVideo(true)
+              setVideoUrl(videoUrl)
+              const videoDuration = response.session.video_duration || response.session.videoDuration
+              if (videoDuration) {
+                setDuration(videoDuration)
+              }
+              console.log('📹 Mobile session with video:', videoUrl)
+            } else if (videoUrl) {
+              setHasVideo(true)
+              setVideoUrl(videoUrl)
+              const videoDuration = response.session.video_duration || response.session.videoDuration
+              if (videoDuration) {
+                setDuration(videoDuration)
+              }
+              console.log('📹 Video URL found (flag not set):', videoUrl)
+            }
+          }
+          
+          // Process snapshots
+          if (response.snapshots && Array.isArray(response.snapshots)) {
+            // Process snapshots for replay
+            const processedSnapshots = response.snapshots.map((snapshot: any) => {
+              if (snapshot && typeof snapshot === 'object') {
+                // If snapshot is already in correct format, use it
+                if (snapshot.type !== undefined && snapshot.data !== undefined) {
+                  return snapshot
+                }
+                // Otherwise, try to parse it
+                if (typeof snapshot === 'string') {
+                  try {
+                    return JSON.parse(snapshot)
+                  } catch (e) {
+                    console.warn('Failed to parse snapshot:', e)
+                    return null
+                  }
+                }
+              }
+              return null
+            }).filter((s: any) => s !== null)
+            
+            setSnapshots(processedSnapshots)
+            
+            // Cache snapshots
+            setCachedSnapshots(projectId, sessionId, processedSnapshots)
+            
+            // Convert snapshots to events for activity timeline
+            const eventList = processedSnapshots
+              .filter((e: any) => e && typeof e.type === 'number')
+              .map((e: any) => ({
+                id: e.timestamp || Date.now(),
+                type: e.type,
+                timestamp: e.timestamp,
+                data: e.data
+              }))
+            
+            setEvents(eventList)
+            setCachedEvents(projectId, sessionId, eventList)
+            console.log(`✅ Loaded ${processedSnapshots.length} snapshots and ${eventList.length} events from single API call`)
+          } else if (response.events) {
+            // Fallback: use events if snapshots not available
+            setEvents(response.events)
+            setCachedEvents(projectId, sessionId, response.events)
+          }
+        } catch (error: any) {
+          if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
+            console.log('Request was cancelled (this is normal when navigating away)')
+            return
+          }
+          
+          console.error('Error loading session replay data:', error)
+          setError('Failed to load session data')
+          throw error // Re-throw to trigger catch block
+        }
+      }
+      
+      // Make single optimized API call
+      loadSessionReplayData()
         .then(() => {
           // Data loading complete
           clearTimeout(timeoutId)
           if (isMounted) {
             setIsLoadingData(false)
+            
+            // DEFERRED: Load all sessions AFTER replay data is ready
+            // This prevents competing requests and makes replay load faster
+            if (projectId) {
+              // Small delay to ensure replay starts playing first
+              setTimeout(() => {
+                if (isMounted) {
+                  loadAllSessions().catch((error: any) => {
+                    if (error?.name !== 'AbortError' && isMounted) {
+                      console.error('Error loading sessions:', error)
+                    }
+                  })
+                }
+              }, 500) // 500ms delay - replay should be starting by then
+            }
           }
         })
         .catch((error: any) => {
@@ -395,9 +529,28 @@ export function SessionReplayPlayer() {
           if (error?.name !== 'AbortError' && isMounted) {
             console.error('Error loading session replay data:', error)
             setIsLoadingData(false) // Stop loading on error
-            // Error messages are already set by individual load functions
+          }
+          
+          // Even on error, try to load sessions list (non-critical)
+          if (projectId && isMounted) {
+            setTimeout(() => {
+              if (isMounted) {
+                loadAllSessions().catch((err: any) => {
+                  if (err?.name !== 'AbortError' && isMounted) {
+                    console.error('Error loading sessions:', err)
+                  }
+                })
+              }
+            }, 1000)
           }
         })
+    } else if (projectId) {
+      // If no sessionId, just load sessions list (shouldn't happen in normal flow)
+      loadAllSessions().catch((error: any) => {
+        if (error?.name !== 'AbortError' && isMounted) {
+          console.error('Error loading sessions:', error)
+        }
+      })
     }
     
     return () => {
@@ -736,345 +889,10 @@ export function SessionReplayPlayer() {
     }
   }
 
-  const loadSessionData = async () => {
-    if (!projectId || !sessionId) return
-    
-    try {
-      const response = await sessionsAPI.getById(projectId, sessionId)
-      
-      // Cache session data
-      setCachedSessionData(projectId, sessionId, response)
-      
-      setSession(response.session)
-      
-      // Detect platform from device_info
-      if (response.session?.device_info) {
-        const deviceInfo = response.session.device_info
-        const viewportWidth = deviceInfo.viewportWidth || deviceInfo.screenWidth || 0
-        // If viewport width is less than 768px, it's likely mobile
-        const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
-        setSelectedPlatform(detectedPlatform)
-      }
-      
-      // Debug: Log location data
-      console.log('📍 Session location data:', {
-        device_info: response.session?.device_info,
-        location: response.session?.location,
-        city: response.session?.device_info?.city || response.session?.location?.city,
-        country: response.session?.device_info?.country || response.session?.location?.country,
-      })
-      
-      // Set duration from session data (prefer session.duration from database)
-      if (response.session) {
-        // Prefer session.duration from database (most accurate)
-        if (response.session.duration) {
-          setDuration(response.session.duration)
-          const durationSeconds = Math.round(response.session.duration / 1000)
-          console.log(`✅ Using session duration from database: ${response.session.duration}ms (${durationSeconds}s)`)
-        } else {
-          // Fallback: calculate from timestamps
-        const startTime = new Date(response.session.start_time).getTime()
-        const endTime = new Date(response.session.last_activity_time).getTime()
-        const calculatedDuration = endTime - startTime
-        if (calculatedDuration > 0) {
-          setDuration(calculatedDuration)
-            const durationSeconds = Math.round(calculatedDuration / 1000)
-            console.log(`✅ Calculated duration from timestamps: ${calculatedDuration}ms (${durationSeconds}s)`)
-          }
-        }
-        
-        // Check for video (mobile sessions) - check multiple possible fields
-        const videoUrl = response.session.video_url || response.session.videoUrl || null
-        const hasVideoFlag = response.session.has_video || response.session.hasVideo || false
-        
-        if (hasVideoFlag && videoUrl) {
-          setHasVideo(true)
-          setVideoUrl(videoUrl)
-          // Use video duration if available
-          const videoDuration = response.session.video_duration || response.session.videoDuration
-          if (videoDuration) {
-            setDuration(videoDuration)
-          }
-          console.log('📹 Mobile session with video:', videoUrl)
-        } else if (videoUrl) {
-          // If video URL exists but flag is not set, still show video
-          setHasVideo(true)
-          setVideoUrl(videoUrl)
-          const videoDuration = response.session.video_duration || response.session.videoDuration
-          if (videoDuration) {
-            setDuration(videoDuration)
-          }
-          console.log('📹 Video URL found (flag not set):', videoUrl)
-        }
-      }
-      
-      if (response.events) {
-        setEvents(response.events)
-      }
-    } catch (error: any) {
-      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
-      if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
-        // Don't set error state for abort errors - they're expected when component unmounts
-        console.log('Request was cancelled (this is normal when navigating away)')
-        return
-      }
-      
-      console.error('Error loading session:', error)
-      setError('Failed to load session data')
-    }
-  }
-
-  const loadEvents = async (): Promise<void> => {
-    if (!projectId || !sessionId) return
-    try {
-      // Load events for the activity timeline
-      // The backend returns snapshots, not separate events
-      // We'll extract event information from snapshots if needed
-      const response = await sessionsAPI.getById(projectId, sessionId)
-      if (response.snapshots && Array.isArray(response.snapshots)) {
-        // Convert snapshots to events for the activity timeline
-        const eventList = response.snapshots
-          .filter((e: any) => e && typeof e.type === 'number')
-          .map((e: any) => ({
-            id: e.timestamp || Date.now(),
-            type: e.type,
-            timestamp: e.timestamp,
-            data: e.data
-          }))
-        setEvents(eventList)
-        // Cache events
-        setCachedEvents(projectId, sessionId, eventList)
-        console.log(`✅ Loaded ${eventList.length} events for activity timeline`)
-      } else if (response.events) {
-        setEvents(response.events)
-        // Cache events
-        setCachedEvents(projectId, sessionId, response.events)
-      }
-    } catch (error: any) {
-      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
-      if (error?.name !== 'AbortError' && error?.message !== 'signal is aborted without reason') {
-        console.error('Error loading events:', error)
-      }
-    }
-  }
-
-  const loadSnapshots = async (): Promise<void> => {
-    if (!projectId || !sessionId) return
-    
-    try {
-      // Load in background without blocking UI
-      setError(null)
-      
-      // Use sessions API which returns snapshots in correct format
-      const data = await sessionsAPI.getById(projectId, sessionId)
-      
-      let events: any[] = []
-      
-      // Check for video first (mobile sessions) - check multiple possible fields
-      const videoUrl = data.session?.video_url || data.session?.videoUrl || null
-      const hasVideoFlag = data.session?.has_video || data.session?.hasVideo || false
-      
-      if (hasVideoFlag && videoUrl) {
-        console.log('📹 Mobile session with video detected:', videoUrl)
-        setHasVideo(true)
-        setVideoUrl(videoUrl)
-        const videoDuration = data.session?.video_duration || data.session?.videoDuration
-        if (videoDuration) {
-          setDuration(videoDuration)
-        }
-        setSnapshots([]) // No snapshots for mobile
-        return // Don't try to load snapshots
-      } else if (videoUrl) {
-        // If video URL exists but flag is not set, still show video
-        console.log('📹 Video URL found (flag not set):', videoUrl)
-        setHasVideo(true)
-        setVideoUrl(videoUrl)
-        const videoDuration = data.session?.video_duration || data.session?.videoDuration
-        if (videoDuration) {
-          setDuration(videoDuration)
-        }
-        setSnapshots([]) // No snapshots for mobile
-        return // Don't try to load snapshots
-      }
-      
-      // Backend returns snapshots array directly
-      if (data.snapshots && Array.isArray(data.snapshots)) {
-        events = data.snapshots
-      } else if (data.snapshots) {
-        // Fallback for other formats
-        if (typeof data.snapshots === 'string') {
-          try {
-            const parsed = JSON.parse(data.snapshots)
-            events = Array.isArray(parsed) ? parsed : [parsed]
-          } catch (parseError) {
-            console.error('❌ Failed to parse snapshots string:', parseError)
-            setError('Invalid snapshot data format')
-            return
-          }
-        } else {
-          events = [data.snapshots]
-        }
-      }
-      
-      if (events.length === 0) {
-        // Check if this is a mobile session with video instead of snapshots
-        const videoUrl = data.session?.video_url || data.session?.videoUrl || null
-        const hasVideoFlag = data.session?.has_video || data.session?.hasVideo || false
-        
-        if (hasVideoFlag && videoUrl) {
-          setHasVideo(true)
-          setVideoUrl(videoUrl)
-          const videoDuration = data.session?.video_duration || data.session?.videoDuration
-          if (videoDuration) {
-            setDuration(videoDuration)
-          }
-          setSnapshots([]) // No snapshots for mobile
-          return // Don't show error, video will be displayed
-        } else if (videoUrl) {
-          // If video URL exists but flag is not set, still show video
-          setHasVideo(true)
-          setVideoUrl(videoUrl)
-          const videoDuration = data.session?.video_duration || data.session?.videoDuration
-          if (videoDuration) {
-            setDuration(videoDuration)
-          }
-          setSnapshots([]) // No snapshots for mobile
-          return // Don't show error, video will be displayed
-        }
-        
-        // Check if this might be due to SDK key authentication failure
-        const sessionStartTime = data.session?.start_time ? new Date(data.session.start_time).getTime() : null
-        const now = Date.now()
-        const sessionAge = sessionStartTime ? now - sessionStartTime : null
-        
-        // If session is recent (within last hour), it might be due to SDK key/auth issues
-        if (sessionAge && sessionAge < 3600000) {
-          setError('No snapshots available. This session may have failed to upload snapshots due to authentication issues. Please verify your SDK key is correct and test with a new session.')
-        } else {
-          setError('No snapshots available for this session. This session was recorded before DOM recording was enabled or snapshots failed to upload.')
-        }
-        return
-      }
-      
-      // Handle old wrapped format if present
-      events = events.map((event: any) => {
-        // If event is wrapped in old format { type: 'snapshot', data: {...} }
-        if (event && event.type === 'snapshot' && event.data) {
-          return event.data // Unwrap to get actual rrweb event
-        }
-        return event
-      })
-      
-      // Validate events have required rrweb properties and normalize timestamps in one pass
-      let firstTimestamp: number | null = null
-      const validEvents: any[] = []
-      
-      for (let i = 0; i < events.length; i++) {
-        const event = events[i]
-        if (!event || typeof event.type !== 'number' || event.data === undefined) {
-          continue
-        }
-        
-        // Normalize timestamp
-        let timestamp = event.timestamp
-        if (!timestamp) {
-          if (i > 0 && validEvents.length > 0) {
-            const prevEvent = validEvents[validEvents.length - 1]
-            timestamp = (prevEvent.timestamp || 0) + 100 // 100ms between events
-          } else {
-            timestamp = 0
-          }
-        } else if (typeof timestamp === 'string') {
-          timestamp = new Date(timestamp).getTime()
-        }
-        
-        if (firstTimestamp === null) {
-          firstTimestamp = timestamp
-        }
-        
-        validEvents.push({
-          ...event,
-          timestamp
-        })
-      }
-      
-      // Sort by timestamp to ensure chronological order
-      // This is critical for navigation events - Type 4 Meta must come before new Type 2 snapshots
-      validEvents.sort((a: any, b: any) => {
-        const timeA = a.timestamp || 0
-        const timeB = b.timestamp || 0
-        // If timestamps are equal, prioritize Type 4 (navigation) before Type 2 (new page snapshot)
-        if (timeA === timeB) {
-          if (a.type === 4 && b.type === 2) return -1 // Type 4 before Type 2
-          if (a.type === 2 && b.type === 4) return 1  // Type 2 after Type 4
-        }
-        return timeA - timeB
-      })
-      
-      events = validEvents
-      
-      // Validate type 2 snapshot has content (only warn if issue)
-      const type2Event = events.find((e: any) => e.type === 2);
-      if (type2Event) {
-        const dataSize = JSON.stringify(type2Event.data).length;
-        if (dataSize < 100) {
-          console.warn(`⚠️ Type 2 snapshot data is very small (${dataSize} bytes) - replay may be empty!`);
-        }
-      }
-      
-      // Normalize timestamps to be relative (starting from 0) for rrweb
-      // This is important because rrweb expects relative timestamps, not absolute Unix timestamps
-      if (events.length > 0 && firstTimestamp !== null && firstTimestamp !== 0) {
-        // Normalize all timestamps to be relative to the first event (start at 0)
-        for (let i = 0; i < events.length; i++) {
-          events[i].timestamp = events[i].timestamp - firstTimestamp
-        }
-      }
-      
-      setSnapshots(events)
-      
-      // Cache snapshots
-      setCachedSnapshots(projectId, sessionId, events)
-    } catch (error: any) {
-      // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
-      if (error?.name === 'AbortError' || error?.message === 'signal is aborted without reason') {
-        // Don't set error state for abort errors - they're expected when component unmounts
-        console.log('Request was cancelled (this is normal when navigating away)')
-        setIsLoadingData(false) // Clear loading state even on abort
-        return
-      }
-      
-      console.error('Error loading snapshots:', error)
-      
-      // Check for CORS errors
-      if (error.message?.includes('CORS') || error.message?.includes('Access-Control-Allow-Origin') || error.message?.includes('blocked by CORS')) {
-        setError('CORS error: Cannot load session data. The backend may not be allowing requests from this domain. Please check CORS configuration.')
-        setIsLoadingData(false)
-        return
-      }
-      
-      // Check for network errors
-      if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError') || error.message?.includes('ERR_FAILED')) {
-        setError('Network error: Cannot connect to the backend server. Please check your internet connection and try again.')
-        setIsLoadingData(false)
-        return
-      }
-      
-      if (error.message?.includes('404') || error.message?.includes('not found')) {
-        // Check if session exists but has no snapshots (might be due to upload failure)
-        if (session && session.duration && session.duration > 0) {
-          setError('No snapshots available. Session was recorded but snapshots failed to upload. This may be due to authentication issues or network problems during recording.')
-        } else {
-          setError('No snapshots available for this session. This session was recorded before DOM recording was enabled.')
-        }
-      } else {
-        setError(error.message || 'Failed to load snapshots')
-      }
-      
-      // CRITICAL: Always clear loading state on error
-      setIsLoadingData(false)
-    }
-  }
+  // REMOVED: loadSessionData, loadEvents, and loadSnapshots functions
+  // These were consolidated into a single loadSessionReplayData() call
+  // to eliminate 3 duplicate API requests and improve loading performance
+  // All session data (session info, snapshots, events) is now loaded in one optimized call
 
   const initializePlayer = () => {
     // CRITICAL: Do NOT recreate Replayer if it already exists
@@ -1929,7 +1747,7 @@ export function SessionReplayPlayer() {
 
       // DON'T recalculate duration from event timestamps here either
       // The duration is already set correctly from session.duration or calculated from
-      // start_time and last_activity_time in loadSessionData()
+      // start_time and last_activity_time in loadSessionReplayData()
       // Event timestamps are now normalized to be relative (starting from 0), so
       // calculating duration from them would be incorrect
       // The duration state should already have the correct value from the database
