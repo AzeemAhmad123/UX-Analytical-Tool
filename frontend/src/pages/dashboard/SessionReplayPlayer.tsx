@@ -11,7 +11,8 @@ type Platform = 'web' | 'mobile'
 const SESSION_DATA_CACHE_PREFIX = 'uxcam_session_data_'
 const SESSION_SNAPSHOTS_CACHE_PREFIX = 'uxcam_session_snapshots_'
 const SESSION_EVENTS_CACHE_PREFIX = 'uxcam_session_events_'
-const CACHE_EXPIRY_MS = 30 * 60 * 1000 // 30 minutes cache expiry (sessions don't change)
+const SESSION_POSITION_CACHE_PREFIX = 'uxcam_session_position_'
+const CACHE_EXPIRY_MS = 24 * 60 * 60 * 1000 // 24 hours cache expiry (sessions don't change, longer cache for better UX)
 
 const getCachedSessionData = (projectId: string, sessionId: string): any | null => {
   try {
@@ -106,6 +107,41 @@ const setCachedEvents = (projectId: string, sessionId: string, events: any[]): v
     localStorage.setItem(cacheKey, JSON.stringify({ events, timestamp: Date.now() }))
   } catch (error) {
     // Ignore errors
+  }
+}
+
+// Resume position cache helpers (save/load last watched position)
+const getCachedPosition = (projectId: string, sessionId: string): number | null => {
+  try {
+    const cacheKey = `${SESSION_POSITION_CACHE_PREFIX}${projectId}_${sessionId}`
+    const cached = localStorage.getItem(cacheKey)
+    if (!cached) return null
+    
+    const { position, timestamp } = JSON.parse(cached)
+    const age = Date.now() - timestamp
+    
+    // Position cache expires after 7 days (user might want to resume even after cache expiry)
+    if (age < 7 * 24 * 60 * 60 * 1000 && typeof position === 'number' && position > 0) {
+      console.log(`📍 Loaded cached position for ${sessionId}: ${Math.round(position / 1000)}s`)
+      return position
+    } else {
+      localStorage.removeItem(cacheKey)
+      return null
+    }
+  } catch (error) {
+    return null
+  }
+}
+
+const setCachedPosition = (projectId: string, sessionId: string, position: number): void => {
+  try {
+    const cacheKey = `${SESSION_POSITION_CACHE_PREFIX}${projectId}_${sessionId}`
+    // Only save if position is meaningful (at least 5 seconds)
+    if (position > 5000) {
+      localStorage.setItem(cacheKey, JSON.stringify({ position, timestamp: Date.now() }))
+    }
+  } catch (error) {
+    // Ignore errors (localStorage might be full)
   }
 }
 
@@ -266,13 +302,22 @@ export function SessionReplayPlayer() {
     const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
     const cachedEvents = getCachedEvents(projectId, sessionId)
     
+    // Load cached resume position (if available)
+    const cachedPosition = getCachedPosition(projectId, sessionId)
+    
     // Reset state for new session (only if no cached data, or always reset to ensure clean state)
-    setCurrentTime(0)
+    // But preserve cached position if available
+    setCurrentTime(cachedPosition || 0)
     setIsPlaying(false)
     setIsFinished(false) // Reset finished state when loading new session
     setError(null)
     setHasVideo(false)
     setVideoUrl(null)
+    
+    // Store cached position for later use (when video/replay loads)
+    if (cachedPosition && cachedPosition > 0) {
+      console.log(`📍 Will resume from cached position: ${Math.round(cachedPosition / 1000)}s`)
+    }
     
     // Set cached data immediately (or clear if no cache)
     if (cachedSessionData) {
@@ -1856,8 +1901,16 @@ export function SessionReplayPlayer() {
       const progressListener = (payload: any) => {
         try {
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
-        if (payload && typeof payload.timeOffset === 'number') {
-          setCurrentTime(payload.timeOffset)
+            if (payload && typeof payload.timeOffset === 'number') {
+              setCurrentTime(payload.timeOffset)
+              // Save resume position every 5 seconds (throttled to avoid excessive writes)
+              if (projectId && sessionId && payload.timeOffset > 5000) {
+                const lastSaved = (replayer as any)._lastPositionSave || 0
+                if (payload.timeOffset - lastSaved > 5000) {
+                  setCachedPosition(projectId, sessionId, payload.timeOffset)
+                  ;(replayer as any)._lastPositionSave = payload.timeOffset
+                }
+              }
             }
           }
         } catch (error) {
@@ -2363,8 +2416,16 @@ export function SessionReplayPlayer() {
         try {
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
             if (state && typeof state.timeOffset === 'number') {
-          setCurrentTime(state.timeOffset)
+              setCurrentTime(state.timeOffset)
+              // Save resume position every 5 seconds (throttled to avoid excessive writes)
+              if (projectId && sessionId && state.timeOffset > 5000) {
+                const lastSaved = (replayer as any)._lastPositionSave || 0
+                if (state.timeOffset - lastSaved > 5000) {
+                  setCachedPosition(projectId, sessionId, state.timeOffset)
+                  ;(replayer as any)._lastPositionSave = state.timeOffset
+                }
               }
+            }
             }
           } catch (error) {
           // Silently ignore errors from destroyed replayer
@@ -2424,10 +2485,19 @@ export function SessionReplayPlayer() {
           
           // Check if replayer is still valid before playing
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
-          // Auto-play from the beginning (time 0) on initial load
-          replayer.play(0)
-          setIsPlaying(true)
-          console.log('✅ Auto-playing replay from start')
+            // Resume from cached position if available, otherwise start from beginning
+            const cachedPosition = projectId && sessionId ? getCachedPosition(projectId, sessionId) : null
+            const startTime = cachedPosition && cachedPosition > 0 && cachedPosition < duration ? cachedPosition : 0
+            
+            replayer.play(startTime)
+            setIsPlaying(true)
+            setCurrentTime(startTime)
+            
+            if (startTime > 0) {
+              console.log(`✅ Auto-playing replay from cached position: ${Math.round(startTime / 1000)}s`)
+            } else {
+              console.log('✅ Auto-playing replay from start')
+            }
           } else {
             console.warn('⚠️ Cannot auto-play: replayer has been destroyed')
           }
@@ -3435,13 +3505,33 @@ export function SessionReplayPlayer() {
                   onTimeUpdate={(e) => {
                     const video = e.currentTarget
                     if (video) {
-                      setCurrentTime(video.currentTime * 1000) // Convert to milliseconds
+                      const currentTimeMs = video.currentTime * 1000
+                      setCurrentTime(currentTimeMs)
+                      // Save resume position every 5 seconds (throttled to avoid excessive writes)
+                      if (projectId && sessionId && currentTimeMs > 5000) {
+                        const lastSaved = (videoPlayerRef.current as any)?._lastPositionSave || 0
+                        if (currentTimeMs - lastSaved > 5000) {
+                          setCachedPosition(projectId, sessionId, currentTimeMs)
+                          if (videoPlayerRef.current) {
+                            (videoPlayerRef.current as any)._lastPositionSave = currentTimeMs
+                          }
+                        }
+                      }
                     }
                   }}
                   onLoadedMetadata={(e) => {
                     const video = e.currentTarget
                     if (video && video.duration) {
                       setDuration(video.duration * 1000) // Convert to milliseconds
+                      // Restore cached position when video metadata loads
+                      if (projectId && sessionId) {
+                        const cachedPosition = getCachedPosition(projectId, sessionId)
+                        if (cachedPosition && cachedPosition > 0 && cachedPosition < video.duration * 1000) {
+                          video.currentTime = cachedPosition / 1000
+                          setCurrentTime(cachedPosition)
+                          console.log(`📍 Resumed video from cached position: ${Math.round(cachedPosition / 1000)}s`)
+                        }
+                      }
                     }
                   }}
                   onError={(e) => {
