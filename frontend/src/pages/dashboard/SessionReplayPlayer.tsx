@@ -145,7 +145,7 @@ const setCachedPosition = (projectId: string, sessionId: string, position: numbe
   }
 }
 
-// Helper function to apply default filters: exclude sessions < 10 seconds and sessions without video
+// Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
     // Exclude sessions with duration < 10 seconds
@@ -157,6 +157,12 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
     // Exclude sessions without video recordings (no snapshots)
     const snapshotCount = s.snapshot_count || 0
     if (snapshotCount === 0) {
+      return false
+    }
+    
+    // Exclude sessions with insufficient events (rrweb requires at least 2 events for replay)
+    const eventCount = s.event_count || 0
+    if (eventCount < 2) {
       return false
     }
     
@@ -924,7 +930,7 @@ export function SessionReplayPlayer() {
       // Apply default filters: exclude sessions < 10 seconds and sessions without video
       const allSessions = response.sessions || []
       const filteredSessions = applyDefaultFilters(allSessions)
-      console.log(`📊 Loaded ${allSessions.length} sessions, filtered to ${filteredSessions.length} (excluded < 10s and no video)`)
+      console.log(`📊 Loaded ${allSessions.length} sessions, filtered to ${filteredSessions.length} (excluded < 10s, no video, and insufficient events)`)
       setSessions(filteredSessions)
     } catch (error: any) {
       // Only log non-abort errors (abort errors are expected when component unmounts or requests are cancelled)
@@ -1119,11 +1125,13 @@ export function SessionReplayPlayer() {
           eventTypes: validSnapshots.map((e: any) => e.type),
           hasType2: validSnapshots.some((e: any) => e.type === 2)
         })
-        // Redirect back to sessions list instead of showing error
-        // This session should have been filtered out, but if it wasn't, redirect gracefully
+        // Show error message instead of white screen, then redirect after a delay
+        setError('This session does not have sufficient events for replay. It requires at least 2 events to play back. Redirecting to sessions list...')
+        setIsLoadingData(false)
+        // Redirect back to sessions list after showing error message
         setTimeout(() => {
           navigate(`/dashboard/sessions/${projectId}`)
-        }, 1000)
+        }, 3000)
         return
       }
 

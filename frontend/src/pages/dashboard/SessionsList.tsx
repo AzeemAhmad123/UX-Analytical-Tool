@@ -219,7 +219,7 @@ const mergeSessions = (existing: any[], newSessions: any[]): any[] => {
   return merged
 }
 
-// Helper function to apply default filters: exclude sessions < 10 seconds and sessions without video
+// Helper function to apply default filters: exclude sessions < 10 seconds, sessions without video, and sessions with insufficient events
 const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
     // Exclude sessions with duration < 10 seconds
@@ -231,6 +231,12 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
     // Exclude sessions without video recordings (no snapshots)
     const snapshotCount = s.snapshot_count || 0
     if (snapshotCount === 0) {
+      return false
+    }
+    
+    // Exclude sessions with insufficient events (rrweb requires at least 2 events for replay)
+    const eventCount = s.event_count || 0
+    if (eventCount < 2) {
       return false
     }
     
