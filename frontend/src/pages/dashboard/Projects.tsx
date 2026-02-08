@@ -317,7 +317,7 @@ export function Projects() {
 </script>
 
 <!-- Load UXCam SDK (always gets latest version) -->
-<script src="${sdkFileUrl}" async></script>
+<script src="${sdkFileUrl}" async></script>`
   }
 
   const getAndroidIntegrationCode = (sdkKey: string): string => {
