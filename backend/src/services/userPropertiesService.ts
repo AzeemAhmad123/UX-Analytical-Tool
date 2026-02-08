@@ -161,8 +161,17 @@ export async function getOrCreateUserProperties(
       .select()
       .single()
 
-    // If error is about device_type column not existing, retry without it and cache the result
-    if (createError && (createError.code === 'PGRST204' || createError.message?.includes('device_type'))) {
+    // Check if error is about device_type column not existing
+    const isDeviceTypeError = createError && (
+      createError.code === 'PGRST204' || 
+      (typeof createError.message === 'string' && (
+        createError.message.includes('device_type') || 
+        createError.message.includes('Could not find') ||
+        createError.message.includes('schema cache')
+      ))
+    )
+    
+    if (isDeviceTypeError) {
       console.warn('⚠️ device_type column not found, retrying insert without device_type')
       deviceTypeColumnExists = false // Cache that column doesn't exist
       
@@ -176,18 +185,28 @@ export async function getOrCreateUserProperties(
       
       created = retryResult.data
       createError = retryResult.error
-    } else if (!createError && deviceTypeColumnExists === null) {
-      // If insert succeeded and we included device_type, column exists
-      if (insertData.device_type !== undefined) {
-        deviceTypeColumnExists = true
+      
+      // If retry succeeded, return the created record
+      if (!createError && created) {
+        return created
       }
+      // If retry failed, return null (don't throw error)
+      if (createError) {
+        console.warn('⚠️ Retry insert without device_type failed, returning null')
+        return null as any
+      }
+    } else if (!createError && deviceTypeColumnExists === null && insertData.device_type !== undefined) {
+      // If insert succeeded and we included device_type, column exists
+      deviceTypeColumnExists = true
     }
 
-    if (createError) {
+    // Only throw non-device_type errors
+    if (createError && !isDeviceTypeError) {
       throw createError
     }
 
-    return created
+    // Return created if available, otherwise null
+    return created || null as any
   } catch (error: any) {
     // Check if this is a device_type error - handle gracefully without breaking the request
     const isDeviceTypeError = error && (
