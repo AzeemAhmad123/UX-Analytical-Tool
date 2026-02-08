@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express'
 import * as LZString from 'lz-string'
-import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById } from '../services/sessionService'
+import { getSessionByProjectAndSessionId, getSessionsByProject, getSessionById, shouldFilterSession, deleteSessionAndRelatedData } from '../services/sessionService'
 import { getSessionSnapshots, getSessionDurationFromSnapshots, isSessionReplayable } from '../services/snapshotService'
 import { supabase } from '../config/supabase'
 
@@ -1126,6 +1126,27 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
 
     if (error) {
       throw new Error(`Failed to update session: ${error.message}`)
+    }
+
+    // Check if session should be filtered out (doesn't meet minimum criteria)
+    // If it should be filtered, delete it and all related data
+    try {
+      const shouldFilter = await shouldFilterSession(sessionDbId)
+      if (shouldFilter) {
+        console.log(`🗑️ Session ${sessionDbId} doesn't meet criteria - deleting from database`)
+        await deleteSessionAndRelatedData(sessionDbId)
+        // Return success but indicate session was filtered
+        return res.json({
+          success: true,
+          session_id: sessionIdParam,
+          duration: calculatedDuration,
+          filtered: true,
+          message: 'Session was filtered and deleted (did not meet minimum criteria)'
+        })
+      }
+    } catch (filterError: any) {
+      // Log error but don't fail the request - session was already updated
+      console.error('Error checking/filtering session:', filterError)
     }
 
     res.json({

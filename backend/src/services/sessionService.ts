@@ -241,3 +241,110 @@ export async function getSessionsByProject(
   }
 }
 
+
+/**
+ * Check if a session should be filtered out (doesn't meet minimum criteria)
+ * Sessions are filtered if:
+ * - Duration < 10 seconds
+ * - No snapshots (snapshot_count === 0)
+ * - Insufficient events (event_count < 2)
+ */
+export async function shouldFilterSession(sessionDbId: string): Promise<boolean> {
+  try {
+    // Get session with all necessary data
+    const session = await getSessionById(sessionDbId)
+    if (!session) {
+      return true // Filter out non-existent sessions
+    }
+
+    // Check duration < 10 seconds
+    const duration = (session.duration || 0) / 1000 // Convert to seconds
+    if (duration < 10) {
+      console.log(\🚫 Session \ filtered: duration \s < 10s\)
+      return true
+    }
+
+    // Check snapshot count
+    const { count: snapshotCount } = await supabase
+      .from('session_snapshots')
+      .select('*', { count: 'exact', head: true })
+      .eq('session_id', sessionDbId)
+
+    if ((snapshotCount || 0) === 0) {
+      console.log(\🚫 Session \ filtered: no snapshots\)
+      return true
+    }
+
+    // Check event count < 2
+    const eventCount = session.event_count || 0
+    if (eventCount < 2) {
+      console.log(\🚫 Session \ filtered: event_count \ < 2\)
+      return true
+    }
+
+    return false // Session meets all criteria
+  } catch (error: any) {
+    console.error('Error checking if session should be filtered:', error)
+    // On error, don't filter (safer to keep session than delete it)
+    return false
+  }
+}
+
+/**
+ * Delete a session and all related data (snapshots, events, videos)
+ * This is used to clean up sessions that don't meet minimum criteria
+ */
+export async function deleteSessionAndRelatedData(sessionDbId: string): Promise<void> {
+  try {
+    console.log(\🗑️ Deleting session \ and all related data\)
+
+    // Delete related data first (foreign key constraints)
+    // Note: If CASCADE is set up, deleting the session will automatically delete related data
+    // But we'll delete explicitly to be safe and for logging
+
+    // Delete snapshots
+    const { error: snapshotError } = await supabase
+      .from('session_snapshots')
+      .delete()
+      .eq('session_id', sessionDbId)
+
+    if (snapshotError) {
+      console.warn('Error deleting snapshots (may not exist):', snapshotError.message)
+    }
+
+    // Delete events
+    const { error: eventError } = await supabase
+      .from('events')
+      .delete()
+      .eq('session_id', sessionDbId)
+
+    if (eventError) {
+      console.warn('Error deleting events (may not exist):', eventError.message)
+    }
+
+    // Delete videos
+    const { error: videoError } = await supabase
+      .from('session_videos')
+      .delete()
+      .eq('session_id', sessionDbId)
+
+    if (videoError) {
+      console.warn('Error deleting videos (may not exist):', videoError.message)
+    }
+
+    // Finally, delete the session itself
+    const { error: sessionError } = await supabase
+      .from('sessions')
+      .delete()
+      .eq('id', sessionDbId)
+
+    if (sessionError) {
+      throw new Error(\Failed to delete session: \\)
+    }
+
+    console.log(\✅ Successfully deleted session \ and all related data\)
+  } catch (error: any) {
+    console.error('Error deleting session and related data:', error)
+    throw error
+  }
+}
