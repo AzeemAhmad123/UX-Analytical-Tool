@@ -1747,7 +1747,7 @@
 
     // Initialize - rewritten to ensure DOM and rrweb are ready
     function init() {
-      if (!config.sdkKey) {
+      if (!getCurrentSdkKey()) {
         console.warn('UXCam SDK: SDK key not found. Please configure window.UXCamSDK.key');
         return;
       }
@@ -1843,17 +1843,26 @@
             }
           }, 5 * 60 * 1000); // Check every 5 minutes
 
-          // Track page unload - flush data but DON'T clear session (for continuous recording across pages)
+          // Track page unload - only flush if leaving website, not on same-domain navigation
           window.addEventListener('beforeunload', () => {
-            console.log('UXCam SDK: Page unloading, flushing data (session continues across pages)');
-            trackEvent('page_unload');
+            const currentOrigin = window.location.origin;
+            const referrerOrigin = document.referrer ? new URL(document.referrer).origin : null;
+            const isSameDomainNavigation = referrerOrigin === currentOrigin;
+            const isLeavingWebsite = !isSameDomainNavigation && referrerOrigin !== null;
             
-            // CRITICAL: Record navigation event BEFORE stopping recording
-            // This ensures navigation is captured in the current page's recording
+            console.log('UXCam SDK: Page unloading', {
+              isSameDomainNavigation: isSameDomainNavigation,
+              isLeavingWebsite: isLeavingWebsite,
+              currentOrigin: currentOrigin,
+              referrerOrigin: referrerOrigin,
+              action: isLeavingWebsite ? 'Flushing and ending session' : 'Continuing session across pages'
+            });
+            
+            // Record navigation event for same-domain navigation (page change within website)
             const currentUrl = window.location.href;
             const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
-            if (storedUrl && storedUrl !== currentUrl && stopRecording) {
-              // URL changed - record navigation event immediately
+            if (isSameDomainNavigation && storedUrl && storedUrl !== currentUrl && stopRecording) {
+              // Same-domain navigation - record navigation event but DON'T flush/stop
               try {
                 const navEvent = {
                   type: 4, // Meta event (navigation)
@@ -1866,10 +1875,10 @@
                   },
                   timestamp: Date.now()
                 };
-                // Add to events and queue immediately
+                // Add to events and queue - will be flushed when user actually leaves website
                 events.push(navEvent);
                 snapshotQueue.push(navEvent);
-                console.log('UXCam SDK: 📍 Navigation event recorded on page unload', {
+                console.log('UXCam SDK: 📍 Navigation event recorded (same-domain, session continues)', {
                   from: storedUrl,
                   to: currentUrl,
                   sessionId: sessionId
@@ -1881,23 +1890,30 @@
                   to: currentUrl,
                   timestamp: Date.now()
                 };
+                
+                // DON'T flush or stop recording - let next page continue the session
+                return; // Exit early - don't flush on same-domain navigation
               } catch (e) {
                 console.warn('UXCam SDK: Error recording navigation on unload:', e);
               }
             }
             
-            // Flush data but keep session alive for next page
-            if (sessionId && stopRecording) {
+            // Only flush and stop if actually leaving the website (different domain or closing tab)
+            if (isLeavingWebsite && sessionId && stopRecording) {
+              trackEvent('page_unload');
+              
+              console.log('UXCam SDK: Leaving website - flushing all data and ending session', {
+                from: referrerOrigin,
+                to: currentOrigin
+              });
+              
               // CRITICAL: Flush all collected snapshots BEFORE stopping recording
-              // This ensures all events including navigation are uploaded
               if (snapshotQueue.length > 0) {
-                console.log('UXCam SDK: Flushing all collected snapshots on page unload', {
+                console.log('UXCam SDK: Flushing all collected snapshots (leaving website)', {
                   snapshotCount: snapshotQueue.length,
                   eventTypes: snapshotQueue.map(s => s?.type),
-                  sessionId: sessionId,
-                  hasNavigation: snapshotQueue.some(s => s?.type === 4)
+                  sessionId: sessionId
                 });
-                // Flush via regular method first (faster)
                 flushSnapshots();
               }
               
@@ -1912,107 +1928,112 @@
               // Flush remaining events
               flushEvents();
               
-              // CRITICAL: DO NOT clear localStorage on page unload
-              // This allows the session to continue across page navigations
-              // The session will only be cleared on actual session end (timeout, explicit end, etc.)
-              console.log('UXCam SDK: Keeping session in localStorage for continuous recording across pages', {
+              // Clear session when leaving website
+              try {
+                localStorage.removeItem(STORAGE_KEY);
+                localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
+                localStorage.removeItem(STORAGE_URL_KEY);
+                console.log('UXCam SDK: Session cleared (left website)');
+              } catch (e) {
+                console.warn('Error clearing session:', e);
+              }
+            } else if (isSameDomainNavigation) {
+              // Same-domain navigation - keep session alive, don't flush
+              console.log('UXCam SDK: Same-domain navigation - keeping session alive, not flushing', {
                 sessionId: sessionId
               });
             }
             
-            // CRITICAL: Send remaining data synchronously using sendBeacon (reliable upload)
+            // CRITICAL: Send remaining data via sendBeacon ONLY if leaving website
             // sendBeacon is guaranteed to send even if page is closing
-            let pendingUploads = 0;
+            const unloadCurrentOrigin = window.location.origin;
+            const unloadReferrerOrigin = document.referrer ? new URL(document.referrer).origin : null;
+            const unloadIsLeavingWebsite = unloadReferrerOrigin !== null && unloadReferrerOrigin !== unloadCurrentOrigin;
             
-            if (eventQueue.length > 0) {
-              const eventsToSend = [...eventQueue];
-              eventQueue = [];
-              pendingUploads++;
+            if (unloadIsLeavingWebsite && sessionId) {
+              let pendingUploads = 0;
               
-              const blob = new Blob([JSON.stringify({
-                sdk_key: getCurrentSdkKey(),
-                session_id: sessionId,
-                events: eventsToSend,
-                device_info: deviceInfo,
-                user_properties: {}
-              })], { type: 'application/json' });
+              if (eventQueue.length > 0) {
+                const eventsToSend = [...eventQueue];
+                eventQueue = [];
+                pendingUploads++;
+                
+                const blob = new Blob([JSON.stringify({
+                  sdk_key: getCurrentSdkKey(),
+                  session_id: sessionId,
+                  events: eventsToSend,
+                  device_info: deviceInfo,
+                  user_properties: {}
+                })], { type: 'application/json' });
+                
+                const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
+                if (sent) {
+                  console.log('UXCam SDK: ✅ Events sent via sendBeacon (leaving website)', { count: eventsToSend.length });
+                } else {
+                  console.warn('UXCam SDK: ⚠️ sendBeacon failed for events, trying fetch with keepalive');
+                  fetch(`${config.apiUrl}/api/events/ingest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      sdk_key: getCurrentSdkKey(),
+                      session_id: sessionId,
+                      events: eventsToSend,
+                      device_info: deviceInfo,
+                      user_properties: {}
+                    }),
+                    keepalive: true
+                  }).catch(() => {
+                    console.error('UXCam SDK: ❌ Failed to send events on unload - data may be lost');
+                  });
+                }
+              }
+
+              // Send all collected snapshots via sendBeacon (only when leaving website)
+              if (snapshotQueue.length > 0) {
+                const snapshots = [...snapshotQueue];
+                snapshotQueue = [];
+                pendingUploads++;
+                
+                const compressed = compressSnapshots(snapshots);
+                
+                const blob = new Blob([JSON.stringify({
+                  sdk_key: getCurrentSdkKey(),
+                  session_id: sessionId,
+                  snapshots: compressed,
+                  snapshot_count: snapshots.length,
+                  is_initial_snapshot: false
+                })], { type: 'application/json' });
+                
+                const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+                if (sent) {
+                  console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon (leaving website)', {
+                    snapshotCount: snapshots.length,
+                    sizeKB: (blob.size / 1024).toFixed(2)
+                  });
+                } else {
+                  console.warn('UXCam SDK: ⚠️ sendBeacon failed for snapshots, trying fetch with keepalive');
+                  fetch(`${config.apiUrl}/api/snapshots/ingest`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      sdk_key: getCurrentSdkKey(),
+                      session_id: sessionId,
+                      snapshots: compressed,
+                      snapshot_count: snapshots.length,
+                      is_initial_snapshot: false
+                    }),
+                    keepalive: true
+                  }).catch(() => {
+                    console.error('UXCam SDK: ❌ Failed to send snapshots on unload - data may be lost');
+                  });
+                }
+              }
               
-              const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
-              if (sent) {
-                console.log('UXCam SDK: ✅ Events sent via sendBeacon', { count: eventsToSend.length });
-              } else {
-                console.warn('UXCam SDK: ⚠️ sendBeacon failed for events, trying fetch with keepalive');
-                // Fallback: use fetch with keepalive
-                fetch(`${config.apiUrl}/api/events/ingest`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    sdk_key: getCurrentSdkKey(),
-                    session_id: sessionId,
-                    events: eventsToSend,
-                    device_info: deviceInfo,
-                    user_properties: {}
-                  }),
-                  keepalive: true
-                }).catch(() => {
-                  console.error('UXCam SDK: ❌ Failed to send events on unload - data may be lost');
+              if (pendingUploads > 0) {
+                console.log('UXCam SDK: 📤 Final uploads initiated via sendBeacon (leaving website)', {
+                  uploadCount: pendingUploads
                 });
               }
-            }
-
-            // CRITICAL: Send all collected snapshots via sendBeacon (UXCam-style)
-            // This ensures all snapshots are sent when user leaves the page
-            if (snapshotQueue.length > 0) {
-              const snapshots = [...snapshotQueue];
-              snapshotQueue = [];
-              pendingUploads++;
-              
-              const compressed = compressSnapshots(snapshots);
-              
-              const blob = new Blob([JSON.stringify({
-                sdk_key: getCurrentSdkKey(),
-                session_id: sessionId,
-                snapshots: compressed,
-                snapshot_count: snapshots.length,
-                is_initial_snapshot: false
-              })], { type: 'application/json' });
-              
-              const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
-              if (sent) {
-                console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon', {
-                  snapshotCount: snapshots.length,
-                  sizeKB: (blob.size / 1024).toFixed(2)
-                });
-              } else {
-                console.warn('UXCam SDK: ⚠️ sendBeacon failed for snapshots, trying fetch with keepalive');
-                // Fallback: use fetch with keepalive
-                fetch(`${config.apiUrl}/api/snapshots/ingest`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    sdk_key: getCurrentSdkKey(),
-                    session_id: sessionId,
-                    snapshots: compressed,
-                    snapshot_count: snapshots.length,
-                    is_initial_snapshot: false
-                  }),
-                  keepalive: true
-                }).catch(() => {
-                  console.error('UXCam SDK: ❌ Failed to send snapshots on unload - data may be lost');
-                });
-              }
-            }
-            
-            if (pendingUploads > 0) {
-              console.log('UXCam SDK: 📤 Final uploads initiated via sendBeacon', {
-                uploadCount: pendingUploads,
-                hasEvents: eventQueue.length > 0,
-                hasSnapshots: snapshotQueue.length > 0
-              });
-            }
-
-            if (stopRecording) {
-              stopRecording();
             }
           });
           
