@@ -317,8 +317,8 @@ export function Projects() {
 </script>
 
 <!-- Load UXCam SDK (always gets latest version) -->
-<!-- Cache-busting parameter ensures browser always loads latest SDK -->
-<script src="${sdkFileUrl}?v=${Date.now()}" async></script>`
+<!-- Note: If you experience caching issues, add ?v=2 or clear browser cache -->
+<script src="${sdkFileUrl}" async></script>`
   }
 
   const getAndroidIntegrationCode = (sdkKey: string): string => {
