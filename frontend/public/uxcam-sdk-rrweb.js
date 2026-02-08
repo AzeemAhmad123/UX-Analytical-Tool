@@ -333,6 +333,12 @@
       flushOnUnload: true, // Flush all snapshots when user leaves
     };
     
+    // CRITICAL: Helper function to always get the current SDK key from window.UXCamSDK
+    // This prevents using a cached/stale SDK key if it was changed after SDK initialization
+    function getCurrentSdkKey() {
+      return window.UXCamSDK?.key || config.sdkKey || '';
+    }
+    
     // Storage & Performance Limits
     const MAX_QUEUE_SIZE = 50000; // Maximum events/snapshots in memory (prevent memory bloat)
     const MAX_SNAPSHOT_QUEUE_SIZE = 10000; // Maximum snapshots in queue
@@ -909,7 +915,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            sdk_key: config.sdkKey,
+            sdk_key: getCurrentSdkKey(),
             session_id: sessionId,
             snapshots: compressed,
             snapshot_count: eventsToUpload.length,
@@ -1075,7 +1081,7 @@
     // Track event - SAFE: Won't break website if it fails
     function trackEvent(type, data = {}) {
       return safeExecute(function() {
-        if (!config.sdkKey) {
+        if (!getCurrentSdkKey()) {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.warn('UXCam SDK: SDK key not configured');
           }
@@ -1270,7 +1276,7 @@
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sdk_key: config.sdkKey,
+          sdk_key: getCurrentSdkKey(),
           session_id: sessionId,
           snapshots: compressed,
           snapshot_count: validSnapshots.length
@@ -1304,7 +1310,7 @@
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            sdk_key: config.sdkKey,
+            sdk_key: getCurrentSdkKey(),
             session_id: sessionId,
             events: events,
             device_info: deviceInfo,
@@ -1590,7 +1596,7 @@
       
       // Track all form fields on the page
       function trackFormField(field, action, value = null) {
-        if (!sessionId || !config.sdkKey) return;
+        if (!sessionId || !getCurrentSdkKey()) return;
         
         // Find parent form
         let form = field.closest('form');
@@ -1741,7 +1747,7 @@
 
     // Initialize - rewritten to ensure DOM and rrweb are ready
     function init() {
-      if (!config.sdkKey) {
+      if (!getCurrentSdkKey()) {
         console.warn('UXCam SDK: SDK key not found. Please configure window.UXCamSDK.key');
         return;
       }
@@ -1749,7 +1755,7 @@
       console.log('UXCam SDK: Initialization started', {
         domReady: document.readyState,
         rrwebAvailable: !!window.rrweb,
-        sdkKey: config.sdkKey ? 'configured' : 'missing'
+        sdkKey: getCurrentSdkKey() ? 'configured' : 'missing'
       });
 
       // Wait for DOM to be ready first
@@ -1924,7 +1930,7 @@
               pendingUploads++;
               
               const blob = new Blob([JSON.stringify({
-                sdk_key: config.sdkKey,
+                sdk_key: getCurrentSdkKey(),
                 session_id: sessionId,
                 events: eventsToSend,
                 device_info: deviceInfo,
@@ -1941,7 +1947,7 @@
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    sdk_key: config.sdkKey,
+                    sdk_key: getCurrentSdkKey(),
                     session_id: sessionId,
                     events: eventsToSend,
                     device_info: deviceInfo,
@@ -1964,7 +1970,7 @@
               const compressed = compressSnapshots(snapshots);
               
               const blob = new Blob([JSON.stringify({
-                sdk_key: config.sdkKey,
+                sdk_key: getCurrentSdkKey(),
                 session_id: sessionId,
                 snapshots: compressed,
                 snapshot_count: snapshots.length,
@@ -1984,7 +1990,7 @@
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
-                    sdk_key: config.sdkKey,
+                    sdk_key: getCurrentSdkKey(),
                     session_id: sessionId,
                     snapshots: compressed,
                     snapshot_count: snapshots.length,
@@ -2024,7 +2030,7 @@
                 const events = [...eventQueue];
                 eventQueue = [];
                 const blob = new Blob([JSON.stringify({
-                  sdk_key: config.sdkKey,
+                  sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
                   events: events,
                   device_info: deviceInfo,
@@ -2043,7 +2049,7 @@
                 const compressed = compressSnapshots(snapshots);
                 
                 const blob = new Blob([JSON.stringify({
-                  sdk_key: config.sdkKey,
+                  sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
                   snapshots: compressed,
                   snapshot_count: snapshots.length,
@@ -2210,7 +2216,7 @@
 
           console.log('UXCam SDK: ✅ Initialized', { 
             sessionId, 
-            sdkKey: config.sdkKey,
+            sdkKey: getCurrentSdkKey(),
             domReady: document.readyState,
             rrwebReady: !!window.rrweb,
             hasDOMRecording: !!stopRecording
