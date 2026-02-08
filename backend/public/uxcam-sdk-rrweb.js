@@ -1081,7 +1081,7 @@
     // Track event - SAFE: Won't break website if it fails
     function trackEvent(type, data = {}) {
       return safeExecute(function() {
-        if (!config.sdkKey) {
+        if (!getCurrentSdkKey()) {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.warn('UXCam SDK: SDK key not configured');
           }
@@ -1596,7 +1596,7 @@
       
       // Track all form fields on the page
       function trackFormField(field, action, value = null) {
-        if (!sessionId || !config.sdkKey) return;
+        if (!sessionId || !getCurrentSdkKey()) return;
         
         // Find parent form
         let form = field.closest('form');
@@ -1755,7 +1755,7 @@
       console.log('UXCam SDK: Initialization started', {
         domReady: document.readyState,
         rrwebAvailable: !!window.rrweb,
-        sdkKey: config.sdkKey ? 'configured' : 'missing'
+        sdkKey: getCurrentSdkKey() ? 'configured' : 'missing'
       });
 
       // Wait for DOM to be ready first
@@ -2216,7 +2216,7 @@
 
           console.log('UXCam SDK: ✅ Initialized', { 
             sessionId, 
-            sdkKey: config.sdkKey,
+            sdkKey: getCurrentSdkKey(),
             domReady: document.readyState,
             rrwebReady: !!window.rrweb,
             hasDOMRecording: !!stopRecording
