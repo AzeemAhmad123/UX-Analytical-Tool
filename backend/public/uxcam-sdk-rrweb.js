@@ -228,39 +228,71 @@
   }
 
   // Wait for DOM to be ready before initializing
+  // CRITICAL: Don't wait for window.onload (waits for all images/resources)
+  // Use DOMContentLoaded or document.body check for instant start (like UXCam/Hotjar)
   function waitForDOMReady(callback) {
-    if (document.readyState === 'complete') {
+    // If body exists, we can start immediately
+    if (document.body) {
       callback();
+      return;
+    }
+    
+    // If DOM is already loaded, run immediately
+    if (document.readyState === 'interactive' || document.readyState === 'complete') {
+      callback();
+      return;
+    }
+    
+    // Otherwise wait for DOMContentLoaded (faster than window.onload)
+    // This fires when HTML is parsed, not waiting for images/stylesheets
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', callback, { once: true });
     } else {
-      window.addEventListener('load', callback, { once: true });
+      // Already loaded
+      callback();
     }
   }
 
-  // Wait for rrweb to be fully available - SIMPLIFIED: Only check window.rrweb
-  function waitForRrweb(callback, maxRetries = 30, retryDelay = 100) {
+  // CRITICAL: Fast rrweb detection - start immediately if available (eliminates latency)
+  // If rrweb is already loaded (via script tag), start recording instantly
+  // Otherwise, check frequently with short delays to minimize wait time
+  function waitForRrweb(callback, maxRetries = 50, retryDelay = 50) {
+    // IMMEDIATE CHECK: If rrweb is already available, start right away (0ms delay)
+    if (window.rrweb && typeof window.rrweb.record === 'function') {
+      console.log('UXCam SDK: ✅ rrweb is ready IMMEDIATELY - starting recording instantly', {
+        hasRecord: typeof window.rrweb?.record === 'function',
+        timestamp: Date.now()
+      });
+      callback();
+      return;
+    }
+    
     let retries = 0;
     
     function checkRrweb() {
-      // SIMPLIFIED: Only check if window.rrweb exists (bundled version has everything)
-      if (window.rrweb) {
+      // Check if rrweb is available
+      if (window.rrweb && typeof window.rrweb.record === 'function') {
         console.log('UXCam SDK: ✅ rrweb is loaded and ready', {
           hasRecord: typeof window.rrweb?.record === 'function',
-          hasTakeFullSnapshot: typeof window.rrweb?.record?.takeFullSnapshot === 'function'
+          retries: retries,
+          delay: retries * retryDelay + 'ms'
         });
         callback();
       } else if (retries < maxRetries) {
         retries++;
-        if (retries % 5 === 0) { // Log every 5 attempts to avoid spam
-          console.log(`UXCam SDK: Waiting for rrweb... (attempt ${retries}/${maxRetries})`);
+        // Log less frequently to avoid spam, but show progress
+        if (retries === 1 || retries % 10 === 0) {
+          console.log(`UXCam SDK: Waiting for rrweb... (attempt ${retries}/${maxRetries}, ${retries * retryDelay}ms elapsed)`);
         }
         setTimeout(checkRrweb, retryDelay);
       } else {
-        console.error('UXCam SDK: ❌ rrweb failed to load after maximum retries');
+        console.warn('UXCam SDK: ⚠️ rrweb not found after checks, loading from CDN...');
         // Try to load it manually as fallback
         loadRrwebManually(callback);
       }
     }
     
+    // Start checking immediately (no initial delay)
     checkRrweb();
   }
 
@@ -622,51 +654,11 @@
 
     // ============================================
     // CLEAN SESSION RECORDING - STEP BY STEP
-    // ============================================
-    // Wait for all CSS stylesheets to load
-    async function waitForCSS() {
-      const stylesheets = Array.from(document.styleSheets);
-      const promises = [];
-      
-      for (let i = 0; i < stylesheets.length; i++) {
-        try {
-          const sheet = stylesheets[i];
-          // Check if stylesheet is from same origin or CORS-enabled
-          if (sheet.href) {
-            // External stylesheet - wait for it to load
-            if (sheet.cssRules || sheet.rules) {
-              // Already loaded
-              continue;
-            } else {
-              // Wait for stylesheet to load
-              const link = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
-                .find(link => link.href === sheet.href);
-              if (link) {
-                promises.push(new Promise(resolve => {
-                  if (link.sheet && link.sheet.cssRules) {
-                    resolve(); // Already loaded
-                  } else {
-                    link.onload = resolve;
-                    link.onerror = resolve; // Continue even if CSS fails
-                    // Timeout after 3 seconds
-                    setTimeout(resolve, 3000);
-                  }
-                }));
-              }
-            }
-          }
-        } catch (e) {
-          // CORS error or other issue - continue
-          continue;
-        }
-      }
-      
-      // Wait for all stylesheets or timeout
-      await Promise.all(promises);
-      
-      // Additional delay to ensure styles are computed
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
+    // REMOVED: waitForCSS() function
+    // UXCam/Hotjar style: "Record Now, Clean Later"
+    // Don't wait for CSS - capture Type 2 snapshot immediately when body is available
+    // CSS will naturally "catch up" in the next few seconds of incremental recording
+    // This eliminates the 5-10 second "blind spot" at the start of sessions
 
     async function startRecording() {
       // Step 1: Basic validation
@@ -1713,9 +1705,15 @@
         sdkKey: getCurrentSdkKey() ? 'configured' : 'missing'
       });
 
-      // Wait for DOM to be ready first
+      // CRITICAL: Start as fast as possible - don't wait for everything
+      // Check if body exists (instant) or wait for DOMContentLoaded (fast, not window.onload)
       waitForDOMReady(() => {
-        console.log('UXCam SDK: ✅ DOM is ready, checking rrweb...');
+        const startTime = Date.now();
+        console.log('UXCam SDK: ✅ DOM ready (body available), checking rrweb...', {
+          readyState: document.readyState,
+          hasBody: !!document.body,
+          timestamp: startTime
+        });
         
         // Helper function to complete initialization (used by both normal and fallback paths)
         function completeInitialization() {
@@ -2323,23 +2321,32 @@
           });
         }
         
-        // Set a timeout fallback - if rrweb doesn't load in 5 seconds, initialize without it
+        // CRITICAL: Reduced timeout - if rrweb doesn't load in 2 seconds, try loading manually
+        // This prevents long delays when CDN is slow
         const fallbackTimeout = setTimeout(() => {
-          if (!window.rrweb || typeof window.rrweb.snapshot !== 'function') {
-            console.warn('UXCam SDK: ⚠️ rrweb not available after 5 seconds, initializing without DOM recording');
-            console.warn('UXCam SDK: Basic event tracking will work, but session replay will not be available');
-            initDeviceInfo();
-            startSession();
-            trackPageView();
-            completeInitialization();
+          if (!window.rrweb || typeof window.rrweb.record !== 'function') {
+            console.warn('UXCam SDK: ⚠️ rrweb not available after 2 seconds, attempting manual load...');
+            loadRrwebManually(() => {
+              console.log('UXCam SDK: ✅ rrweb loaded manually, initializing...');
+              initDeviceInfo();
+              startSession();
+              trackPageView();
+              completeInitialization();
+            });
           }
-        }, 5000);
+        }, 2000); // Reduced from 5s to 2s for faster fallback
         
-        // Then wait for rrweb to be fully available
+        // CRITICAL: Wait for rrweb with fast retry (50ms intervals)
+        // If rrweb is already loaded (via script tag), this will start instantly (0ms)
         waitForRrweb(() => {
           clearTimeout(fallbackTimeout); // Cancel fallback if rrweb loads
-          console.log('UXCam SDK: ✅ Both DOM and rrweb are ready, initializing...');
+          const initTime = Date.now();
+          console.log('UXCam SDK: ✅ Both DOM and rrweb are ready - starting recording IMMEDIATELY', {
+            timestamp: initTime,
+            note: 'Type 2 snapshot will be captured right away'
+          });
           
+          // Start everything immediately - no delays
           initDeviceInfo();
           startSession();
           trackPageView();
