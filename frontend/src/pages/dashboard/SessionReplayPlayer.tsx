@@ -679,6 +679,21 @@ export function SessionReplayPlayer() {
     }
   }, [snapshots.length, sessionId, selectedPlatform, skipInactivity])
 
+  // CRITICAL FIX: Force layout reflow after snapshots load to fix initial blank screen
+  // Triggers window resize event 500ms after snapshots are loaded to force iframe to render
+  useEffect(() => {
+    if (snapshots.length > 0 && !isLoadingData) {
+      const resizeTimeout = setTimeout(() => {
+        console.log('🔄 Triggering window resize event to force layout reflow (fixes blank screen)')
+        window.dispatchEvent(new Event('resize'))
+      }, 500) // 500ms delay to ensure iframe is mounted
+
+      return () => {
+        clearTimeout(resizeTimeout)
+      }
+    }
+  }, [snapshots.length, isLoadingData])
+
   // Skip Inactivity Detection and Speed Control
   // This implements UXCam-style skip inactivity by dynamically changing playback speed
   // Set up/tear down when skipInactivity toggle changes or player is initialized
@@ -1396,6 +1411,8 @@ export function SessionReplayPlayer() {
         speed: basePlaybackSpeedRef.current, // Use base speed, we'll dynamically adjust
         skipInactive: false, // We handle this ourselves
         showWarning: false, // Suppress warnings about missing nodes (they're often false positives)
+        // CRITICAL FIX: Automatically resize iframe when container size changes
+        autoResize: true, // Type assertion needed as TypeScript types may not include this yet
         // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
           strokeStyle: '#9333ea',
@@ -1412,7 +1429,7 @@ export function SessionReplayPlayer() {
         // The replayer will still work even if some nodes are missing
         // IMPORTANT: Ensure navigation events are processed
         // The replayer should automatically handle Type 4 Meta events and multiple Type 2 FullSnapshots
-      })
+      } as any) // Type assertion to allow autoResize property
       
       // Mark replayer as not destroyed
       ;(replayer as any).destroyed = false
@@ -3576,7 +3593,7 @@ export function SessionReplayPlayer() {
               display: 'flex',
               flexDirection: 'column',
               flex: selectedPlatform === 'mobile' ? '0 0 auto' : 1,
-              minHeight: '400px' // Ensure container is always visible, even before data loads
+              minHeight: '500px' // CRITICAL FIX: Fixed minHeight to prevent zero-height initialization before iframe mounts
             }}
           >
             {/* Show loading state - only when no snapshots loaded yet */}
