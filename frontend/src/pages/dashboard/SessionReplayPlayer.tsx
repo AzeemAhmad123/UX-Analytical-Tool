@@ -511,25 +511,52 @@ export function SessionReplayPlayer() {
           
           // Process snapshots
           if (response.snapshots && Array.isArray(response.snapshots)) {
-            // Process snapshots for replay
-            const processedSnapshots = response.snapshots.map((snapshot: any) => {
-              if (snapshot && typeof snapshot === 'object') {
-                // If snapshot is already in correct format, use it
-                if (snapshot.type !== undefined && snapshot.data !== undefined) {
-                  return snapshot
+            // Flatten nested arrays and process snapshots for replay
+            const processedSnapshots: any[] = []
+            
+            const processSnapshot = (snapshot: any): void => {
+              if (!snapshot) return
+              
+              // If it's already a valid event object (has type and data)
+              if (snapshot && typeof snapshot === 'object' && typeof snapshot.type === 'number' && snapshot.data !== undefined) {
+                processedSnapshots.push(snapshot)
+                return
+              }
+              
+              // If it's an array, recursively process each element
+              if (Array.isArray(snapshot)) {
+                snapshot.forEach(item => processSnapshot(item))
+                return
+              }
+              
+              // If it's a string, try to parse it
+              if (typeof snapshot === 'string') {
+                try {
+                  const parsed = JSON.parse(snapshot)
+                  processSnapshot(parsed) // Recursively process parsed result
+                } catch (e) {
+                  console.warn('Failed to parse snapshot string:', e)
                 }
-                // Otherwise, try to parse it
-                if (typeof snapshot === 'string') {
-                  try {
-                    return JSON.parse(snapshot)
-                  } catch (e) {
-                    console.warn('Failed to parse snapshot:', e)
-                    return null
-                  }
+                return
+              }
+              
+              // If it's an object but not a valid event, check if it has nested events
+              if (snapshot && typeof snapshot === 'object') {
+                // Check if it has a nested array of events
+                if (Array.isArray(snapshot.events)) {
+                  snapshot.events.forEach((item: any) => processSnapshot(item))
+                  return
+                }
+                // Check if data contains events
+                if (snapshot.data && Array.isArray(snapshot.data)) {
+                  snapshot.data.forEach((item: any) => processSnapshot(item))
+                  return
                 }
               }
-              return null
-            }).filter((s: any) => s !== null)
+            }
+            
+            // Process all snapshots and flatten
+            response.snapshots.forEach((snapshot: any) => processSnapshot(snapshot))
             
             setSnapshots(processedSnapshots)
             
@@ -1048,27 +1075,58 @@ export function SessionReplayPlayer() {
         // Try to find Type 2 in a different format or location
         // Sometimes Type 2 might be nested or have a different structure
         let foundType2 = false
-        for (let i = 0; i < validSnapshots.length; i++) {
-          const event = validSnapshots[i]
-          // Check if event has nested data with type 2
-          if (event.data && typeof event.data === 'object') {
-            if (event.data.type === 2 || (Array.isArray(event.data) && event.data.some((e: any) => e?.type === 2))) {
-              console.log('Found Type 2 in nested structure, attempting to extract...')
-              // Try to extract Type 2 from nested structure
-              if (Array.isArray(event.data)) {
-                const type2InArray = event.data.find((e: any) => e?.type === 2)
-                if (type2InArray) {
-                  validSnapshots.unshift(type2InArray)
-                  foundType2 = true
-                  console.log('Extracted Type 2 from nested array')
-                  break
-                }
+        let extractedType2: any = null
+        
+        // Recursive function to find Type 2 in nested structures
+        const findType2 = (obj: any, depth: number = 0): any => {
+          if (depth > 5) return null // Prevent infinite recursion
+          if (!obj || typeof obj !== 'object') return null
+          
+          // If this is a Type 2 event, return it
+          if (typeof obj.type === 'number' && obj.type === 2 && obj.data !== undefined) {
+            return obj
+          }
+          
+          // Check nested arrays
+          if (Array.isArray(obj)) {
+            for (const item of obj) {
+              const found = findType2(item, depth + 1)
+              if (found) return found
+            }
+          }
+          
+          // Check nested objects (but skip if it's already a valid event structure)
+          if (obj.type === undefined || typeof obj.type !== 'number') {
+            for (const key in obj) {
+              if (obj.hasOwnProperty(key)) {
+                const found = findType2(obj[key], depth + 1)
+                if (found) return found
               }
             }
+          }
+          
+          return null
+        }
+        
+        // Search through all snapshots for nested Type 2
+        for (let i = 0; i < validSnapshots.length; i++) {
+          const event = validSnapshots[i]
+          extractedType2 = findType2(event)
+          if (extractedType2) {
+            console.log('✅ Found Type 2 in nested structure, extracting...', {
+              foundAt: i,
+              type2Timestamp: extractedType2.timestamp,
+              type2DataKeys: extractedType2.data ? Object.keys(extractedType2.data).slice(0, 5) : []
+            })
+            validSnapshots.unshift(extractedType2)
+            foundType2 = true
+            console.log('✅ Extracted Type 2 from nested structure and added to beginning')
+            break
           }
         }
         
         if (!foundType2) {
+          console.error('❌ Could not find Type 2 snapshot even after deep search')
           setError('Missing full snapshot. This session cannot be replayed. Please record a new session.')
           return
         }

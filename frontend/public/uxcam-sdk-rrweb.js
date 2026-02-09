@@ -693,23 +693,56 @@
       // This allows recording to start capturing events right away
       type2Uploaded = true;
       
-      // Step 5.5: Record navigation event (Type 4 Meta) if navigation detected
-      if (window.__UXCAM_NAVIGATION_DETECTED) {
-        const fromUrl = window.__UXCAM_NAVIGATION_FROM_URL || '';
-        const toUrl = window.location.href;
-        
-        // Check for pending navigation from beforeunload
-        const pendingNav = window.__UXCAM_PENDING_NAVIGATION;
-        const finalFromUrl = pendingNav?.from || fromUrl;
-        const finalToUrl = pendingNav?.to || toUrl;
-        
-        // Create Type 4 Meta event for navigation
+      // Step 5.5: ALWAYS record navigation event (Type 4 Meta) if URL changed (100% reliable like UXCam)
+      // This ensures page change markers appear on the replay seek bar
+      const STORAGE_URL_KEY = 'uxcam_last_url';
+      const currentUrl = window.location.href;
+      let storedUrl = null;
+      
+      try {
+        storedUrl = localStorage.getItem(STORAGE_URL_KEY);
+      } catch (e) {
+        // localStorage not available, continue
+      }
+      
+      // Check for pending navigation from beforeunload (highest priority)
+      const pendingNav = window.__UXCAM_PENDING_NAVIGATION;
+      
+      // Determine if navigation occurred and get URLs
+      let shouldRecordNavigation = false;
+      let fromUrl = '';
+      let toUrl = currentUrl;
+      
+      if (pendingNav) {
+        // Navigation detected via beforeunload - use those URLs
+        shouldRecordNavigation = true;
+        fromUrl = pendingNav.from || '';
+        toUrl = pendingNav.to || currentUrl;
+      } else if (window.__UXCAM_NAVIGATION_DETECTED && window.__UXCAM_NAVIGATION_FROM_URL) {
+        // Navigation detected via session continuation
+        shouldRecordNavigation = true;
+        fromUrl = window.__UXCAM_NAVIGATION_FROM_URL;
+        toUrl = currentUrl;
+      } else if (storedUrl && storedUrl !== currentUrl) {
+        // Fallback: Direct URL comparison (100% reliable)
+        // This catches any navigation that might have been missed by other detection methods
+        shouldRecordNavigation = true;
+        fromUrl = storedUrl;
+        toUrl = currentUrl;
+        console.log('UXCam SDK: 🔍 Navigation detected via URL comparison (fallback)', {
+          from: fromUrl,
+          to: toUrl
+        });
+      }
+      
+      // Record Type 4 Meta Event for navigation (like UXCam)
+      if (shouldRecordNavigation && fromUrl && toUrl && fromUrl !== toUrl) {
         const navigationEvent = {
-          type: 4, // Meta event type
+          type: 4, // Meta event type (rrweb Type 4 = Meta Event)
           data: {
-            href: finalToUrl,
-            url: finalToUrl,
-            referrer: finalFromUrl,
+            href: toUrl,
+            url: toUrl,
+            referrer: fromUrl,
             width: window.innerWidth,
             height: window.innerHeight
           },
@@ -717,21 +750,23 @@
         };
         
         // Add navigation event to queue BEFORE Type 2 snapshot
+        // This ensures the page change marker appears at the correct position in the replay
         snapshotQueue.push(navigationEvent);
         events.push(navigationEvent);
-        console.log('UXCam SDK: 📍 Navigation event recorded', {
-          from: finalFromUrl,
-          to: finalToUrl,
+        console.log('UXCam SDK: 📍 Type 4 Meta Event recorded (Page Change)', {
+          from: fromUrl,
+          to: toUrl,
           eventType: 4,
-          source: pendingNav ? 'beforeunload' : 'session-continuation',
-          sessionId: sessionId
+          source: pendingNav ? 'beforeunload' : (window.__UXCAM_NAVIGATION_DETECTED ? 'session-continuation' : 'url-comparison'),
+          sessionId: sessionId,
+          note: 'This will show a page change marker on the replay seek bar'
         });
-        
-        // Clear navigation flags
-        delete window.__UXCAM_NAVIGATION_DETECTED;
-        delete window.__UXCAM_NAVIGATION_FROM_URL;
-        delete window.__UXCAM_PENDING_NAVIGATION;
       }
+      
+      // Clear navigation flags after recording
+      delete window.__UXCAM_NAVIGATION_DETECTED;
+      delete window.__UXCAM_NAVIGATION_FROM_URL;
+      delete window.__UXCAM_PENDING_NAVIGATION;
       
       // Step 6: Start rrweb recording engine
       console.log('UXCam SDK: Starting rrweb recording...');
@@ -1687,39 +1722,117 @@
           // Track route changes for SPAs
           trackRouteChange();
 
-          // Track page visibility changes - flush data when page becomes hidden
-          // This is more reliable than beforeunload, especially on mobile devices
+          // Track page visibility changes - stop recording ONLY when user switches tabs (not on same-domain navigation)
+          // This ensures each session is a single continuous recording per tab visit
+          // URL changes within the same website do NOT stop recording
+          let visibilityChangeTimeout = null;
+          let isNavigatingSameDomain = false; // Flag to track same-domain navigation
+          
           document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
-              console.log('UXCam SDK: Page hidden, flushing snapshots and events');
+              console.log('UXCam SDK: Tab hidden - checking if tab switch or navigation...');
               trackEvent('page_hidden');
-              // Flush snapshots and events when user switches tabs or minimizes
-              // Don't end session - user might come back
-              if (sessionId && type2Uploaded) {
-                // Check queue sizes and warn if too large
-                if (snapshotQueue.length > WARN_QUEUE_SIZE) {
-                  console.warn('UXCam SDK: ⚠️ Large snapshot queue before flush', {
-                    size: snapshotQueue.length,
-                    warningThreshold: WARN_QUEUE_SIZE
-                  });
+              
+              // Use a delay to distinguish between:
+              // 1. Tab switch (tab stays hidden) - stop recording
+              // 2. Same-domain navigation (tab becomes visible quickly) - continue recording
+              // This prevents stopping recording during page navigation within the same website
+              visibilityChangeTimeout = setTimeout(() => {
+                // Only stop if tab is still hidden after delay (real tab switch, not navigation)
+                if (document.hidden && !isNavigatingSameDomain) {
+                  console.log('UXCam SDK: Tab switch detected (tab hidden for >500ms) - stopping recording');
+                  
+                  // CRITICAL: Stop recording when user switches tabs (not during navigation)
+                  if (stopRecording) {
+                    try {
+                      stopRecording();
+                      stopRecording = null;
+                      console.log('UXCam SDK: ✅ Recording stopped (tab switch detected)');
+                    } catch (e) {
+                      console.warn('Error stopping recording on visibility change:', e);
+                    }
+                  }
+                  
+                  // Flush all remaining data before ending session
+                  if (sessionId && type2Uploaded) {
+                    // Flush snapshots using sendBeacon
+                    if (snapshotQueue.length > 0) {
+                      const snapshots = [...snapshotQueue];
+                      snapshotQueue = [];
+                      const compressed = compressSnapshots(snapshots);
+                      
+                      const blob = new Blob([JSON.stringify({
+                        sdk_key: getCurrentSdkKey(),
+                        session_id: sessionId,
+                        snapshots: compressed,
+                        snapshot_count: snapshots.length,
+                        is_initial_snapshot: false
+                      })], { type: 'application/json' });
+                      
+                      const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+                      if (sent) {
+                        console.log('UXCam SDK: ✅ Snapshots flushed via sendBeacon (tab switch)', {
+                          snapshotCount: snapshots.length
+                        });
+                      } else {
+                        flushSnapshots();
+                      }
+                    }
+                    
+                    // Flush events using sendBeacon
+                    if (eventQueue.length > 0) {
+                      const events = [...eventQueue];
+                      eventQueue = [];
+                      
+                      const blob = new Blob([JSON.stringify({
+                        sdk_key: getCurrentSdkKey(),
+                        session_id: sessionId,
+                        events: events,
+                        device_info: deviceInfo,
+                        user_properties: {}
+                      })], { type: 'application/json' });
+                      
+                      const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
+                      if (sent) {
+                        console.log('UXCam SDK: ✅ Events flushed via sendBeacon (tab switch)', {
+                          eventCount: events.length
+                        });
+                      } else {
+                        flushEvents();
+                      }
+                    }
+                    
+                    // End session and clear storage - new session will start when user returns
+                    console.log('UXCam SDK: Ending session (tab switch) - new session will start when tab becomes visible');
+                    endSession();
+                    
+                    // Clear session storage so a fresh session starts when user returns
+                    try {
+                      localStorage.removeItem(STORAGE_KEY);
+                      localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
+                      localStorage.removeItem(STORAGE_URL_KEY);
+                      console.log('UXCam SDK: Session storage cleared (new session will start on return)');
+                    } catch (e) {
+                      console.warn('Error clearing session storage:', e);
+                    }
+                  }
+                } else if (isNavigatingSameDomain) {
+                  console.log('UXCam SDK: Same-domain navigation detected - recording continues');
+                  isNavigatingSameDomain = false; // Reset flag
                 }
-                if (eventQueue.length > WARN_QUEUE_SIZE) {
-                  console.warn('UXCam SDK: ⚠️ Large event queue before flush', {
-                    size: eventQueue.length,
-                    warningThreshold: WARN_QUEUE_SIZE
-                  });
-                }
-                
-                if (snapshotQueue.length > 0) {
-                  flushSnapshots();
-                }
-                if (eventQueue.length > 0) {
-                  flushEvents();
-                }
-              }
+              }, 500); // 500ms delay to distinguish tab switch from navigation
             } else {
-              trackEvent('page_visible');
-              // Don't auto-start - user needs to interact again
+              // Tab became visible again
+              // Clear timeout if it was set (tab became visible quickly = navigation, not tab switch)
+              if (visibilityChangeTimeout) {
+                clearTimeout(visibilityChangeTimeout);
+                visibilityChangeTimeout = null;
+                console.log('UXCam SDK: Tab visible quickly - was navigation, recording continues');
+                isNavigatingSameDomain = true; // Mark as same-domain navigation
+              } else {
+                console.log('UXCam SDK: Tab visible - will start new session on next interaction');
+                trackEvent('page_visible');
+              }
             }
           });
           
@@ -1763,25 +1876,31 @@
             }
           }, 5 * 60 * 1000); // Check every 5 minutes
 
-          // Track page unload - only flush if leaving website, not on same-domain navigation
+          // Track page unload - stop recording when leaving website OR closing tab/browser
           window.addEventListener('beforeunload', () => {
             const currentOrigin = window.location.origin;
             const referrerOrigin = document.referrer ? new URL(document.referrer).origin : null;
             const isSameDomainNavigation = referrerOrigin === currentOrigin;
             const isLeavingWebsite = !isSameDomainNavigation && referrerOrigin !== null;
+            // Also check if user is closing tab/browser (no referrer or same origin but no navigation detected)
+            const isClosingTab = !document.referrer || (referrerOrigin === currentOrigin && !localStorage.getItem(STORAGE_URL_KEY));
             
             console.log('UXCam SDK: Page unloading', {
               isSameDomainNavigation: isSameDomainNavigation,
               isLeavingWebsite: isLeavingWebsite,
+              isClosingTab: isClosingTab,
               currentOrigin: currentOrigin,
               referrerOrigin: referrerOrigin,
-              action: isLeavingWebsite ? 'Flushing and ending session' : 'Continuing session across pages'
+              action: (isLeavingWebsite || isClosingTab) ? 'Stopping recording and ending session' : 'Continuing session across pages'
             });
             
             // Record navigation event for same-domain navigation (page change within website)
             const currentUrl = window.location.href;
             const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
-            if (isSameDomainNavigation && storedUrl && storedUrl !== currentUrl && stopRecording) {
+            if (isSameDomainNavigation && storedUrl && storedUrl !== currentUrl && stopRecording && !isClosingTab) {
+              // Same-domain navigation - set flag so visibilitychange knows not to stop recording
+              isNavigatingSameDomain = true;
+              
               // Same-domain navigation - record navigation event but DON'T flush/stop
               try {
                 const navEvent = {
@@ -1818,29 +1937,55 @@
               }
             }
             
-            // Only flush and stop if actually leaving the website (different domain or closing tab)
-            if (isLeavingWebsite && sessionId && stopRecording) {
+            // Stop recording if leaving website OR closing tab/browser
+            if ((isLeavingWebsite || isClosingTab) && sessionId && stopRecording) {
               trackEvent('page_unload');
               
-              console.log('UXCam SDK: Leaving website - flushing all data and ending session', {
+              console.log('UXCam SDK: Leaving website or closing tab - flushing all data and stopping recording', {
                 from: referrerOrigin,
-                to: currentOrigin
+                to: currentOrigin,
+                isClosingTab: isClosingTab,
+                isLeavingWebsite: isLeavingWebsite
               });
               
-              // CRITICAL: Flush all collected snapshots BEFORE stopping recording
+              // CRITICAL: Flush all collected snapshots using sendBeacon (guaranteed delivery on page unload)
               if (snapshotQueue.length > 0) {
-                console.log('UXCam SDK: Flushing all collected snapshots (leaving website)', {
+                console.log('UXCam SDK: Flushing all collected snapshots via sendBeacon (leaving website)', {
                   snapshotCount: snapshotQueue.length,
                   eventTypes: snapshotQueue.map(s => s?.type),
                   sessionId: sessionId
                 });
-                flushSnapshots();
+                
+                // Use sendBeacon for reliable delivery on page unload
+                const snapshots = [...snapshotQueue];
+                snapshotQueue = [];
+                const compressed = compressSnapshots(snapshots);
+                
+                const blob = new Blob([JSON.stringify({
+                  sdk_key: getCurrentSdkKey(),
+                  session_id: sessionId,
+                  snapshots: compressed,
+                  snapshot_count: snapshots.length,
+                  is_initial_snapshot: false
+                })], { type: 'application/json' });
+                
+                const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
+                if (sent) {
+                  console.log('UXCam SDK: ✅ Snapshots sent via sendBeacon (guaranteed delivery)');
+                } else {
+                  console.warn('UXCam SDK: ⚠️ sendBeacon failed, trying fetch as fallback');
+                  // Fallback to fetch if sendBeacon fails
+                  flushSnapshots();
+                }
               }
               
-              // Stop recording AFTER flushing
+              // CRITICAL: Stop recording FIRST to prevent any new events
               try {
-                stopRecording();
-                stopRecording = null;
+                if (stopRecording) {
+                  stopRecording();
+                  stopRecording = null;
+                  console.log('UXCam SDK: ✅ Recording stopped');
+                }
               } catch (e) {
                 console.warn('Error stopping recording:', e);
               }
@@ -1848,16 +1993,19 @@
               // Flush remaining events
               flushEvents();
               
-              // Clear session when leaving website
+              // Clear session when leaving website or closing tab
               try {
                 localStorage.removeItem(STORAGE_KEY);
                 localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
                 localStorage.removeItem(STORAGE_URL_KEY);
-                console.log('UXCam SDK: Session cleared (left website)');
+                console.log('UXCam SDK: Session cleared (left website or closed tab)');
               } catch (e) {
                 console.warn('Error clearing session:', e);
               }
-            } else if (isSameDomainNavigation) {
+              
+              // End session to mark it as complete
+              endSession();
+            } else if (isSameDomainNavigation && !isClosingTab) {
               // Same-domain navigation - keep session alive, don't flush
               console.log('UXCam SDK: Same-domain navigation - keeping session alive, not flushing', {
                 sessionId: sessionId
@@ -1960,12 +2108,27 @@
           // Also handle pagehide event (more reliable on mobile devices)
           // This fires when page is actually being unloaded (browser close, tab close, navigation)
           window.addEventListener('pagehide', (event) => {
+            const isClosing = !event.persisted; // false = closing tab/browser, true = navigation (page cached)
             console.log('UXCam SDK: Page hiding, flushing all data', {
-              persisted: event.persisted // true if page is being cached (navigation), false if closing
+              persisted: event.persisted, // true if page is being cached (navigation), false if closing
+              isClosing: isClosing,
+              action: isClosing ? 'Stopping recording (closing tab/browser)' : 'Continuing session (navigation)'
             });
             stopPeriodicFlush();
             
             if (sessionId) {
+              // CRITICAL: Always stop recording when page is hiding (whether closing or navigating)
+              // This ensures recording stops immediately
+              if (stopRecording) {
+                try {
+                  stopRecording();
+                  stopRecording = null;
+                  console.log('UXCam SDK: ✅ Recording stopped on pagehide');
+                } catch (e) {
+                  console.warn('Error stopping recording on pagehide:', e);
+                }
+              }
+              
               // Flush remaining events
               if (eventQueue.length > 0) {
                 const events = [...eventQueue];
@@ -2000,26 +2163,22 @@
                 navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
               }
               
-              // Stop recording
-              if (stopRecording) {
-                try {
-                  stopRecording();
-                  stopRecording = null;
-                } catch (e) {
-                  console.warn('Error stopping recording on pagehide:', e);
-                }
-              }
-              
               // If page is NOT being persisted (user is closing browser/tab, not navigating),
-              // end the session. Otherwise, keep it alive for next page.
-              if (!event.persisted) {
-                console.log('UXCam SDK: Page not persisted - user closing browser/tab, ending session');
-                // End session but don't clear localStorage immediately (let it expire naturally)
-                // The session will be marked as ended when it times out or when user returns
+              // end the session and clear storage. Otherwise, keep it alive for next page.
+              if (isClosing) {
+                console.log('UXCam SDK: Page not persisted - user closing browser/tab, ending session and clearing storage');
+                // Clear session storage when closing
+                try {
+                  localStorage.removeItem(STORAGE_KEY);
+                  localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
+                  localStorage.removeItem(STORAGE_URL_KEY);
+                } catch (e) {
+                  console.warn('Error clearing session storage:', e);
+                }
                 endSession();
               } else {
-                console.log('UXCam SDK: Page persisted - navigation detected, keeping session alive');
-                // Session continues on next page
+                console.log('UXCam SDK: Page persisted - navigation detected, keeping session alive for next page');
+                // Session continues on next page - don't clear storage
               }
             }
           });

@@ -358,6 +358,19 @@ export function SessionsList() {
     return () => window.removeEventListener('storage', handleStorageChange)
   }, [])
 
+  // Auto-refresh sessions periodically to show new sessions
+  useEffect(() => {
+    if (!selectedProject) return
+    
+    // Refresh every 30 seconds to show new sessions
+    const refreshInterval = setInterval(() => {
+      console.log('🔄 Auto-refreshing sessions to check for new sessions...')
+      loadSessions(true) // Force refresh
+    }, 30000) // 30 seconds
+    
+    return () => clearInterval(refreshInterval)
+  }, [selectedProject, dateRange])
+  
   // Throttled refresh on focus/visibility - only refresh if it's been more than 5 minutes
   // This prevents excessive database requests when user switches tabs frequently
   useEffect(() => {
