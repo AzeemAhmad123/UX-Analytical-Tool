@@ -1084,6 +1084,44 @@ router.post('/:sessionId/end', async (req: Request, res: Response) => {
     // Use the actual database ID for the update
     const sessionDbId = session.id
 
+    // CRITICAL FIX B: Check grace period before ending session
+    // If session was active within last 60 seconds, don't mark it as ended yet
+    // This handles race conditions where Page A flushes and Page B initializes simultaneously
+    const gracePeriodMs = 60 * 1000 // 60 seconds grace period
+    const lastActivityTime = session.last_activity_time 
+      ? new Date(session.last_activity_time).getTime()
+      : new Date(session.start_time).getTime()
+    const timeSinceLastActivity = Date.now() - lastActivityTime
+    
+    if (timeSinceLastActivity < gracePeriodMs) {
+      console.log('⏳ Session still within grace period - not ending yet (handles race conditions):', {
+        sessionId: sessionIdParam,
+        timeSinceLastActivity: Math.round(timeSinceLastActivity / 1000) + 's',
+        gracePeriod: Math.round(gracePeriodMs / 1000) + 's',
+        lastActivityTime: session.last_activity_time
+      })
+      // Update last_activity_time but don't mark as ended
+      // Session will be properly ended after grace period expires
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({
+          last_activity_time: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', sessionDbId)
+      
+      if (updateError) {
+        console.warn('Failed to update session activity:', updateError.message)
+      }
+      
+      return res.json({
+        success: true,
+        session_id: sessionIdParam,
+        message: 'Session still active (within grace period) - will be ended after inactivity',
+        gracePeriodRemaining: Math.round((gracePeriodMs - timeSinceLastActivity) / 1000) + 's'
+      })
+    }
+
     // Calculate duration - prefer provided duration (from SDK, calculated from events)
     // If not provided, try to calculate from event timestamps (most accurate)
     let calculatedDuration = duration

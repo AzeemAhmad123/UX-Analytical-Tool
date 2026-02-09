@@ -27,20 +27,29 @@ export interface SessionData {
  * Find or create a session
  * Returns the session database ID (UUID)
  */
+/**
+ * Find or create a session using UPSERT logic to prevent race conditions
+ * CRITICAL FIX: Uses ON CONFLICT to handle simultaneous requests with same session_id
+ * This prevents "ghost sessions" when Page A flushes and Page B initializes simultaneously
+ */
 export async function findOrCreateSession(
   projectId: string,
   sessionId: string,
   deviceInfo: DeviceInfo = {}
 ): Promise<{ session: SessionData; created: boolean }> {
   try {
-    console.log('🔍 Looking for existing session:', {
+    console.log('🔍 Looking for existing session (with race condition protection):', {
       projectId,
       sessionId,
       sessionIdLength: sessionId?.length,
       sessionIdType: typeof sessionId
     })
     
-    // First, try to find existing session
+    // CRITICAL FIX A: First, try to find existing session
+    // Check for sessions created within last 60 seconds (grace period for race conditions)
+    const gracePeriodMs = 60 * 1000 // 60 seconds grace period
+    const gracePeriodStart = new Date(Date.now() - gracePeriodMs).toISOString()
+    
     const { data: existingSession, error: findError } = await supabase
       .from('sessions')
       .select('*')
@@ -49,7 +58,33 @@ export async function findOrCreateSession(
       .single()
 
     if (existingSession && !findError) {
-      // Session exists, return it
+      // CRITICAL FIX B: Check if session is within grace period (recently created)
+      // If session was created within last 60 seconds, always reuse it (handles race conditions)
+      const sessionAge = Date.now() - new Date(existingSession.created_at).getTime()
+      const isWithinGracePeriod = sessionAge < gracePeriodMs
+      
+      // Also check if session was recently active (within last 60 seconds)
+      const lastActivityAge = existingSession.last_activity_time 
+        ? Date.now() - new Date(existingSession.last_activity_time).getTime()
+        : Infinity
+      const isRecentlyActive = lastActivityAge < gracePeriodMs
+      
+      if (isWithinGracePeriod || isRecentlyActive) {
+        console.log('✅ Found existing session (within grace period) - reusing to prevent duplicates:', {
+          sessionId: existingSession.session_id,
+          dbId: existingSession.id,
+          sessionAge: Math.round(sessionAge / 1000) + 's',
+          lastActivityAge: lastActivityAge < Infinity ? Math.round(lastActivityAge / 1000) + 's' : 'never',
+          startTime: existingSession.start_time,
+          eventCount: existingSession.event_count
+        })
+        return {
+          session: existingSession as SessionData,
+          created: false
+        }
+      }
+      
+      // Session exists but is old - still reuse it (same session_id = same session)
       console.log('✅ Found existing session - reusing for continuous recording:', {
         sessionId: existingSession.session_id,
         dbId: existingSession.id,
@@ -66,20 +101,19 @@ export async function findOrCreateSession(
       // PGRST116 is "not found" which is expected for new sessions
       console.warn('⚠️ Error finding session (not "not found"):', findError)
     } else {
-      console.log('📝 No existing session found - creating new one:', {
+      console.log('📝 No existing session found - creating new one with UPSERT protection:', {
         sessionId,
         projectId
       })
     }
 
-    // Session doesn't exist, create new one
+    // CRITICAL FIX A: Use UPSERT (INSERT ... ON CONFLICT) to prevent race conditions
+    // If two requests arrive simultaneously with same session_id, only one will create the session
     const now = new Date().toISOString()
     
     // Ensure device_info contains location data
-    // Location should be stored in device_info JSONB, not separate columns
     const enhancedDeviceInfo = {
       ...deviceInfo,
-      // Ensure city and country are in device_info
       city: deviceInfo?.city || null,
       country: deviceInfo?.country || null,
       region: deviceInfo?.region || null,
@@ -88,22 +122,93 @@ export async function findOrCreateSession(
     const newSession = {
       project_id: projectId,
       session_id: sessionId,
-      device_info: enhancedDeviceInfo, // Store location in device_info JSONB
+      device_info: enhancedDeviceInfo,
       start_time: now,
       last_activity_time: now,
       event_count: 0,
-      duration: 0 // Will be updated when session ends
+      duration: 0
     }
 
+    // CRITICAL FIX A: Use UPSERT to handle race conditions
+    // Try UPSERT first (handles concurrent requests with same session_id)
+    try {
+      const { data: upsertedSession, error: upsertError } = await supabase
+        .from('sessions')
+        .upsert(newSession, {
+          onConflict: 'project_id,session_id', // Conflict on unique constraint (project_id, session_id)
+          ignoreDuplicates: false // Update existing instead of ignoring
+        })
+        .select()
+        .single()
+
+      if (!upsertError && upsertedSession) {
+        // Check if this was a new session or an update
+        const wasCreated = new Date(upsertedSession.created_at).getTime() > Date.now() - 5000 // Created within last 5 seconds
+        
+        console.log(wasCreated ? '✅ Created new session (UPSERT)' : '✅ Updated existing session (UPSERT - race condition handled)', {
+          sessionId: upsertedSession.session_id,
+          dbId: upsertedSession.id,
+          wasCreated
+        })
+
+        return {
+          session: upsertedSession as SessionData,
+          created: wasCreated
+        }
+      }
+      
+      // If UPSERT fails, fall through to find-then-insert logic
+      if (upsertError) {
+        console.warn('⚠️ UPSERT failed, falling back to find-then-insert:', upsertError.message)
+      }
+    } catch (upsertException: any) {
+      // UPSERT might fail if unique constraint doesn't exist or other issues
+      console.warn('⚠️ UPSERT exception, falling back to find-then-insert:', upsertException.message)
+    }
+
+    // FALLBACK: If UPSERT fails or unique constraint doesn't exist, use find-then-insert
+    // This is a race-condition-safe fallback that handles concurrent requests
     const { data: createdSession, error: createError } = await supabase
       .from('sessions')
       .insert(newSession)
       .select()
       .single()
 
-    if (createError || !createdSession) {
+    if (createError) {
+      // If insert fails (likely due to unique constraint violation from concurrent request),
+      // try to find the existing session
+      if (createError.code === '23505' || createError.message?.includes('duplicate') || createError.message?.includes('unique')) {
+        console.log('🔄 Insert failed due to duplicate (race condition) - finding existing session')
+        const { data: foundSession, error: findError2 } = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('session_id', sessionId)
+          .single()
+        
+        if (foundSession && !findError2) {
+          console.log('✅ Found session after insert conflict - reusing (race condition handled):', {
+            sessionId: foundSession.session_id,
+            dbId: foundSession.id
+          })
+          return {
+            session: foundSession as SessionData,
+            created: false
+          }
+        }
+      }
+      
       throw new Error(`Failed to create session: ${createError?.message || 'Unknown error'}`)
     }
+
+    if (!createdSession) {
+      throw new Error('Insert returned no session data')
+    }
+
+    console.log('✅ Created new session (fallback insert):', {
+      sessionId: createdSession.session_id,
+      dbId: createdSession.id
+    })
 
     return {
       session: createdSession as SessionData,
