@@ -1499,7 +1499,7 @@
         sessionId = null;
         sessionDbId = null;
         if (window.UXCamSDK && window.UXCamSDK.debug) {
-          console.log('UXCam: Session ended', { duration: sessionDuration });
+          console.log('UXCam: Session ended', { duration: finalDuration });
         }
       }, null, null, 'endSession failed');
     }
@@ -1806,6 +1806,9 @@
                     
                     // Clear session storage so a fresh session starts when user returns
                     try {
+                      const STORAGE_KEY = 'uxcam_session_id';
+                      const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
+                      const STORAGE_URL_KEY = 'uxcam_last_url';
                       localStorage.removeItem(STORAGE_KEY);
                       localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
                       localStorage.removeItem(STORAGE_URL_KEY);
@@ -1993,6 +1996,9 @@
               
               // Clear session when leaving website or closing tab
               try {
+                const STORAGE_KEY = 'uxcam_session_id';
+                const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
+                const STORAGE_URL_KEY = 'uxcam_last_url';
                 localStorage.removeItem(STORAGE_KEY);
                 localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
                 localStorage.removeItem(STORAGE_URL_KEY);
@@ -2167,6 +2173,9 @@
                 console.log('UXCam SDK: Page not persisted - user closing browser/tab, ending session and clearing storage');
                 // Clear session storage when closing
                 try {
+                  const STORAGE_KEY = 'uxcam_session_id';
+                  const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
+                  const STORAGE_URL_KEY = 'uxcam_last_url';
                   localStorage.removeItem(STORAGE_KEY);
                   localStorage.removeItem(STORAGE_TIMESTAMP_KEY);
                   localStorage.removeItem(STORAGE_URL_KEY);

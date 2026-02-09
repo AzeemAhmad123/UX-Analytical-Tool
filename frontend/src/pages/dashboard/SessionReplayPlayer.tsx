@@ -3206,7 +3206,8 @@ export function SessionReplayPlayer() {
     if (activeFilter === 'events') {
       return events.filter(e => {
         const parsed = parseEventDescription(e)
-        return parsed.category === 'events'
+        // Filter out "DOM Updated" events - they're too frequent and not useful for users
+        return parsed.category === 'events' && parsed.title !== 'DOM Updated'
       })
     }
     if (activeFilter === 'gestures') {
@@ -3221,7 +3222,11 @@ export function SessionReplayPlayer() {
         return parsed.category === 'screens'
       })
     }
-    return events
+    // For "all" or default view, also filter out DOM Updated events
+    return events.filter(e => {
+      const parsed = parseEventDescription(e)
+      return parsed.title !== 'DOM Updated'
+    })
   }
 
   // Removed loading spinner - data loads in background
