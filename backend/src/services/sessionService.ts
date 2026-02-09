@@ -393,6 +393,12 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
     // Get event count
     const eventCount = session.event_count || 0
 
+    // CRITICAL: Explicitly filter sessions with 0 events (no interactions)
+    if (eventCount === 0) {
+      console.log(`🚫 Session ${sessionDbId} filtered: event_count is 0 (no interactions)`)
+      return true
+    }
+
     // Filter out if EITHER condition fails:
     // - event_count <= 2 OR duration <= 10 seconds
     // Keep sessions that have BOTH: event_count > 2 AND duration > 10 seconds

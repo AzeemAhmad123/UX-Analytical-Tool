@@ -240,6 +240,17 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
     // Keep only sessions with BOTH: event_count > 2 AND duration > 10 seconds
     const eventCount = s.event_count || 0
     
+    // CRITICAL: Explicitly filter sessions with 0 events (no interactions)
+    if (eventCount === 0) {
+      console.log(`🚫 Session ${s.id} filtered: event_count is 0 (no interactions)`, {
+        sessionId: s.id,
+        eventCount,
+        duration: `${duration.toFixed(1)}s`,
+        snapshotCount: s.snapshot_count || 0
+      })
+      return false
+    }
+    
     if (eventCount <= 2) {
       console.log(`🚫 Session ${s.id} filtered: event_count ${eventCount} <= 2`, {
         sessionId: s.id,

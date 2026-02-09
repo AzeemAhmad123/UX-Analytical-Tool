@@ -106,11 +106,45 @@ router.get('/:projectId', async (req: Request, res: Response) => {
       }
     }
     
-    // Filter out sessions without snapshots (recording never started)
-    // Also filter out sessions with very short duration (< 10 seconds) as they're likely incomplete or accidental
-    // REMOVED STRICT FILTERING: Show all sessions (including videos, new sessions, etc.)
-    // Previously filtered by MIN_DURATION_MS and snapshot count - this was too strict
-    const filteredSessions = sessions || []
+    // CRITICAL: Filter sessions that don't meet minimum criteria
+    // Filter out sessions with:
+    // - No snapshots (snapshot_count === 0)
+    // - event_count === 0 (no interactions)
+    // - event_count <= 2 OR duration <= 10 seconds
+    const filteredSessions = (sessions || []).filter((session: any) => {
+      const snapshotCount = snapshotCountMap.get(session.id) || 0
+      const eventCount = session.event_count || 0
+      
+      // Filter out sessions with no snapshots
+      if (snapshotCount === 0) {
+        return false
+      }
+      
+      // Filter out sessions with 0 events (no interactions)
+      if (eventCount === 0) {
+        return false
+      }
+      
+      // Calculate duration
+      let duration = (session.duration || 0) / 1000 // Convert to seconds
+      if (duration === 0 && session.start_time && session.last_activity_time) {
+        const startTime = new Date(session.start_time).getTime()
+        const lastActivityTime = new Date(session.last_activity_time).getTime()
+        duration = (lastActivityTime - startTime) / 1000
+      }
+      
+      // Filter out if event_count <= 2 OR duration <= 10 seconds
+      // Keep only sessions with BOTH: event_count > 2 AND duration > 10 seconds
+      if (eventCount <= 2) {
+        return false
+      }
+      
+      if (duration <= 10) {
+        return false
+      }
+      
+      return true
+    })
     
     // Store all session IDs (including filtered ones) for deletion purposes
     const allSessionIds = (sessions || []).map((s: any) => s.id)

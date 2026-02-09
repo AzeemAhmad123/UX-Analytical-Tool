@@ -63,6 +63,15 @@
     }
   });
   
+  // ============================================
+  // SINGLETON PATTERN - Prevent double-recording
+  // ============================================
+  // Global flag to ensure only one recording instance exists
+  // This prevents duplicate sessions when SDK is loaded multiple times
+  if (typeof window.__RRWEB_RECORDING_STARTED__ === 'undefined') {
+    window.__RRWEB_RECORDING_STARTED__ = false;
+  }
+  
   function safeExecute(fn, context, fallback, errorMessage) {
     try {
       return fn.call(context);
@@ -661,6 +670,16 @@
     // This eliminates the 5-10 second "blind spot" at the start of sessions
 
     async function startRecording() {
+      // CRITICAL: Singleton pattern - prevent double-recording
+      // Check if recording has already started (prevents duplicate sessions)
+      if (window.__RRWEB_RECORDING_STARTED__ === true) {
+        console.warn('UXCam SDK: ⚠️ Recording already started - preventing duplicate recording', {
+          sessionId: sessionId,
+          note: 'This prevents duplicate sessions when SDK is loaded multiple times'
+        });
+        return; // Exit immediately - don't create duplicate recording
+      }
+      
       // Step 1: Basic validation
       if (!window.rrweb) {
         console.error('UXCam SDK: rrweb not available');
@@ -761,7 +780,12 @@
       delete window.__UXCAM_PENDING_NAVIGATION;
       
       // Step 6: Start rrweb recording engine
-      console.log('UXCam SDK: Starting rrweb recording...');
+      // CRITICAL: Set global flag BEFORE starting recording to prevent duplicates
+      window.__RRWEB_RECORDING_STARTED__ = true;
+      console.log('UXCam SDK: Starting rrweb recording...', {
+        sessionId: sessionId,
+        note: 'Singleton flag set - prevents duplicate recording'
+      });
       stopRecording = window.rrweb.record({
         emit(event) {
           // Wrap in try-catch to prevent errors from breaking the website
@@ -928,6 +952,16 @@
     // Start new session - SAFE: Won't break website if it fails
     function startSession() {
       return safeExecute(function() {
+        // CRITICAL: Singleton pattern - prevent duplicate session creation
+        // If recording has already started, don't create a new session
+        if (window.__RRWEB_RECORDING_STARTED__ === true && sessionId) {
+          console.warn('UXCam SDK: ⚠️ Recording already started - skipping duplicate session creation', {
+            existingSessionId: sessionId,
+            note: 'This prevents duplicate sessions in the database'
+          });
+          return; // Exit immediately - don't create duplicate session
+        }
+        
         // CRITICAL: Check localStorage FIRST before generating new session ID
         // This ensures we reuse the same session across page navigations
         const STORAGE_KEY = 'uxcam_session_id';
@@ -1498,6 +1532,14 @@
         
         sessionId = null;
         sessionDbId = null;
+        
+        // CRITICAL: Reset singleton flag when session ends
+        // This allows a new session to be started later
+        window.__RRWEB_RECORDING_STARTED__ = false;
+        console.log('UXCam SDK: ✅ Singleton flag reset - new session can be started', {
+          duration: finalDuration
+        });
+        
         if (window.UXCamSDK && window.UXCamSDK.debug) {
           console.log('UXCam: Session ended', { duration: finalDuration });
         }
