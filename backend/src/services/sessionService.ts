@@ -244,11 +244,14 @@ export async function getSessionsByProject(
 /**
  * Check if a session should be filtered out (doesn't meet minimum criteria)
  * Sessions are filtered if:
- * - Duration < 10 seconds (if duration is set)
- * - No snapshots (snapshot_count === 0)
- * - Insufficient events (event_count < 2)
+ * - No snapshots (snapshot_count === 0) - REQUIRED for replay
+ * - event_count <= 2 (regardless of duration)
+ * - duration <= 10 seconds (regardless of event count)
  * 
- * Note: Duration check is optional - sessions without duration set are not filtered by duration alone
+ * Sessions are KEPT only if they have:
+ * - event_count > 2 AND duration > 10 seconds (and have snapshots)
+ * 
+ * Note: Sessions must have snapshots to be kept (required for replay)
  */
 export async function shouldFilterSession(sessionDbId: string): Promise<boolean> {
   try {
@@ -269,14 +272,6 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
       return true
     }
 
-    // Check event count < 2 (insufficient activity - user interactions like clicks, scrolls, inputs)
-    const eventCount = session.event_count || 0
-    if (eventCount < 2) {
-      console.log(`🚫 Session ${sessionDbId} filtered: event_count ${eventCount} < 2`)
-      return true
-    }
-
-    // Check duration < 10 seconds
     // Calculate duration: use stored duration, or calculate from timestamps for active sessions
     let duration = (session.duration || 0) / 1000 // Convert to seconds
     
@@ -289,13 +284,26 @@ export async function shouldFilterSession(sessionDbId: string): Promise<boolean>
         duration = calculatedDuration
       }
     }
-    
-    if (duration < 10) {
-      console.log(`🚫 Session ${sessionDbId} filtered: duration ${duration.toFixed(1)}s < 10s`)
+
+    // Get event count
+    const eventCount = session.event_count || 0
+
+    // Filter out if EITHER condition fails:
+    // - event_count <= 2 OR duration <= 10 seconds
+    // Keep sessions that have BOTH: event_count > 2 AND duration > 10 seconds
+    if (eventCount <= 2) {
+      console.log(`🚫 Session ${sessionDbId} filtered: event_count ${eventCount} <= 2`)
       return true
     }
 
-    return false // Session meets all criteria
+    if (duration <= 10) {
+      console.log(`🚫 Session ${sessionDbId} filtered: duration ${duration.toFixed(1)}s <= 10s`)
+      return true
+    }
+
+    // Session meets criteria: has snapshots AND event_count > 2 AND duration > 10s
+    console.log(`✅ Session ${sessionDbId} kept: event_count ${eventCount} > 2 AND duration ${duration.toFixed(1)}s > 10s`)
+    return false
   } catch (error: any) {
     console.error('Error checking if session should be filtered:', error)
     // On error, don't filter (safer to keep session than delete it)

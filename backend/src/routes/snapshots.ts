@@ -361,8 +361,8 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
           }
           
           // Background task: Check if session should be filtered out (non-blocking)
-          // Only check if this is NOT the initial snapshot (give session time to accumulate events)
           if (!isInitialSnapshot) {
+            // For non-initial snapshots, check immediately
             try {
               // Re-fetch session to get latest event_count and duration
               const { data: latestSession, error: fetchError } = await supabase
@@ -372,8 +372,6 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
                 .single()
               
               if (!fetchError && latestSession) {
-                // Only filter if session has been inactive for a while or has very low activity
-                // Don't filter active sessions (duration check is only for ended sessions)
                 const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
                 const shouldFilter = await shouldFilterSession(session.id)
                 if (shouldFilter) {
@@ -385,6 +383,28 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
               // Log error but don't fail - this is background task
               console.error('Error checking/filtering session:', filterError)
             }
+          } else {
+            // For initial snapshots, wait 10 seconds before checking (give time for events to accumulate)
+            setTimeout(async () => {
+              try {
+                const { data: latestSession, error: fetchError } = await supabase
+                  .from('sessions')
+                  .select('event_count, duration, snapshot_count')
+                  .eq('id', session.id)
+                  .single()
+                
+                if (!fetchError && latestSession) {
+                  const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+                  const shouldFilter = await shouldFilterSession(session.id)
+                  if (shouldFilter) {
+                    console.log(`🗑️ Session ${session.id} doesn't meet criteria after initial snapshot - deleting from database`)
+                    await deleteSessionAndRelatedData(session.id)
+                  }
+                }
+              } catch (filterError: any) {
+                console.error('Error checking/filtering session after delay:', filterError)
+              }
+            }, 10000) // Wait 10 seconds before checking initial snapshots
           }
         }
       } catch (updateError: any) {
