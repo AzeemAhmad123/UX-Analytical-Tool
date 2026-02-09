@@ -235,10 +235,13 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
       }
     }
     
-    // Filter out sessions with insufficient events (event_count < 2)
+    // Filter out sessions with insufficient events (event_count <= 2)
+    // OR duration <= 10 seconds
+    // Keep only sessions with BOTH: event_count > 2 AND duration > 10 seconds
     const eventCount = s.event_count || 0
-    if (eventCount < 2) {
-      console.log(`🚫 Session ${s.id} filtered: event_count ${eventCount} < 2`, {
+    
+    if (eventCount <= 2) {
+      console.log(`🚫 Session ${s.id} filtered: event_count ${eventCount} <= 2`, {
         sessionId: s.id,
         eventCount,
         duration: `${duration.toFixed(1)}s`,
@@ -247,9 +250,9 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
       return false
     }
     
-    // Exclude sessions with duration < 10 seconds
-    if (duration < 10) {
-      console.log(`🚫 Session ${s.id} filtered: duration ${duration.toFixed(1)}s < 10s`, {
+    // Exclude sessions with duration <= 10 seconds
+    if (duration <= 10) {
+      console.log(`🚫 Session ${s.id} filtered: duration ${duration.toFixed(1)}s <= 10s`, {
         sessionId: s.id,
         eventCount,
         duration: `${duration.toFixed(1)}s`,

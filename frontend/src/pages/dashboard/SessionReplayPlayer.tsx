@@ -161,14 +161,17 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
       }
     }
     
-    // Filter out sessions with insufficient events (event_count < 2)
+    // Filter out sessions with insufficient events (event_count <= 2)
+    // OR duration <= 10 seconds
+    // Keep only sessions with BOTH: event_count > 2 AND duration > 10 seconds
     const eventCount = s.event_count || 0
-    if (eventCount < 2) {
+    
+    if (eventCount <= 2) {
       return false
     }
     
-    // Exclude sessions with duration < 10 seconds
-    if (duration < 10) {
+    // Exclude sessions with duration <= 10 seconds
+    if (duration <= 10) {
       return false
     }
     
