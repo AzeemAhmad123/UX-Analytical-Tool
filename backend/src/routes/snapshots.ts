@@ -87,31 +87,43 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       ipAddress = forwardedFor.split(',')[0].trim()
     }
 
-    // Get location from IP address (async, don't block if it fails)
+    // Get location from IP address (fire-and-forget, don't block response)
+    // This will be updated in background after response is sent
     let locationData: any = {}
-    if (ipAddress && ipAddress !== '::1' && ipAddress !== '127.0.0.1') {
-      try {
-        locationData = await getLocationFromIP(ipAddress)
-      } catch (error: any) {
-        console.warn('Failed to get location from IP:', error.message)
-        // Continue without location data
+    const locationPromise = (async () => {
+      if (ipAddress && ipAddress !== '::1' && ipAddress !== '127.0.0.1') {
+        try {
+          return await getLocationFromIP(ipAddress)
+        } catch (error: any) {
+          console.warn('Failed to get location from IP:', error.message)
+          return {}
+        }
       }
-    }
+      return {}
+    })()
+    
+    // Don't await - will be used later in background
+    locationPromise.then(data => {
+      locationData = data
+    }).catch(() => {
+      // Ignore errors
+    })
 
     // Extract device information from user agent
     const extractedDeviceInfo = extractDeviceInfo(userAgent)
 
-    // Combine all device information with location from IP
+    // Combine all device information (location will be updated in background)
+    // Don't wait for location - use SDK-provided location or empty
     const deviceInfo = {
       userAgent,
       ip: ipAddress,
-      // Location from IP geolocation (preferred)
-      country: locationData.country || req.body.device_info?.country || undefined,
-      city: locationData.city || req.body.device_info?.city || undefined,
-      region: locationData.region || req.body.device_info?.region || undefined,
-      countryCode: locationData.countryCode || req.body.device_info?.countryCode || undefined,
-      latitude: locationData.latitude || req.body.device_info?.latitude || undefined,
-      longitude: locationData.longitude || req.body.device_info?.longitude || undefined,
+      // Location from SDK (if provided) - IP geolocation will update in background
+      country: req.body.device_info?.country || undefined,
+      city: req.body.device_info?.city || undefined,
+      region: req.body.device_info?.region || undefined,
+      countryCode: req.body.device_info?.countryCode || undefined,
+      latitude: req.body.device_info?.latitude || undefined,
+      longitude: req.body.device_info?.longitude || undefined,
       // Device info from user agent extraction
       deviceType: extractedDeviceInfo.deviceType || req.body.device_info?.deviceType || req.body.device_info?.device_type || undefined,
       deviceModel: extractedDeviceInfo.deviceModel || req.body.device_info?.deviceModel || req.body.device_info?.device_model || undefined,
@@ -146,27 +158,33 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       })
     }
 
-    // If session already existed, update device_info with location if we got new location data
-    if (!created && (locationData.country || locationData.city)) {
-      try {
-        const updatedDeviceInfo = {
-          ...(session.device_info || {}),
-          country: locationData.country || session.device_info?.country,
-          city: locationData.city || session.device_info?.city,
-          region: locationData.region || session.device_info?.region,
-          countryCode: locationData.countryCode || session.device_info?.countryCode,
-          latitude: locationData.latitude || session.device_info?.latitude,
-          longitude: locationData.longitude || session.device_info?.longitude,
+    // Background task: Update device_info with location (non-blocking)
+    // This runs after response is sent
+    if (!created) {
+      locationPromise.then(async (locationData) => {
+        if (locationData.country || locationData.city) {
+          try {
+            await supabase
+              .from('sessions')
+              .update({
+                device_info: {
+                  ...(session.device_info || {}),
+                  country: locationData.country || session.device_info?.country,
+                  city: locationData.city || session.device_info?.city,
+                  region: locationData.region || session.device_info?.region,
+                  countryCode: locationData.countryCode || session.device_info?.countryCode,
+                  latitude: locationData.latitude || session.device_info?.latitude,
+                  longitude: locationData.longitude || session.device_info?.longitude,
+                }
+              })
+              .eq('id', session.id)
+          } catch (error: any) {
+            console.warn('Failed to update session device_info with location:', error.message)
+          }
         }
-        
-        await supabase
-          .from('sessions')
-          .update({ device_info: updatedDeviceInfo })
-          .eq('id', session.id)
-      } catch (error: any) {
-        console.warn('Failed to update session device_info with location:', error.message)
-        // Continue - location update is not critical
-      }
+      }).catch(() => {
+        // Ignore location fetch errors
+      })
     }
     
     if (created) {
@@ -269,49 +287,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       }
     }
 
-    // Store snapshot in database
-    // CRITICAL: Verify session exists and is committed before storing snapshot
-    // This prevents foreign key constraint errors if session was deleted or not committed
-    try {
-      // Quick check: verify session exists (lightweight query, only selects id)
-      const { data: sessionCheck, error: checkError } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq('id', session.id)
-        .single()
-      
-      if (checkError || !sessionCheck) {
-        console.error('❌ Session does not exist when trying to store snapshot:', {
-          sessionId: session.id,
-          error: checkError?.message,
-          sessionCreated: created
-        })
-        // Try to recreate session if it was just created
-        if (created) {
-          console.log('🔄 Attempting to recreate session...')
-          try {
-            const recreateResult = await findOrCreateSession(projectId, sessionId, deviceInfo)
-            if (recreateResult.session && recreateResult.session.id) {
-              session = recreateResult.session
-              console.log('✅ Session recreated:', { sessionId: session.id })
-            } else {
-              throw new Error('Failed to recreate session')
-            }
-          } catch (recreateError: any) {
-            throw new Error(`Session ${session.id} does not exist and could not be recreated: ${recreateError.message}`)
-          }
-        } else {
-          throw new Error(`Session ${session.id} does not exist in database`)
-        }
-      }
-    } catch (verifyErr: any) {
-      console.error('❌ Error verifying session existence:', verifyErr)
-      return res.status(500).json({
-        error: 'Session verification failed',
-        message: verifyErr.message || 'Failed to verify session exists before storing snapshot'
-      })
-    }
-
+    // Store snapshot in database (CRITICAL - must complete before response)
     try {
       console.log('💾 Storing snapshot to database', {
         sessionId: session.id,
@@ -339,86 +315,81 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       throw new Error(`Failed to store snapshot: ${storeError.message}`)
     }
 
-    // Update session activity and calculate duration
-    // IMPORTANT: Count incremental events (type 3, 4, 5) from snapshots as user interactions
-    // These represent clicks, scrolls, inputs, DOM mutations - actual user activity
-    const now = new Date()
-    const startTime = new Date(session.start_time)
-    const duration = Math.round((now.getTime() - startTime.getTime()))
-    
-    // Update session with last activity time, duration, and event_count (from incremental events)
-    try {
-      // Increment event_count by the number of incremental events in this snapshot batch
-      const newEventCount = (session.event_count || 0) + incrementalEventCount
-      
-      const { error: updateError } = await supabase
-        .from('sessions')
-        .update({
-          last_activity_time: now.toISOString(),
-          duration: duration,
-          event_count: newEventCount // Update event_count with incremental events (user interactions)
-        })
-        .eq('id', session.id)
-      
-      if (updateError) {
-        console.error('Error updating session:', updateError)
-        // Don't throw - snapshot was stored successfully
-      } else {
-        if (incrementalEventCount > 0) {
-          console.log(`✅ Updated session event_count: ${session.event_count || 0} + ${incrementalEventCount} = ${newEventCount}`)
-        }
-        // Check if session should be filtered out (doesn't meet minimum criteria)
-        // Only check if this is NOT the initial snapshot (give session time to accumulate events)
-        // Wait a bit before checking to avoid race conditions with concurrent snapshot uploads
-        if (!isInitialSnapshot) {
-          try {
-            // Re-fetch session to get latest event_count and duration
-            const { data: latestSession, error: fetchError } = await supabase
-              .from('sessions')
-              .select('event_count, duration, snapshot_count')
-              .eq('id', session.id)
-              .single()
-            
-            if (!fetchError && latestSession) {
-              // Only filter if session has been inactive for a while or has very low activity
-              // Don't filter active sessions (duration check is only for ended sessions)
-              const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
-              const shouldFilter = await shouldFilterSession(session.id)
-              if (shouldFilter) {
-                console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
-                await deleteSessionAndRelatedData(session.id)
-                // Return success but indicate session was filtered
-                return res.json({
-                  success: true,
-                  session_id: session.id,
-                  project_id: projectId,
-                  session_created: created,
-                  snapshot_count: snapshotCount,
-                  is_initial_snapshot: isInitialSnapshot,
-                  filtered: true,
-                  message: 'Session was filtered and deleted (did not meet minimum criteria)'
-                })
-              }
-            }
-          } catch (filterError: any) {
-            // Log error but don't fail the request - session was already updated
-            console.error('Error checking/filtering session:', filterError)
-          }
-        }
-      }
-    } catch (updateError: any) {
-      console.error('Error updating session:', updateError)
-      // Don't throw - snapshot was stored successfully
-    }
-
-    // Return success response with project_id for SDK
-    res.json({
+    // Send response IMMEDIATELY after snapshot is stored (don't wait for other operations)
+    // This ensures recording starts as fast as possible
+    const responseData = {
       success: true,
       session_id: session.id,
       project_id: projectId,
       session_created: created,
       snapshot_count: snapshotCount,
       is_initial_snapshot: isInitialSnapshot
+    }
+    
+    // Send response now - don't wait for background tasks
+    res.json(responseData)
+
+    // All operations below run in background after response is sent
+    // This prevents blocking the SDK from starting recording
+
+    // Background task: Update session activity and calculate duration (non-blocking)
+    // IMPORTANT: Count incremental events (type 3, 4, 5) from snapshots as user interactions
+    // These represent clicks, scrolls, inputs, DOM mutations - actual user activity
+    setImmediate(async () => {
+      try {
+        const now = new Date()
+        const startTime = new Date(session.start_time)
+        const duration = Math.round((now.getTime() - startTime.getTime()))
+        
+        // Increment event_count by the number of incremental events in this snapshot batch
+        const newEventCount = (session.event_count || 0) + incrementalEventCount
+        
+        const { error: updateError } = await supabase
+          .from('sessions')
+          .update({
+            last_activity_time: now.toISOString(),
+            duration: duration,
+            event_count: newEventCount // Update event_count with incremental events (user interactions)
+          })
+          .eq('id', session.id)
+        
+        if (updateError) {
+          console.error('Error updating session:', updateError)
+        } else {
+          if (incrementalEventCount > 0) {
+            console.log(`✅ Updated session event_count: ${session.event_count || 0} + ${incrementalEventCount} = ${newEventCount}`)
+          }
+          
+          // Background task: Check if session should be filtered out (non-blocking)
+          // Only check if this is NOT the initial snapshot (give session time to accumulate events)
+          if (!isInitialSnapshot) {
+            try {
+              // Re-fetch session to get latest event_count and duration
+              const { data: latestSession, error: fetchError } = await supabase
+                .from('sessions')
+                .select('event_count, duration, snapshot_count')
+                .eq('id', session.id)
+                .single()
+              
+              if (!fetchError && latestSession) {
+                // Only filter if session has been inactive for a while or has very low activity
+                // Don't filter active sessions (duration check is only for ended sessions)
+                const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+                const shouldFilter = await shouldFilterSession(session.id)
+                if (shouldFilter) {
+                  console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
+                  await deleteSessionAndRelatedData(session.id)
+                }
+              }
+            } catch (filterError: any) {
+              // Log error but don't fail - this is background task
+              console.error('Error checking/filtering session:', filterError)
+            }
+          }
+        }
+      } catch (updateError: any) {
+        console.error('Error updating session in background:', updateError)
+      }
     })
   } catch (error: any) {
     console.error('Error in /api/snapshots/ingest:', error)
