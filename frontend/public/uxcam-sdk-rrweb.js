@@ -679,27 +679,19 @@
         return;
       }
 
-      // Step 2: Wait for DOM ready
-      if (document.readyState !== 'complete') {
-        await new Promise(resolve => {
-          if (document.readyState === 'complete') resolve();
-          else window.addEventListener('load', resolve, { once: true });
-        });
-      }
+      // CRITICAL: Start recording IMMEDIATELY - don't wait for DOM/CSS
+      // This ensures recording starts as fast as possible (like UXCam/Hotjar)
+      // CSS will be captured in incremental snapshots
       
-      // Step 3: Wait for CSS to load (CRITICAL for proper styling)
-      console.log('UXCam SDK: Waiting for CSS stylesheets to load...');
-      await waitForCSS();
-      console.log('UXCam SDK: CSS stylesheets loaded');
-      
-      // Step 4: Additional delay for browser paint and style computation
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // Step 5: Initialize recording state
-      type2Uploaded = false;
+      // Step 2: Initialize recording state
+      type2Uploaded = false; // Will be set to true immediately to allow events
       let capturedType2 = null;
       let type2Resolve = null;
       const type2Promise = new Promise(resolve => { type2Resolve = resolve; });
+      
+      // Enable incremental events immediately - don't wait for Type 2 upload
+      // This allows recording to start capturing events right away
+      type2Uploaded = true;
       
       // Step 5.5: Record navigation event (Type 4 Meta) if navigation detected
       if (window.__UXCAM_NAVIGATION_DETECTED) {
@@ -752,13 +744,13 @@
               capturedType2 = event;
               events.push(event);
               if (type2Resolve) type2Resolve(event);
+              // Upload Type 2 in background (non-blocking)
+              uploadType2InBackground(event);
               return; // Don't add to queue, will upload separately
             }
             
-            // Block incremental events until Type 2 uploaded
-            if (!type2Uploaded && event.type !== 2) {
-              return;
-            }
+            // Don't block incremental events - recording starts immediately
+            // All events are captured right away (like UXCam/Hotjar)
             
             // Track activity when events are emitted
             trackActivity();
@@ -825,154 +817,82 @@
         recordAfter: 'DOMContentLoaded',
       });
       
-      // Step 7: Wait for Type 2 event (rrweb emits it automatically)
-      try {
-        const type2Event = await Promise.race([
-          type2Promise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ]);
-        
-        // Step 8: Validate Type 2 snapshot
-        // Don't modify the snapshot - rrweb handles it correctly
-        // Just validate it has data
-        if (!type2Event.data) {
-          throw new Error('Invalid snapshot structure - no data');
-        }
-        
-        // Log snapshot info (don't stringify the whole thing - it might have circular refs)
-        try {
-          // Try to estimate size without full stringify (to avoid illegal invocation)
-          let estimatedSize = 0;
-          try {
-            const snapshotStr = JSON.stringify(type2Event, function(key, value) {
-              if (typeof value === 'function' || value === undefined) return null;
-              if (typeof value === 'object' && value !== null) {
-                if (value.nodeType !== undefined) return '[DOM Node]';
-                if (value.ownerDocument !== undefined) return '[DOM Element]';
-              }
-              return value;
-            });
-            estimatedSize = snapshotStr.length;
-          } catch (e) {
-            // If stringify fails, estimate from data structure
-            estimatedSize = type2Event.data ? 
-              (type2Event.data.childNodes ? type2Event.data.childNodes.length * 100 : 1000) : 
-              100;
-          }
-          
-          console.log('UXCam SDK: Type 2 snapshot captured', {
-            size: estimatedSize,
-            sizeKB: (estimatedSize / 1024).toFixed(2) + 'kB',
-            hasData: !!type2Event.data,
-            type: type2Event.type,
-            hasChildNodes: type2Event.data?.childNodes ? type2Event.data.childNodes.length : 0
-          });
-          
-          // Only reject if completely empty
-          if (estimatedSize < 100) {
-            throw new Error(`Snapshot too small: ${estimatedSize} bytes`);
-          }
-        } catch (stringifyError) {
-          // If stringify fails (circular refs), that's OK - rrweb handles it
-          console.log('UXCam SDK: Type 2 snapshot captured (size check skipped)', {
-            hasData: !!type2Event.data,
-            type: type2Event.type
-          });
-        }
-        
-        // Step 9: Upload Type 2 immediately (include navigation event if present)
-        console.log('UXCam SDK: Uploading Type 2 snapshot...');
-        
-        // Check if there's a navigation event in the queue (should be first)
-        const eventsToUpload = [];
-        if (snapshotQueue.length > 0 && snapshotQueue[0].type === 4) {
-          // Include navigation event before Type 2
-          eventsToUpload.push(snapshotQueue.shift()); // Remove from queue
-          console.log('UXCam SDK: Including navigation event with Type 2 snapshot');
-        }
-        eventsToUpload.push(type2Event);
-        
-        const compressed = compressSnapshots(eventsToUpload);
-        
-        // Log compression info
-        console.log('UXCam SDK: Compression info', {
-          compressedType: typeof compressed,
-          compressedLength: typeof compressed === 'string' ? compressed.length : 'N/A',
-          eventsCount: eventsToUpload.length,
-          hasNavigation: eventsToUpload.some(e => e.type === 4)
+      // Mark recording start time immediately (recording starts right away)
+      if (!recordingStartTime) {
+        recordingStartTime = Date.now();
+        trackEvent('session_start', {
+          timestamp: new Date().toISOString(),
+          recording_started: true
         });
-        
-        // Log session ID being used for upload
-        console.log('UXCam SDK: 📤 Uploading Type 2 snapshot with session ID:', {
-          sessionId: sessionId,
-          sessionIdLength: sessionId?.length,
-          url: window.location.href,
-          hasNavigation: eventsToUpload.some(e => e.type === 4),
-          eventsCount: eventsToUpload.length
-        });
-        
-        const response = await fetch(`${config.apiUrl}/api/snapshots/ingest`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sdk_key: getCurrentSdkKey(),
-            session_id: sessionId,
-            snapshots: compressed,
-            snapshot_count: eventsToUpload.length,
-            is_initial_snapshot: true
-          })
-        });
-        
-        if (!response.ok) {
-          // Try to get error details from response
-          let errorMessage = `Upload failed: ${response.status}`;
-          try {
-            const errorData = await response.json();
-            errorMessage = errorData.message || errorData.error || errorMessage;
-            console.error('UXCam SDK: Server error details:', errorData);
-          } catch (e) {
-            // If response is not JSON, use status text
-            errorMessage = `Upload failed: ${response.status} ${response.statusText}`;
-          }
-          throw new Error(errorMessage);
-        }
-        
-        // Log success
-        const responseData = await response.json().catch(() => ({}));
-        console.log('UXCam SDK: ✅ Type 2 upload successful', responseData);
-        
-        // Store session DB ID and project ID from response
-        if (responseData.session_id && !sessionDbId) {
-          sessionDbId = responseData.session_id;
-        }
-        if (responseData.project_id && !projectId) {
-          projectId = responseData.project_id;
-        }
-        
-        // Step 10: Enable incremental events
-        type2Uploaded = true;
-        
-        // Mark recording start time (when Type 2 is successfully uploaded)
-        // This is the actual start of recording, not when session was initialized
-        if (!recordingStartTime) {
-          recordingStartTime = Date.now();
-          // Track session_start event only AFTER recording actually starts
-          trackEvent('session_start', {
-            timestamp: new Date().toISOString(),
-            recording_started: true
-          });
-          
-          // Start periodic flushing now that recording has started
-          // Removed: scheduleSnapshotFlush() - no periodic flushing, only on page unload
-        }
-        
-        console.log('UXCam SDK: ✅ Type 2 uploaded, recording active');
-        console.log('UXCam SDK: Snapshots will be flushed on page unload/visibility change (UXCam-style behavior)');
-        
-      } catch (error) {
-        console.error('UXCam SDK: Type 2 failed:', error.message);
-        // Keep type2Uploaded = false to block events
+        console.log('UXCam SDK: ✅ Recording started immediately (synchronous, like UXCam/Hotjar)');
       }
+    }
+    
+    // Upload Type 2 snapshot in background (non-blocking)
+    async function uploadType2InBackground(type2Event) {
+      // Run in background - don't block recording (0ms delay = next event loop tick)
+      setTimeout(async () => {
+        try {
+          // Validate Type 2 snapshot
+          if (!type2Event.data) {
+            console.warn('UXCam SDK: Type 2 snapshot has no data');
+            return;
+          }
+          
+          console.log('UXCam SDK: Type 2 snapshot captured, uploading in background...');
+          
+          // Check if there's a navigation event in the queue (should be first)
+          const eventsToUpload = [];
+          if (snapshotQueue.length > 0 && snapshotQueue[0].type === 4) {
+            // Include navigation event before Type 2
+            eventsToUpload.push(snapshotQueue.shift()); // Remove from queue
+            console.log('UXCam SDK: Including navigation event with Type 2 snapshot');
+          }
+          eventsToUpload.push(type2Event);
+          
+          const compressed = compressSnapshots(eventsToUpload);
+          
+          // Upload Type 2 in background (non-blocking)
+          const response = await fetch(`${config.apiUrl}/api/snapshots/ingest`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sdk_key: getCurrentSdkKey(),
+              session_id: sessionId,
+              snapshots: compressed,
+              snapshot_count: eventsToUpload.length,
+              is_initial_snapshot: true
+            })
+          });
+          
+          if (!response.ok) {
+            let errorMessage = `Upload failed: ${response.status}`;
+            try {
+              const errorData = await response.json();
+              errorMessage = errorData.message || errorData.error || errorMessage;
+            } catch (e) {
+              errorMessage = `Upload failed: ${response.status} ${response.statusText}`;
+            }
+            console.warn('UXCam SDK: Type 2 upload failed (non-critical):', errorMessage);
+            return;
+          }
+          
+          // Log success
+          const responseData = await response.json().catch(() => ({}));
+          console.log('UXCam SDK: ✅ Type 2 uploaded successfully (background)', responseData);
+          
+          // Store session DB ID and project ID from response
+          if (responseData.session_id && !sessionDbId) {
+            sessionDbId = responseData.session_id;
+          }
+          if (responseData.project_id && !projectId) {
+            projectId = responseData.project_id;
+          }
+        } catch (error) {
+          console.warn('UXCam SDK: Type 2 upload error (non-critical):', error.message);
+          // Don't throw - this is background task, recording continues
+        }
+      }, 0);
     }
     
     // OLD FUNCTION REMOVED - Incremental recording is now integrated into startRecording()

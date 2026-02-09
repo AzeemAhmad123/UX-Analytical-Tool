@@ -361,22 +361,41 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
           }
           
           // Background task: Check if session should be filtered out (non-blocking)
+          // CRITICAL: Only filter sessions that have been inactive for a while
+          // Don't filter active sessions - they're still accumulating data across pages
+          // Filtering happens:
+          // 1. When session is explicitly ended (via /api/sessions/:sessionId/end)
+          // 2. After 30 seconds of inactivity (session likely ended)
+          // 3. NOT on every snapshot upload (would filter active multi-page sessions)
+          
           if (!isInitialSnapshot) {
-            // For non-initial snapshots, check immediately
+            // For non-initial snapshots, check if session has been inactive
+            // Only filter if last activity was more than 30 seconds ago
             try {
-              // Re-fetch session to get latest event_count and duration
+              // Re-fetch session to get latest activity time
               const { data: latestSession, error: fetchError } = await supabase
                 .from('sessions')
-                .select('event_count, duration, snapshot_count')
+                .select('event_count, duration, snapshot_count, last_activity_time, start_time')
                 .eq('id', session.id)
                 .single()
               
               if (!fetchError && latestSession) {
-                const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
-                const shouldFilter = await shouldFilterSession(session.id)
-                if (shouldFilter) {
-                  console.log(`🗑️ Session ${session.id} doesn't meet criteria - deleting from database immediately`)
-                  await deleteSessionAndRelatedData(session.id)
+                const lastActivityTime = new Date(latestSession.last_activity_time).getTime()
+                const timeSinceLastActivity = Date.now() - lastActivityTime
+                const inactivityThreshold = 30000 // 30 seconds
+                
+                // Only filter if session has been inactive for 30+ seconds
+                // This means the session has likely ended and won't accumulate more data
+                if (timeSinceLastActivity >= inactivityThreshold) {
+                  const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+                  const shouldFilter = await shouldFilterSession(session.id)
+                  if (shouldFilter) {
+                    console.log(`🗑️ Session ${session.id} doesn't meet criteria after ${Math.round(timeSinceLastActivity / 1000)}s inactivity - deleting from database`)
+                    await deleteSessionAndRelatedData(session.id)
+                  }
+                } else {
+                  // Session is still active - don't filter yet
+                  console.log(`⏳ Session ${session.id} still active (${Math.round(timeSinceLastActivity / 1000)}s since last activity) - not filtering yet`)
                 }
               }
             } catch (filterError: any) {
@@ -384,27 +403,38 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
               console.error('Error checking/filtering session:', filterError)
             }
           } else {
-            // For initial snapshots, wait 10 seconds before checking (give time for events to accumulate)
+            // For initial snapshots, wait 30 seconds before checking (give time for multi-page sessions)
+            // This ensures sessions that span multiple pages have time to accumulate data
             setTimeout(async () => {
               try {
                 const { data: latestSession, error: fetchError } = await supabase
                   .from('sessions')
-                  .select('event_count, duration, snapshot_count')
+                  .select('event_count, duration, snapshot_count, last_activity_time')
                   .eq('id', session.id)
                   .single()
                 
                 if (!fetchError && latestSession) {
-                  const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
-                  const shouldFilter = await shouldFilterSession(session.id)
-                  if (shouldFilter) {
-                    console.log(`🗑️ Session ${session.id} doesn't meet criteria after initial snapshot - deleting from database`)
-                    await deleteSessionAndRelatedData(session.id)
+                  // Check if session is still active (has recent activity)
+                  const lastActivityTime = new Date(latestSession.last_activity_time).getTime()
+                  const timeSinceLastActivity = Date.now() - lastActivityTime
+                  const inactivityThreshold = 30000 // 30 seconds
+                  
+                  // Only filter if session has been inactive
+                  if (timeSinceLastActivity >= inactivityThreshold) {
+                    const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')
+                    const shouldFilter = await shouldFilterSession(session.id)
+                    if (shouldFilter) {
+                      console.log(`🗑️ Session ${session.id} doesn't meet criteria after 30s delay (${Math.round(timeSinceLastActivity / 1000)}s inactive) - deleting from database`)
+                      await deleteSessionAndRelatedData(session.id)
+                    }
+                  } else {
+                    console.log(`⏳ Session ${session.id} still active after 30s delay (${Math.round(timeSinceLastActivity / 1000)}s since last activity) - not filtering`)
                   }
                 }
               } catch (filterError: any) {
                 console.error('Error checking/filtering session after delay:', filterError)
               }
-            }, 10000) // Wait 10 seconds before checking initial snapshots
+            }, 30000) // Wait 30 seconds before checking initial snapshots (allows multi-page sessions)
           }
         }
       } catch (updateError: any) {
