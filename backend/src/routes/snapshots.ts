@@ -30,12 +30,12 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
   }
-  
+
   try {
     const snapshotSize = typeof req.body.snapshots === 'string' ? req.body.snapshots.length : 0
     const snapshotSizeKB = (snapshotSize / 1024).toFixed(2)
     const snapshotSizeMB = (snapshotSize / (1024 * 1024)).toFixed(2)
-    
+
     console.log('📥 Snapshot ingest request received', {
       hasProjectId: !!(req as any).projectId,
       hasSessionId: !!req.body.session_id,
@@ -45,7 +45,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       snapshotSizeKB: `${snapshotSizeKB}KB`,
       snapshotSizeMB: `${snapshotSizeMB}MB`
     })
-    
+
     // Check if snapshot is too large (Vercel limit is 4.5MB)
     if (snapshotSize > 4 * 1024 * 1024) { // 4MB threshold
       console.warn('⚠️ Large snapshot detected:', {
@@ -54,7 +54,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         recommendation: 'Consider implementing chunking for snapshots > 4MB'
       })
     }
-    
+
     const projectId = (req as any).projectId
     const sessionId = req.body.session_id
     const snapshots = req.body.snapshots
@@ -79,7 +79,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     // Get device info from request (if available)
     const userAgent = req.get('user-agent') || ''
     let ipAddress = req.ip || req.socket.remoteAddress || ''
-    
+
     // Handle X-Forwarded-For header (for proxies/load balancers)
     const forwardedFor = req.get('x-forwarded-for')
     if (forwardedFor) {
@@ -101,7 +101,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       }
       return {}
     })()
-    
+
     // Don't await - will be used later in background
     locationPromise.then(data => {
       locationData = data
@@ -145,7 +145,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       )
       session = result.session
       created = result.created
-      
+
       // Verify session was actually created/found
       if (!session || !session.id) {
         throw new Error('Session creation returned invalid session data')
@@ -186,7 +186,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         // Ignore location fetch errors
       })
     }
-    
+
     if (created) {
       console.log('✅ New session created:', { sessionId: session.session_id, dbId: session.id })
     } else {
@@ -196,7 +196,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     // Decompress snapshots if needed
     let decompressedSnapshots: any
     let snapshotData: string
-    
+
     try {
       // Try to decompress with LZString first
       if (typeof snapshots === 'string' && snapshots.length > 0) {
@@ -230,6 +230,47 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
     // Ensure snapshots is an array
     if (!Array.isArray(decompressedSnapshots)) {
       decompressedSnapshots = [decompressedSnapshots]
+    }
+
+    /**
+     * Throttle mouse movement events to prevent database bloat
+     * Keeps only 2 mouse positions per second (500ms intervals)
+     * This is a safety filter in case SDK doesn't throttle properly
+     */
+    function throttleMouseMovements(snapshots: any[]): any[] {
+      let lastMouseMoveTime = 0;
+      const MOUSE_THROTTLE_MS = 500; // 2 events per second
+
+      return snapshots.filter((event: any) => {
+        // Check if this is a mouse movement event (type 3, source 1 or 2)
+        if (event && event.type === 3 && event.data) {
+          // IncrementalSource.MouseMove = 1
+          // IncrementalSource.MouseInteraction = 2 (check if it's a move, not a click)
+          const isMouseMove =
+            event.data.source === 1 || // MouseMove
+            (event.data.source === 2 && event.data.type === 0); // MouseInteraction type Move
+
+          if (isMouseMove) {
+            const now = event.timestamp || Date.now();
+            if (now - lastMouseMoveTime < MOUSE_THROTTLE_MS) {
+              // Too soon since last mouse event - filter it out
+              return false;
+            }
+            lastMouseMoveTime = now;
+          }
+        }
+        // Keep all non-mouse-move events
+        return true;
+      });
+    }
+
+    // Apply mouse movement throttling
+    const beforeCount = decompressedSnapshots.length;
+    decompressedSnapshots = throttleMouseMovements(decompressedSnapshots);
+    const afterCount = decompressedSnapshots.length;
+    const filteredCount = beforeCount - afterCount;
+    if (filteredCount > 0) {
+      console.log(`🐭 Filtered ${filteredCount} excess mouse movements (${beforeCount} → ${afterCount} events)`);
     }
 
     // Count user interaction events from rrweb incremental events (type 3, 4, 5)
@@ -295,7 +336,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         snapshotCount,
         isInitialSnapshot
       })
-      
+
       await storeSnapshot(
         session.id,
         snapshotData,
@@ -303,7 +344,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         isInitialSnapshot,
         projectId // Pass projectId to storeSnapshot
       )
-      
+
       console.log('✅ Snapshot stored successfully')
     } catch (storeError: any) {
       console.error('❌ Error storing snapshot:', storeError)
@@ -325,7 +366,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
       snapshot_count: snapshotCount,
       is_initial_snapshot: isInitialSnapshot
     }
-    
+
     // Send response now - don't wait for background tasks
     res.json(responseData)
 
@@ -340,10 +381,10 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
         const now = new Date()
         const startTime = new Date(session.start_time)
         const duration = Math.round((now.getTime() - startTime.getTime()))
-        
+
         // Increment event_count by the number of incremental events in this snapshot batch
         const newEventCount = (session.event_count || 0) + incrementalEventCount
-        
+
         const { error: updateError } = await supabase
           .from('sessions')
           .update({
@@ -352,14 +393,14 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
             event_count: newEventCount // Update event_count with incremental events (user interactions)
           })
           .eq('id', session.id)
-        
+
         if (updateError) {
           console.error('Error updating session:', updateError)
         } else {
           if (incrementalEventCount > 0) {
             console.log(`✅ Updated session event_count: ${session.event_count || 0} + ${incrementalEventCount} = ${newEventCount}`)
           }
-          
+
           // Background task: Check if session should be filtered out (non-blocking)
           // CRITICAL: Only filter sessions that have been inactive for a while
           // Don't filter active sessions - they're still accumulating data across pages
@@ -367,7 +408,7 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
           // 1. When session is explicitly ended (via /api/sessions/:sessionId/end)
           // 2. After 30 seconds of inactivity (session likely ended)
           // 3. NOT on every snapshot upload (would filter active multi-page sessions)
-          
+
           if (!isInitialSnapshot) {
             // For non-initial snapshots, check if session has been inactive
             // Only filter if last activity was more than 30 seconds ago
@@ -378,12 +419,12 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
                 .select('event_count, duration, snapshot_count, last_activity_time, start_time')
                 .eq('id', session.id)
                 .single()
-              
+
               if (!fetchError && latestSession) {
                 const lastActivityTime = new Date(latestSession.last_activity_time).getTime()
                 const timeSinceLastActivity = Date.now() - lastActivityTime
                 const inactivityThreshold = 30000 // 30 seconds
-                
+
                 // Only filter if session has been inactive for 30+ seconds
                 // This means the session has likely ended and won't accumulate more data
                 if (timeSinceLastActivity >= inactivityThreshold) {
@@ -412,13 +453,13 @@ router.post('/ingest', authenticateSDK, async (req: Request, res: Response) => {
                   .select('event_count, duration, snapshot_count, last_activity_time')
                   .eq('id', session.id)
                   .single()
-                
+
                 if (!fetchError && latestSession) {
                   // Check if session is still active (has recent activity)
                   const lastActivityTime = new Date(latestSession.last_activity_time).getTime()
                   const timeSinceLastActivity = Date.now() - lastActivityTime
                   const inactivityThreshold = 30000 // 30 seconds
-                  
+
                   // Only filter if session has been inactive
                   if (timeSinceLastActivity >= inactivityThreshold) {
                     const { shouldFilterSession, deleteSessionAndRelatedData } = await import('../services/sessionService')

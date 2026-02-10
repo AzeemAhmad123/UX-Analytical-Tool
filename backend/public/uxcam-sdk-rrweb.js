@@ -15,7 +15,7 @@
  * <script src="uxcam-sdk-rrweb.js"></script>
  */
 
-(function() {
+(function () {
   'use strict';
 
   // ============================================
@@ -23,38 +23,38 @@
   // ============================================
   var SDK_ERRORS = [];
   var MAX_ERRORS = 10; // Prevent error spam
-  
+
   // Global error handler for matches() errors from rrweb
   var originalErrorHandler = window.onerror;
-  window.onerror = function(message, source, lineno, colno, error) {
+  window.onerror = function (message, source, lineno, colno, error) {
     // Catch "matches is not a function" errors and suppress them
-    if (message && typeof message === 'string' && 
-        (message.includes('matches is not a function') || 
-         message.includes('.matches is not a function') ||
-         message.includes('t.matches is not a function'))) {
+    if (message && typeof message === 'string' &&
+      (message.includes('matches is not a function') ||
+        message.includes('.matches is not a function') ||
+        message.includes('t.matches is not a function'))) {
       if (window.UXCamSDK && window.UXCamSDK.debug) {
         console.warn('UXCam SDK: Suppressed matches() error from rrweb:', message);
       }
       return true; // Suppress the error
     }
-    
+
     // Call original error handler if it exists
     if (originalErrorHandler) {
       return originalErrorHandler.call(this, message, source, lineno, colno, error);
     }
     return false;
   };
-  
+
   // Also catch unhandled promise rejections
-  window.addEventListener('unhandledrejection', function(event) {
+  window.addEventListener('unhandledrejection', function (event) {
     var error = event.reason;
     var errorMessage = error && error.message ? error.message : String(error);
-    
+
     // Suppress matches() errors in promises
-    if (errorMessage && typeof errorMessage === 'string' && 
-        (errorMessage.includes('matches is not a function') || 
-         errorMessage.includes('.matches is not a function') ||
-         errorMessage.includes('t.matches is not a function'))) {
+    if (errorMessage && typeof errorMessage === 'string' &&
+      (errorMessage.includes('matches is not a function') ||
+        errorMessage.includes('.matches is not a function') ||
+        errorMessage.includes('t.matches is not a function'))) {
       if (window.UXCamSDK && window.UXCamSDK.debug) {
         console.warn('UXCam SDK: Suppressed matches() error in promise:', errorMessage);
       }
@@ -62,7 +62,7 @@
       return;
     }
   });
-  
+
   // ============================================
   // SINGLETON PATTERN - Prevent double-recording
   // ============================================
@@ -71,7 +71,7 @@
   if (typeof window.__RRWEB_RECORDING_STARTED__ === 'undefined') {
     window.__RRWEB_RECORDING_STARTED__ = false;
   }
-  
+
   function safeExecute(fn, context, fallback, errorMessage) {
     try {
       return fn.call(context);
@@ -83,12 +83,12 @@
           timestamp: new Date().toISOString()
         });
       }
-      
+
       // Only log in debug mode
       if (window.UXCamSDK && window.UXCamSDK.debug) {
         console.warn('UXCam SDK Error:', errorMessage || error.message, error);
       }
-      
+
       return fallback !== undefined ? fallback : null;
     }
   }
@@ -97,7 +97,7 @@
     try {
       var result = fn.call(context);
       if (result && typeof result.then === 'function') {
-        return result.catch(function(error) {
+        return result.catch(function (error) {
           if (SDK_ERRORS.length < MAX_ERRORS) {
             SDK_ERRORS.push({
               error: error,
@@ -129,17 +129,17 @@
 
   // CRITICAL POLYFILL: Fix for "t.matches is not a function" and "Illegal invocation" errors
   // This prevents rrweb from crashing on elements that don't have matches()
-  (function() {
+  (function () {
     if (typeof Element === 'undefined') return;
-    
+
     // Create a safe matches implementation
-    var safeMatchesImpl = function(selector) {
+    var safeMatchesImpl = function (selector) {
       try {
         // Check if this is actually an Element
         if (!this || typeof this !== 'object') return false;
         if (!this.nodeType || this.nodeType !== 1) return false; // Not an Element node
         if (!this.ownerDocument) return false;
-        
+
         // Use native matches if available
         if (Element.prototype.matches && this instanceof Element) {
           try {
@@ -148,17 +148,17 @@
             // Fall through to fallback
           }
         }
-        
+
         // Fallback: use querySelectorAll
         var matches = this.ownerDocument.querySelectorAll(selector);
         var i = matches.length;
-        while (--i >= 0 && matches.item(i) !== this) {}
+        while (--i >= 0 && matches.item(i) !== this) { }
         return i > -1;
       } catch (e) {
         return false;
       }
     };
-    
+
     // Apply polyfill to Element.prototype
     if (!Element.prototype.matches) {
       try {
@@ -174,7 +174,7 @@
     } else {
       // Wrap existing matches to handle edge cases
       var originalMatches = Element.prototype.matches;
-      Element.prototype.matches = function(selector) {
+      Element.prototype.matches = function (selector) {
         try {
           // Check if this is a valid Element
           if (!this || typeof this !== 'object' || !this.nodeType) {
@@ -191,10 +191,10 @@
         }
       };
     }
-    
+
     // Also add matches to Node.prototype for broader compatibility
     if (typeof Node !== 'undefined' && Node.prototype && !Node.prototype.matches) {
-      Node.prototype.matches = function(selector) {
+      Node.prototype.matches = function (selector) {
         // Only work for Element nodes
         if (this.nodeType === 1) {
           return Element.prototype.matches.call(this, selector);
@@ -203,18 +203,18 @@
       };
     }
   })();
-  
+
   // Additional fix: Wrap JSON.stringify to prevent illegal invocation
   if (typeof JSON !== 'undefined' && JSON.stringify) {
     var originalStringify = JSON.stringify;
-    JSON.stringify = function(value, replacer, space) {
+    JSON.stringify = function (value, replacer, space) {
       try {
         return originalStringify.call(this, value, replacer, space);
       } catch (e) {
         if (e.message && e.message.includes('Illegal invocation')) {
           // Fallback: use a safe stringify
           try {
-            return originalStringify(value, function(key, val) {
+            return originalStringify(value, function (key, val) {
               if (typeof val === 'function' || val === undefined) {
                 return null;
               }
@@ -245,13 +245,13 @@
       callback();
       return;
     }
-    
+
     // If DOM is already loaded, run immediately
     if (document.readyState === 'interactive' || document.readyState === 'complete') {
       callback();
       return;
     }
-    
+
     // Otherwise wait for DOMContentLoaded (faster than window.onload)
     // This fires when HTML is parsed, not waiting for images/stylesheets
     if (document.readyState === 'loading') {
@@ -275,9 +275,9 @@
       callback();
       return;
     }
-    
+
     let retries = 0;
-    
+
     function checkRrweb() {
       // Check if rrweb is available
       if (window.rrweb && typeof window.rrweb.record === 'function') {
@@ -300,7 +300,7 @@
         loadRrwebManually(callback);
       }
     }
-    
+
     // Start checking immediately (no initial delay)
     checkRrweb();
   }
@@ -314,25 +314,25 @@
 
     console.log('UXCam SDK: Loading bundled rrweb from CDN...');
     const head = document.head || document.getElementsByTagName('head')[0];
-    
+
     // Load bundled rrweb-all.min.js (contains everything)
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/rrweb@latest/dist/rrweb-all.min.js';
     script.async = false;
     script.defer = false;
-    
-    script.onload = function() {
+
+    script.onload = function () {
       console.log('UXCam SDK: Bundled rrweb script loaded, verifying...');
       // Wait a bit for rrweb to fully initialize
       setTimeout(() => {
         waitForRrweb(callback);
       }, 200);
     };
-    
-    script.onerror = function() {
+
+    script.onerror = function () {
       console.error('UXCam SDK: ❌ Failed to load bundled rrweb from CDN');
     };
-    
+
     // Insert script in head
     head.insertBefore(script, head.firstChild);
   }
@@ -344,7 +344,7 @@
       if (window.UXCamSDK?.apiUrl) {
         return window.UXCamSDK.apiUrl;
       }
-      
+
       // In production, try to infer from current page origin
       if (typeof window !== 'undefined' && window.location) {
         const hostname = window.location.hostname;
@@ -354,11 +354,11 @@
           return window.location.origin.replace(/\/$/, '');
         }
       }
-      
+
       // Fallback to localhost for development
       return 'http://localhost:3001';
     }
-    
+
     // Configuration
     const apiUrl = getApiUrl();
     const config = {
@@ -373,20 +373,20 @@
       checkoutInterval: 10000, // Take full snapshot every 10 seconds
       flushOnUnload: true, // Flush all snapshots when user leaves
     };
-    
+
     // CRITICAL: Helper function to always get the current SDK key from window.UXCamSDK
     // This prevents using a cached/stale SDK key if it was changed after SDK initialization
     function getCurrentSdkKey() {
       return window.UXCamSDK?.key || config.sdkKey || '';
     }
-    
+
     // Storage & Performance Limits
     const MAX_QUEUE_SIZE = 50000; // Maximum events/snapshots in memory (prevent memory bloat)
     const MAX_SNAPSHOT_QUEUE_SIZE = 10000; // Maximum snapshots in queue
     const MAX_EVENT_QUEUE_SIZE = 5000; // Maximum events in queue
     const WARN_QUEUE_SIZE = 1000; // Warn when queue reaches this size
     const MAX_UPLOAD_RETRIES = 3; // Maximum retry attempts for failed uploads
-    
+
     // Log configuration for debugging
     console.log('UXCam SDK: Configuration loaded', {
       apiUrl: config.apiUrl,
@@ -423,7 +423,7 @@
             return false;
           }
         };
-        
+
         const getOnline = () => {
           try {
             return navigator.onLine !== undefined ? navigator.onLine : true;
@@ -431,7 +431,7 @@
             return true;
           }
         };
-        
+
         const getTimezone = () => {
           try {
             if (Intl && Intl.DateTimeFormat) {
@@ -442,7 +442,7 @@
             return 'UTC';
           }
         };
-        
+
         // Extract region from timezone for geographic data
         let region = null;
         let city = null;
@@ -474,7 +474,7 @@
         } catch (e) {
           // Ignore
         }
-        
+
         // Initialize deviceInfo with timezone-based location first
         deviceInfo = {
           userAgent: (navigator && navigator.userAgent) ? navigator.userAgent : 'unknown',
@@ -492,7 +492,7 @@
           city: city,
           country: country,
         };
-        
+
         // Try to get geolocation (with user permission) - async, backend will use IP as fallback
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
@@ -510,9 +510,9 @@
               // This is normal - browser geolocation requires explicit permission
               // IP-based geolocation will still work and provide location data
               if (window.UXCamSDK && window.UXCamSDK.debug) {
-                const errorMsg = error.code === 1 ? 'permission denied' : 
-                               error.code === 2 ? 'position unavailable' : 
-                               error.code === 3 ? 'timeout' : 'unknown error';
+                const errorMsg = error.code === 1 ? 'permission denied' :
+                  error.code === 2 ? 'position unavailable' :
+                    error.code === 3 ? 'timeout' : 'unknown error';
                 console.log(`UXCam SDK: Browser geolocation ${errorMsg} (this is normal). IP-based geolocation will be used instead.`);
               }
             },
@@ -545,21 +545,21 @@
       const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
       const STORAGE_URL_KEY = 'uxcam_last_url';
       const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-      
+
       const currentUrl = window.location.href;
       let isNavigation = false;
       let reusedSessionId = null;
-      
+
       console.log('UXCam SDK: 🔍 generateSessionId() called, checking localStorage...', {
         currentUrl: currentUrl,
         hasLocalStorage: typeof localStorage !== 'undefined'
       });
-      
+
       try {
         const storedSessionId = localStorage.getItem(STORAGE_KEY);
         const storedTimestamp = localStorage.getItem(STORAGE_TIMESTAMP_KEY);
         const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
-        
+
         console.log('UXCam SDK: 📦 localStorage check result:', {
           hasStoredSessionId: !!storedSessionId,
           storedSessionId: storedSessionId,
@@ -567,7 +567,7 @@
           storedTimestamp: storedTimestamp,
           storedUrl: storedUrl
         });
-        
+
         if (storedSessionId && storedTimestamp) {
           const sessionAge = Date.now() - parseInt(storedTimestamp, 10);
           console.log('UXCam SDK: ⏱️ Session age check:', {
@@ -576,7 +576,7 @@
             timeout: SESSION_TIMEOUT,
             isWithinTimeout: sessionAge < SESSION_TIMEOUT
           });
-          
+
           // Reuse session if it's less than 30 minutes old
           if (sessionAge < SESSION_TIMEOUT) {
             console.log('UXCam SDK: ✅ Reusing existing session for continuous recording', {
@@ -586,7 +586,7 @@
               currentUrl: currentUrl
             });
             reusedSessionId = storedSessionId;
-            
+
             // Check if URL changed (navigation detected) - works for ANY page change
             // This detects navigation from ANY page to ANY other page, regardless of page type
             if (storedUrl && storedUrl !== currentUrl) {
@@ -628,16 +628,16 @@
         // localStorage not available, continue with new session
         console.warn('UXCam SDK: ⚠️ localStorage not available, creating new session', e);
       }
-      
+
       // Generate new session ID if not reusing
       const sessionId = reusedSessionId || ('sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9));
-      
+
       console.log('UXCam SDK: 🎯 Final session ID decision:', {
         reused: !!reusedSessionId,
         sessionId: sessionId,
         isNew: !reusedSessionId
       });
-      
+
       // Store in localStorage IMMEDIATELY
       try {
         localStorage.setItem(STORAGE_KEY, sessionId);
@@ -651,13 +651,13 @@
       } catch (e) {
         console.error('UXCam SDK: ❌ Failed to store session ID in localStorage:', e);
       }
-      
+
       // Store navigation flag for later use
       if (isNavigation) {
         window.__UXCAM_NAVIGATION_DETECTED = true;
         window.__UXCAM_NAVIGATION_FROM_URL = storedUrl;
       }
-      
+
       return sessionId;
     }
 
@@ -679,7 +679,7 @@
         });
         return; // Exit immediately - don't create duplicate recording
       }
-      
+
       // Step 1: Basic validation
       if (!window.rrweb) {
         console.error('UXCam SDK: rrweb not available');
@@ -693,37 +693,37 @@
       // CRITICAL: Start recording IMMEDIATELY - don't wait for DOM/CSS
       // This ensures recording starts as fast as possible (like UXCam/Hotjar)
       // CSS will be captured in incremental snapshots
-      
+
       // Step 2: Initialize recording state
       type2Uploaded = false; // Will be set to true immediately to allow events
       let capturedType2 = null;
       let type2Resolve = null;
       const type2Promise = new Promise(resolve => { type2Resolve = resolve; });
-      
+
       // Enable incremental events immediately - don't wait for Type 2 upload
       // This allows recording to start capturing events right away
       type2Uploaded = true;
-      
+
       // Step 5.5: ALWAYS record navigation event (Type 4 Meta) if URL changed (100% reliable like UXCam)
       // This ensures page change markers appear on the replay seek bar
       const STORAGE_URL_KEY = 'uxcam_last_url';
       const currentUrl = window.location.href;
       let storedUrl = null;
-      
+
       try {
         storedUrl = localStorage.getItem(STORAGE_URL_KEY);
       } catch (e) {
         // localStorage not available, continue
       }
-      
+
       // Check for pending navigation from beforeunload (highest priority)
       const pendingNav = window.__UXCAM_PENDING_NAVIGATION;
-      
+
       // Determine if navigation occurred and get URLs
       let shouldRecordNavigation = false;
       let fromUrl = '';
       let toUrl = currentUrl;
-      
+
       if (pendingNav) {
         // Navigation detected via beforeunload - use those URLs
         shouldRecordNavigation = true;
@@ -745,7 +745,7 @@
           to: toUrl
         });
       }
-      
+
       // Record Type 4 Meta Event for navigation (like UXCam)
       if (shouldRecordNavigation && fromUrl && toUrl && fromUrl !== toUrl) {
         const navigationEvent = {
@@ -759,7 +759,7 @@
           },
           timestamp: pendingNav?.timestamp || Date.now()
         };
-        
+
         // Add navigation event to queue BEFORE Type 2 snapshot
         // This ensures the page change marker appears at the correct position in the replay
         snapshotQueue.push(navigationEvent);
@@ -773,12 +773,12 @@
           note: 'This will show a page change marker on the replay seek bar'
         });
       }
-      
+
       // Clear navigation flags after recording
       delete window.__UXCAM_NAVIGATION_DETECTED;
       delete window.__UXCAM_NAVIGATION_FROM_URL;
       delete window.__UXCAM_PENDING_NAVIGATION;
-      
+
       // Step 6: Start rrweb recording engine
       // CRITICAL: Set global flag BEFORE starting recording to prevent duplicates
       window.__RRWEB_RECORDING_STARTED__ = true;
@@ -799,16 +799,16 @@
               uploadType2InBackground(event);
               return; // Don't add to queue, will upload separately
             }
-            
+
             // Don't block incremental events - recording starts immediately
             // All events are captured right away (like UXCam/Hotjar)
-            
+
             // Track activity when events are emitted
             trackActivity();
-            
+
             // Process all events (including periodic full snapshots)
             events.push(event);
-            
+
             // Storage management: Prevent queue from growing too large
             if (snapshotQueue.length >= MAX_SNAPSHOT_QUEUE_SIZE) {
               console.warn('UXCam SDK: ⚠️ Snapshot queue too large, forcing flush to prevent memory bloat', {
@@ -827,9 +827,9 @@
                 warningThreshold: WARN_QUEUE_SIZE
               });
             }
-            
+
             snapshotQueue.push(event);
-            
+
             // Flush snapshots only when batch size is reached
             // Don't flush periodically - only flush on page unload/visibility change (UXCam style)
             if (snapshotQueue.length >= config.batchSize) {
@@ -855,10 +855,23 @@
         // Note: checkoutEveryNms may not be available in all rrweb versions
         // The larger batch size and slower flush will naturally create larger snapshots
         // Capture all user interactions at realistic speeds
+        // THROTTLE MOUSE MOVEMENTS: Reduce from ~60 FPS to 2x per second (500ms)
+        // This prevents database crashes from excessive cursor position saves
         sampling: {
           scroll: 300, // Record scroll every 300ms (slower, more realistic - matches user interaction timing)
           input: 'last', // Record last input value (captures all inputs)
-          mouseInteraction: true, // Record all mouse interactions (clicks, moves)
+          mouseInteraction: {
+            // Throttle mouse movements to 500ms (2 events per second)
+            // This reduces database writes by ~97% while maintaining smooth replay
+            MouseMove: 500, // Mouse position saved only twice per second
+            MouseDown: false, // Record all mouse down events immediately (no throttle)
+            MouseUp: false, // Record all mouse up events immediately (no throttle)
+            Click: false, // Record all click events immediately (no throttle)
+            ContextMenu: false, // Record all context menu events immediately (no throttle)
+            DblClick: false, // Record all double-click events immediately (no throttle)
+            TouchStart: false, // Record all touch start events immediately (no throttle)
+            TouchMove: 500, // Throttle touch movements same as mouse (mobile support)
+          },
         },
         // Record all DOM mutations and user interactions
         blockClass: 'rr-block',
@@ -867,7 +880,7 @@
         // Record all events for complete session replay
         recordAfter: 'DOMContentLoaded',
       });
-      
+
       // Mark recording start time immediately (recording starts right away)
       if (!recordingStartTime) {
         recordingStartTime = Date.now();
@@ -878,7 +891,7 @@
         console.log('UXCam SDK: ✅ Recording started immediately (synchronous, like UXCam/Hotjar)');
       }
     }
-    
+
     // Upload Type 2 snapshot in background (non-blocking)
     async function uploadType2InBackground(type2Event) {
       // Run in background - don't block recording (0ms delay = next event loop tick)
@@ -889,9 +902,9 @@
             console.warn('UXCam SDK: Type 2 snapshot has no data');
             return;
           }
-          
+
           console.log('UXCam SDK: Type 2 snapshot captured, uploading in background...');
-          
+
           // Check if there's a navigation event in the queue (should be first)
           const eventsToUpload = [];
           if (snapshotQueue.length > 0 && snapshotQueue[0].type === 4) {
@@ -900,9 +913,9 @@
             console.log('UXCam SDK: Including navigation event with Type 2 snapshot');
           }
           eventsToUpload.push(type2Event);
-          
+
           const compressed = compressSnapshots(eventsToUpload);
-          
+
           // Upload Type 2 in background (non-blocking)
           const response = await fetch(`${config.apiUrl}/api/snapshots/ingest`, {
             method: 'POST',
@@ -915,7 +928,7 @@
               is_initial_snapshot: true
             })
           });
-          
+
           if (!response.ok) {
             let errorMessage = `Upload failed: ${response.status}`;
             try {
@@ -927,11 +940,11 @@
             console.warn('UXCam SDK: Type 2 upload failed (non-critical):', errorMessage);
             return;
           }
-          
+
           // Log success
           const responseData = await response.json().catch(() => ({}));
           console.log('UXCam SDK: ✅ Type 2 uploaded successfully (background)', responseData);
-          
+
           // Store session DB ID and project ID from response
           if (responseData.session_id && !sessionDbId) {
             sessionDbId = responseData.session_id;
@@ -945,13 +958,13 @@
         }
       }, 0);
     }
-    
+
     // OLD FUNCTION REMOVED - Incremental recording is now integrated into startRecording()
     // The emit function in startRecording() handles incremental events after type2Uploaded flag is set
 
     // Start new session - SAFE: Won't break website if it fails
     function startSession() {
-      return safeExecute(function() {
+      return safeExecute(function () {
         // CRITICAL: Singleton pattern - prevent duplicate session creation
         // If recording has already started, don't create a new session
         if (window.__RRWEB_RECORDING_STARTED__ === true && sessionId) {
@@ -961,18 +974,18 @@
           });
           return; // Exit immediately - don't create duplicate session
         }
-        
+
         // CRITICAL: Check localStorage FIRST before generating new session ID
         // This ensures we reuse the same session across page navigations
         const STORAGE_KEY = 'uxcam_session_id';
         const STORAGE_TIMESTAMP_KEY = 'uxcam_session_timestamp';
         const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-        
+
         let existingSessionId = null;
         try {
           const storedSessionId = localStorage.getItem(STORAGE_KEY);
           const storedTimestamp = localStorage.getItem(STORAGE_TIMESTAMP_KEY);
-          
+
           if (storedSessionId && storedTimestamp) {
             const sessionAge = Date.now() - parseInt(storedTimestamp, 10);
             if (sessionAge < SESSION_TIMEOUT) {
@@ -987,14 +1000,14 @@
         } catch (e) {
           console.warn('UXCam SDK: Could not read localStorage:', e);
         }
-        
+
         const previousSessionId = sessionId;
         sessionId = existingSessionId || generateSessionId();
-        
+
         // Check if this is a continuation of an existing session (page navigation)
-        const isSessionContinuation = (previousSessionId && previousSessionId === sessionId) || 
-                                      (existingSessionId && existingSessionId === sessionId);
-        
+        const isSessionContinuation = (previousSessionId && previousSessionId === sessionId) ||
+          (existingSessionId && existingSessionId === sessionId);
+
         if (isSessionContinuation) {
           console.log('UXCam SDK: 🔄 Continuing existing session across page navigation', {
             sessionId: sessionId,
@@ -1016,27 +1029,27 @@
           events = [];
           sessionStartTime = Date.now();
         }
-        
+
         lastActivityTime = Date.now();
-        
+
         // Setup activity tracking
         setupActivityTracking();
-        
+
         // Setup form field tracking
         setupFormFieldTracking();
-        
+
         // CRITICAL: If this is a navigation (different page), record navigation event FIRST
         // This must happen BEFORE starting recording to ensure navigation is captured
         if (isSessionContinuation && window.__UXCAM_NAVIGATION_DETECTED) {
           const fromUrl = window.__UXCAM_NAVIGATION_FROM_URL || 'unknown';
           const toUrl = window.location.href;
-          
+
           console.log('UXCam SDK: 🔄 Recording navigation event before starting recording', {
             from: fromUrl,
             to: toUrl,
             sessionId: sessionId
           });
-          
+
           // Store navigation info to be recorded when recording starts
           window.__UXCAM_PENDING_NAVIGATION = {
             from: fromUrl,
@@ -1044,16 +1057,16 @@
             timestamp: Date.now()
           };
         }
-        
+
         // Start DOM recording (async, won't block)
         // This will record navigation event + new Type 2 snapshot if navigation detected
-        safeAsyncExecute(function() {
+        safeAsyncExecute(function () {
           startRecording();
         }, null, null, 'startRecording failed');
-        
+
         // Reset inactivity timer
         resetInactivityTimer();
-        
+
         // DON'T track session_start here - wait until recording actually starts (Type 2 uploaded)
         // This prevents events from being sent before recording starts
       }, null, null, 'startSession failed');
@@ -1061,7 +1074,7 @@
 
     // Track event - SAFE: Won't break website if it fails
     function trackEvent(type, data = {}) {
-      return safeExecute(function() {
+      return safeExecute(function () {
         if (!getCurrentSdkKey()) {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.warn('UXCam SDK: SDK key not configured');
@@ -1072,7 +1085,7 @@
         if (!sessionId) {
           startSession();
         }
-        
+
         // Block events until recording starts (Type 2 uploaded) - except session_start and network events
         // Network events are useful even before recording starts (for debugging)
         // This prevents most events from being sent before recording actually starts
@@ -1108,7 +1121,7 @@
             warningThreshold: WARN_QUEUE_SIZE
           });
         }
-        
+
         eventQueue.push(event);
         lastActivityTime = Date.now();
 
@@ -1142,9 +1155,9 @@
             return value;
           });
         };
-        
+
         const jsonString = safeStringify(snapshots);
-        
+
         // CRITICAL: Send uncompressed JSON to ensure PHP backend can parse it
         // PHP backend doesn't have LZString decompression, so we must send plain JSON
         // Compression can be added later if needed with a PHP LZString library
@@ -1164,7 +1177,7 @@
 
     // Flush snapshots to server - SAFE: Won't break website if it fails
     function flushSnapshots() {
-      return safeAsyncExecute(function() {
+      return safeAsyncExecute(function () {
         if (snapshotQueue.length === 0 || !sessionId) {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.warn('UXCam SDK: Cannot flush snapshots', {
@@ -1175,94 +1188,94 @@
           return;
         }
 
-      // PRIORITY CHECK: Do not send incremental events if Type 2 hasn't been uploaded yet
-      // This ensures the first ingest call contains Type 2
-      const hasType2InQueue = snapshotQueue.some(s => s && s.type === 2);
-      if (!type2Uploaded && !hasType2InQueue) {
-        console.log('UXCam SDK: Blocking snapshot flush - waiting for Type 2 to be uploaded first');
-        return; // Don't send incremental events until Type 2 is uploaded
-      }
+        // PRIORITY CHECK: Do not send incremental events if Type 2 hasn't been uploaded yet
+        // This ensures the first ingest call contains Type 2
+        const hasType2InQueue = snapshotQueue.some(s => s && s.type === 2);
+        if (!type2Uploaded && !hasType2InQueue) {
+          console.log('UXCam SDK: Blocking snapshot flush - waiting for Type 2 to be uploaded first');
+          return; // Don't send incremental events until Type 2 is uploaded
+        }
 
-      const snapshots = snapshotQueue.splice(0, config.batchSize);
-      
-      // VALIDATE snapshots before sending - filter out only truly invalid ones
-      // REMOVED: Size restrictions - let all valid snapshots through for complete recording
-      const validSnapshots = snapshots.filter(snapshot => {
-        if (!snapshot || snapshot.data === undefined) {
-          console.warn('UXCam SDK: Filtering out invalid snapshot (missing data)', snapshot);
-          return false;
-        }
-        
-        // For type 2 snapshots, ensure they have structure
-        if (snapshot.type === 2) {
-          // Check if it has childNodes or is a valid DOM structure
-          if (!snapshot.data || (typeof snapshot.data === 'object' && !snapshot.data.childNodes && !snapshot.data.node)) {
-            console.warn('UXCam SDK: Filtering out type 2 snapshot (invalid structure)', snapshot);
+        const snapshots = snapshotQueue.splice(0, config.batchSize);
+
+        // VALIDATE snapshots before sending - filter out only truly invalid ones
+        // REMOVED: Size restrictions - let all valid snapshots through for complete recording
+        const validSnapshots = snapshots.filter(snapshot => {
+          if (!snapshot || snapshot.data === undefined) {
+            console.warn('UXCam SDK: Filtering out invalid snapshot (missing data)', snapshot);
             return false;
           }
-        } else {
-          // Type 3+ events (incremental) - just check they have data
-          if (!snapshot.data || (typeof snapshot.data === 'object' && Object.keys(snapshot.data).length === 0)) {
-            console.warn('UXCam SDK: Filtering out incremental event (empty data)', snapshot);
-            return false;
+
+          // For type 2 snapshots, ensure they have structure
+          if (snapshot.type === 2) {
+            // Check if it has childNodes or is a valid DOM structure
+            if (!snapshot.data || (typeof snapshot.data === 'object' && !snapshot.data.childNodes && !snapshot.data.node)) {
+              console.warn('UXCam SDK: Filtering out type 2 snapshot (invalid structure)', snapshot);
+              return false;
+            }
+          } else {
+            // Type 3+ events (incremental) - just check they have data
+            if (!snapshot.data || (typeof snapshot.data === 'object' && Object.keys(snapshot.data).length === 0)) {
+              console.warn('UXCam SDK: Filtering out incremental event (empty data)', snapshot);
+              return false;
+            }
           }
-        }
-        
-        return true;
-      });
-      
-      if (validSnapshots.length === 0) {
-        console.warn('UXCam SDK: No valid snapshots to flush after validation');
-        return;
-      }
-      
-      if (validSnapshots.length < snapshots.length) {
-        console.log(`UXCam SDK: Filtered ${snapshots.length - validSnapshots.length} invalid snapshots`);
-      }
-      
-      const hasType2 = validSnapshots.some(s => s.type === 2);
-      const payloadSize = JSON.stringify(validSnapshots).length;
-      
-      console.log('UXCam SDK: Flushing validated snapshots', {
-        originalCount: snapshots.length,
-        validCount: validSnapshots.length,
-        types: validSnapshots.map(s => s.type),
-        hasType2: hasType2,
-        firstType: validSnapshots[0]?.type,
-        firstTimestamp: validSnapshots[0]?.timestamp,
-        payloadSize: payloadSize,
-        payloadSizeKB: (payloadSize / 1024).toFixed(2) + 'kB'
-      });
-      
-      if (hasType2) {
-        const type2Size = JSON.stringify(validSnapshots.find(s => s.type === 2)).length;
-        console.log('UXCam SDK: ⚠️ Type 2 included in flush (should have been sent separately)', {
-          type2Size: type2Size,
-          type2SizeKB: (type2Size / 1024).toFixed(2) + 'kB'
+
+          return true;
         });
-      }
-      
-      const compressed = compressSnapshots(validSnapshots);
-      
-      // Log session ID being used for incremental snapshots
-      console.log('UXCam SDK: 📤 Uploading incremental snapshots with session ID:', {
-        sessionId: sessionId,
-        snapshotCount: validSnapshots.length,
-        url: window.location.href
-      });
 
-      fetch(`${config.apiUrl}/api/snapshots/ingest`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          sdk_key: getCurrentSdkKey(),
-          session_id: sessionId,
-          snapshots: compressed,
-          snapshot_count: validSnapshots.length
-        })
-        }).catch(function(error) {
+        if (validSnapshots.length === 0) {
+          console.warn('UXCam SDK: No valid snapshots to flush after validation');
+          return;
+        }
+
+        if (validSnapshots.length < snapshots.length) {
+          console.log(`UXCam SDK: Filtered ${snapshots.length - validSnapshots.length} invalid snapshots`);
+        }
+
+        const hasType2 = validSnapshots.some(s => s.type === 2);
+        const payloadSize = JSON.stringify(validSnapshots).length;
+
+        console.log('UXCam SDK: Flushing validated snapshots', {
+          originalCount: snapshots.length,
+          validCount: validSnapshots.length,
+          types: validSnapshots.map(s => s.type),
+          hasType2: hasType2,
+          firstType: validSnapshots[0]?.type,
+          firstTimestamp: validSnapshots[0]?.timestamp,
+          payloadSize: payloadSize,
+          payloadSizeKB: (payloadSize / 1024).toFixed(2) + 'kB'
+        });
+
+        if (hasType2) {
+          const type2Size = JSON.stringify(validSnapshots.find(s => s.type === 2)).length;
+          console.log('UXCam SDK: ⚠️ Type 2 included in flush (should have been sent separately)', {
+            type2Size: type2Size,
+            type2SizeKB: (type2Size / 1024).toFixed(2) + 'kB'
+          });
+        }
+
+        const compressed = compressSnapshots(validSnapshots);
+
+        // Log session ID being used for incremental snapshots
+        console.log('UXCam SDK: 📤 Uploading incremental snapshots with session ID:', {
+          sessionId: sessionId,
+          snapshotCount: validSnapshots.length,
+          url: window.location.href
+        });
+
+        fetch(`${config.apiUrl}/api/snapshots/ingest`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            sdk_key: getCurrentSdkKey(),
+            session_id: sessionId,
+            snapshots: compressed,
+            snapshot_count: validSnapshots.length
+          })
+        }).catch(function (error) {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.error('UXCam SDK: Failed to send snapshots', error);
           }
@@ -1275,16 +1288,16 @@
     // Store session DB ID and project ID from backend responses
     let sessionDbId = null;
     let projectId = null;
-    
+
     // Flush events to server - SAFE: Won't break website if it fails
     function flushEvents() {
-      return safeAsyncExecute(function() {
+      return safeAsyncExecute(function () {
         if (eventQueue.length === 0 || !sessionId) {
           return;
         }
 
         const events = eventQueue.splice(0, config.batchSize);
-        
+
         fetch(`${config.apiUrl}/api/events/ingest`, {
           method: 'POST',
           headers: {
@@ -1298,23 +1311,23 @@
             user_properties: {}
           })
         })
-        .then(response => response.json())
-        .then(data => {
-          // Store session DB ID and project ID from response
-          if (data.session_id && !sessionDbId) {
-            sessionDbId = data.session_id;
-          }
-          if (data.project_id && !projectId) {
-            projectId = data.project_id;
-          }
-        })
-        .catch(error => {
-          if (window.UXCamSDK && window.UXCamSDK.debug) {
-            console.error('UXCam SDK: Failed to send events', error);
-          }
-          // Re-add events to queue on failure
-          eventQueue.unshift(...events);
-        });
+          .then(response => response.json())
+          .then(data => {
+            // Store session DB ID and project ID from response
+            if (data.session_id && !sessionDbId) {
+              sessionDbId = data.session_id;
+            }
+            if (data.project_id && !projectId) {
+              projectId = data.project_id;
+            }
+          })
+          .catch(error => {
+            if (window.UXCamSDK && window.UXCamSDK.debug) {
+              console.error('UXCam SDK: Failed to send events', error);
+            }
+            // Re-add events to queue on failure
+            eventQueue.unshift(...events);
+          });
 
         if (flushTimer) {
           clearTimeout(flushTimer);
@@ -1330,7 +1343,7 @@
       if (config.flushInterval === 0) {
         return;
       }
-      
+
       if (flushTimer) {
         return;
       }
@@ -1344,7 +1357,7 @@
     // Schedule snapshot flush (separate timer for snapshots)
     let snapshotFlushTimer = null;
     let periodicFlushInterval = null;
-    
+
     function scheduleSnapshotFlush() {
       // DISABLED: Periodic flushing removed
       // Snapshots will only be flushed on:
@@ -1354,7 +1367,7 @@
       // This matches UXCam behavior - collect during session, send on exit
       return; // Do nothing - no periodic flushing
     }
-    
+
     function stopPeriodicFlush() {
       if (periodicFlushInterval) {
         clearInterval(periodicFlushInterval);
@@ -1368,18 +1381,18 @@
 
     // End session (reusable function) - SAFE: Won't break website if it fails
     function endSession() {
-      return safeExecute(function() {
+      return safeExecute(function () {
         if (!sessionId) return;
-        
+
         // Clear inactivity timer
         if (inactivityTimer) {
           clearTimeout(inactivityTimer);
           inactivityTimer = null;
         }
-        
+
         // Stop periodic flushing
         stopPeriodicFlush();
-        
+
         // Stop recording first
         if (stopRecording) {
           try {
@@ -1391,10 +1404,10 @@
             }
           }
         }
-        
+
         // Calculate session duration from ACTUAL ACTIVITY TIME (not idle time)
         // This prevents sessions from growing when user is inactive
-        
+
         // Method 1: Calculate from first to last event (most accurate - only counts active time)
         let eventBasedDuration = 0;
         if (events.length > 0) {
@@ -1412,7 +1425,7 @@
             })
             .filter(ts => ts !== null && ts > 0)
             .sort((a, b) => a - b);
-          
+
           if (timestamps.length >= 2) {
             // Duration from first event to last event (actual activity window)
             eventBasedDuration = timestamps[timestamps.length - 1] - timestamps[0];
@@ -1427,30 +1440,30 @@
             eventBasedDuration = 1000;
           }
         }
-        
+
         // Method 2: Fallback to recording duration (but this includes idle time)
-        const recordingDuration = recordingStartTime 
-          ? Date.now() - recordingStartTime 
+        const recordingDuration = recordingStartTime
+          ? Date.now() - recordingStartTime
           : (sessionStartTime ? Date.now() - sessionStartTime : 0);
-        
+
         // Use event-based duration if available (most accurate - only active time)
         // Otherwise use recording duration as fallback
         const finalDuration = eventBasedDuration > 0 ? eventBasedDuration : recordingDuration;
-        
+
         console.log('UXCam SDK: Session duration calculation', {
           eventBased: Math.round(eventBasedDuration / 1000) + 's',
           recordingBased: Math.round(recordingDuration / 1000) + 's',
           final: Math.round(finalDuration / 1000) + 's',
           eventCount: events.length
         });
-        
+
         // Track session end with duration
         trackEvent('session_end', {
           duration: finalDuration,
           recording_duration: recordingDuration,
           event_duration: eventBasedDuration
         });
-        
+
         // Send session end update to backend - mark as closed/ended
         if (sessionDbId && config.apiUrl) {
           fetch(`${config.apiUrl}/api/sessions/${sessionDbId}/end`, {
@@ -1476,7 +1489,7 @@
             }
           });
         }
-        
+
         // CRITICAL: Flush all remaining data before ending session
         // Use synchronous flushing to ensure data is uploaded
         console.log('UXCam SDK: Ending session - flushing all remaining data', {
@@ -1484,13 +1497,13 @@
           snapshotQueueSize: snapshotQueue.length,
           eventsCount: events.length
         });
-        
+
         // Flush events first (smaller, faster)
         if (eventQueue.length > 0) {
           console.log('UXCam SDK: Flushing remaining events before session end');
           flushEvents();
         }
-        
+
         // Flush all collected snapshots when ending session
         if (snapshotQueue.length > 0) {
           console.log('UXCam SDK: Ending session, flushing all collected snapshots', {
@@ -1498,20 +1511,20 @@
           });
           flushSnapshots();
         }
-        
+
         // Wait a moment for uploads to complete (if possible)
         // Note: This is best-effort - sendBeacon will handle final uploads
         if (eventQueue.length > 0 || snapshotQueue.length > 0) {
           console.warn('UXCam SDK: ⚠️ Still have data in queues after flush - will use sendBeacon on unload');
         }
-      
+
         // Clear session from localStorage when ending
         // Also clean up any old session data to prevent localStorage bloat
         try {
           localStorage.removeItem('uxcam_session_id');
           localStorage.removeItem('uxcam_session_timestamp');
           localStorage.removeItem('uxcam_last_url');
-          
+
           // Clean up any other old localStorage keys (prevent bloat)
           // Only remove keys that match our pattern and are old
           const keysToCheck = ['uxcam_session_id', 'uxcam_session_timestamp', 'uxcam_last_url'];
@@ -1529,23 +1542,23 @@
         } catch (e) {
           console.warn('UXCam SDK: Failed to clean up localStorage:', e);
         }
-        
+
         sessionId = null;
         sessionDbId = null;
-        
+
         // CRITICAL: Reset singleton flag when session ends
         // This allows a new session to be started later
         window.__RRWEB_RECORDING_STARTED__ = false;
         console.log('UXCam SDK: ✅ Singleton flag reset - new session can be started', {
           duration: finalDuration
         });
-        
+
         if (window.UXCamSDK && window.UXCamSDK.debug) {
           console.log('UXCam: Session ended', { duration: finalDuration });
         }
       }, null, null, 'endSession failed');
     }
-    
+
     // Start new session (can be called manually)
     function startNewSession() {
       if (sessionId) {
@@ -1555,16 +1568,16 @@
       // Reset inactivity timer when starting new session
       resetInactivityTimer();
     }
-    
+
     // Add event listeners for user activity
     function setupActivityTracking() {
       // Track clicks, inputs, scrolls, keypresses, mouse movements
       const activityEvents = ['click', 'input', 'scroll', 'keydown', 'keypress', 'mousemove', 'touchstart', 'touchmove'];
-      
+
       activityEvents.forEach(eventType => {
         document.addEventListener(eventType, trackActivity, { passive: true });
       });
-      
+
       // Also track window focus/blur
       window.addEventListener('focus', trackActivity);
       window.addEventListener('blur', () => {
@@ -1575,42 +1588,42 @@
         }
       });
     }
-    
+
     // Form field tracking
     let formFieldTrackingEnabled = true;
     let trackedForms = new Map(); // Map of form element to form ID
-    
+
     function setupFormFieldTracking() {
       if (!formFieldTrackingEnabled) return;
-      
+
       // Track all form fields on the page
       function trackFormField(field, action, value = null) {
         if (!sessionId || !getCurrentSdkKey()) return;
-        
+
         // Find parent form
         let form = field.closest('form');
         if (!form) return;
-        
+
         // Get or create form ID
         let formId = trackedForms.get(form);
         if (!formId) {
           formId = form.id || form.name || `form_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           trackedForms.set(form, formId);
         }
-        
+
         // Get field info
         const fieldName = field.name || field.id || field.placeholder || 'unnamed_field';
         const fieldType = field.type || field.tagName.toLowerCase();
-        
+
         // Send form field event to backend (only if we have project ID and session DB ID)
         const currentProjectId = getProjectId();
         const currentSessionDbId = getSessionDbId();
-        
+
         if (!currentProjectId || !currentSessionDbId) {
           // Queue the event to send later when we have the IDs
           return;
         }
-        
+
         fetch(`${config.apiUrl}/api/funnels/${currentProjectId}/form-field-events`, {
           method: 'POST',
           headers: {
@@ -1628,20 +1641,20 @@
           console.warn('UXCam SDK: Failed to send form field event', error);
         });
       }
-      
+
       // Track form field focus
       document.addEventListener('focusin', (e) => {
         if (e.target.matches('input, textarea, select')) {
           trackFormField(e.target, 'focus');
         }
       }, true);
-      
+
       // Track form field blur (completion or abandonment)
       document.addEventListener('focusout', (e) => {
         if (e.target.matches('input, textarea, select')) {
           const field = e.target;
           const hasValue = field.value && field.value.trim().length > 0;
-          
+
           // Check if user moved to another field (not abandoned)
           setTimeout(() => {
             if (document.activeElement && document.activeElement.matches('input, textarea, select, button')) {
@@ -1658,20 +1671,20 @@
           }, 100);
         }
       }, true);
-      
+
       // Track form field changes
       document.addEventListener('input', (e) => {
         if (e.target.matches('input, textarea, select')) {
           trackFormField(e.target, 'change', e.target.value);
         }
       }, true);
-      
+
       // Track form submissions
       document.addEventListener('submit', (e) => {
         if (e.target.matches('form')) {
           const form = e.target;
           const formId = trackedForms.get(form) || form.id || form.name || 'unknown';
-          
+
           // Track all fields in the form as submitted
           const fields = form.querySelectorAll('input, textarea, select');
           fields.forEach(field => {
@@ -1682,26 +1695,26 @@
         }
       }, true);
     }
-    
+
     // Helper to get project ID
     function getProjectId() {
       return projectId;
     }
-    
+
     // Helper to get session DB ID
     function getSessionDbId() {
       return sessionDbId;
     }
-    
+
     // Inactivity detection - stop recording if user is inactive
     let inactivityTimer = null;
     const INACTIVITY_TIMEOUT = 30 * 60 * 1000; // 30 minutes of inactivity (matching session timeout)
-    
+
     function resetInactivityTimer() {
       if (inactivityTimer) {
         clearTimeout(inactivityTimer);
       }
-      
+
       // Only set timer if we have an active session
       if (sessionId && stopRecording) {
         inactivityTimer = setTimeout(() => {
@@ -1710,13 +1723,13 @@
         }, INACTIVITY_TIMEOUT);
       }
     }
-    
+
     // Track user activity to reset inactivity timer
     function trackActivity() {
       lastActivityTime = Date.now();
       resetInactivityTimer();
     }
-    
+
     // Check session timeout
     function checkSessionTimeout() {
       const timeSinceLastActivity = Date.now() - lastActivityTime;
@@ -1756,7 +1769,7 @@
           hasBody: !!document.body,
           timestamp: startTime
         });
-        
+
         // Helper function to complete initialization (used by both normal and fallback paths)
         function completeInitialization() {
           // Track route changes for SPAs
@@ -1767,12 +1780,12 @@
           // URL changes within the same website do NOT stop recording
           let visibilityChangeTimeout = null;
           let isNavigatingSameDomain = false; // Flag to track same-domain navigation
-          
+
           document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
               console.log('UXCam SDK: Tab hidden - checking if tab switch or navigation...');
               trackEvent('page_hidden');
-              
+
               // Use a delay to distinguish between:
               // 1. Tab switch (tab stays hidden) - stop recording
               // 2. Same-domain navigation (tab becomes visible quickly) - continue recording
@@ -1781,7 +1794,7 @@
                 // Only stop if tab is still hidden after delay (real tab switch, not navigation)
                 if (document.hidden && !isNavigatingSameDomain) {
                   console.log('UXCam SDK: Tab switch detected (tab hidden for >500ms) - stopping recording');
-                  
+
                   // CRITICAL: Stop recording when user switches tabs (not during navigation)
                   if (stopRecording) {
                     try {
@@ -1792,7 +1805,7 @@
                       console.warn('Error stopping recording on visibility change:', e);
                     }
                   }
-                  
+
                   // Flush all remaining data before ending session
                   if (sessionId && type2Uploaded) {
                     // Flush snapshots using sendBeacon
@@ -1800,7 +1813,7 @@
                       const snapshots = [...snapshotQueue];
                       snapshotQueue = [];
                       const compressed = compressSnapshots(snapshots);
-                      
+
                       const blob = new Blob([JSON.stringify({
                         sdk_key: getCurrentSdkKey(),
                         session_id: sessionId,
@@ -1808,7 +1821,7 @@
                         snapshot_count: snapshots.length,
                         is_initial_snapshot: false
                       })], { type: 'application/json' });
-                      
+
                       const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
                       if (sent) {
                         console.log('UXCam SDK: ✅ Snapshots flushed via sendBeacon (tab switch)', {
@@ -1818,12 +1831,12 @@
                         flushSnapshots();
                       }
                     }
-                    
+
                     // Flush events using sendBeacon
                     if (eventQueue.length > 0) {
                       const events = [...eventQueue];
                       eventQueue = [];
-                      
+
                       const blob = new Blob([JSON.stringify({
                         sdk_key: getCurrentSdkKey(),
                         session_id: sessionId,
@@ -1831,7 +1844,7 @@
                         device_info: deviceInfo,
                         user_properties: {}
                       })], { type: 'application/json' });
-                      
+
                       const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
                       if (sent) {
                         console.log('UXCam SDK: ✅ Events flushed via sendBeacon (tab switch)', {
@@ -1841,11 +1854,11 @@
                         flushEvents();
                       }
                     }
-                    
+
                     // End session and clear storage - new session will start when user returns
                     console.log('UXCam SDK: Ending session (tab switch) - new session will start when tab becomes visible');
                     endSession();
-                    
+
                     // Clear session storage so a fresh session starts when user returns
                     try {
                       const STORAGE_KEY = 'uxcam_session_id';
@@ -1878,7 +1891,7 @@
               }
             }
           });
-          
+
           // Periodic cleanup: Monitor queue sizes and clean up old localStorage data
           setInterval(() => {
             // Monitor queue sizes
@@ -1896,12 +1909,12 @@
                 warningThreshold: WARN_QUEUE_SIZE
               });
             }
-            
+
             // Clean up old localStorage data (prevent bloat)
             try {
               const now = Date.now();
               const SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
-              
+
               // Check if current session is expired
               const storedTimestamp = localStorage.getItem('uxcam_session_timestamp');
               if (storedTimestamp) {
@@ -1927,7 +1940,7 @@
             const isLeavingWebsite = !isSameDomainNavigation && referrerOrigin !== null;
             // Also check if user is closing tab/browser (no referrer or same origin but no navigation detected)
             const isClosingTab = !document.referrer || (referrerOrigin === currentOrigin && !localStorage.getItem(STORAGE_URL_KEY));
-            
+
             console.log('UXCam SDK: Page unloading', {
               isSameDomainNavigation: isSameDomainNavigation,
               isLeavingWebsite: isLeavingWebsite,
@@ -1936,14 +1949,14 @@
               referrerOrigin: referrerOrigin,
               action: (isLeavingWebsite || isClosingTab) ? 'Stopping recording and ending session' : 'Continuing session across pages'
             });
-            
+
             // Record navigation event for same-domain navigation (page change within website)
             const currentUrl = window.location.href;
             const storedUrl = localStorage.getItem(STORAGE_URL_KEY);
             if (isSameDomainNavigation && storedUrl && storedUrl !== currentUrl && stopRecording && !isClosingTab) {
               // Same-domain navigation - set flag so visibilitychange knows not to stop recording
               isNavigatingSameDomain = true;
-              
+
               // Same-domain navigation - record navigation event but DON'T flush/stop
               try {
                 const navEvent = {
@@ -1965,32 +1978,32 @@
                   to: currentUrl,
                   sessionId: sessionId
                 });
-                
+
                 // Store navigation info for next page
                 window.__UXCAM_PENDING_NAVIGATION = {
                   from: storedUrl,
                   to: currentUrl,
                   timestamp: Date.now()
                 };
-                
+
                 // DON'T flush or stop recording - let next page continue the session
                 return; // Exit early - don't flush on same-domain navigation
               } catch (e) {
                 console.warn('UXCam SDK: Error recording navigation on unload:', e);
               }
             }
-            
+
             // Stop recording if leaving website OR closing tab/browser
             if ((isLeavingWebsite || isClosingTab) && sessionId && stopRecording) {
               trackEvent('page_unload');
-              
+
               console.log('UXCam SDK: Leaving website or closing tab - flushing all data and stopping recording', {
                 from: referrerOrigin,
                 to: currentOrigin,
                 isClosingTab: isClosingTab,
                 isLeavingWebsite: isLeavingWebsite
               });
-              
+
               // CRITICAL: Flush all collected snapshots using sendBeacon (guaranteed delivery on page unload)
               if (snapshotQueue.length > 0) {
                 console.log('UXCam SDK: Flushing all collected snapshots via sendBeacon (leaving website)', {
@@ -1998,12 +2011,12 @@
                   eventTypes: snapshotQueue.map(s => s?.type),
                   sessionId: sessionId
                 });
-                
+
                 // Use sendBeacon for reliable delivery on page unload
                 const snapshots = [...snapshotQueue];
                 snapshotQueue = [];
                 const compressed = compressSnapshots(snapshots);
-                
+
                 const blob = new Blob([JSON.stringify({
                   sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
@@ -2011,7 +2024,7 @@
                   snapshot_count: snapshots.length,
                   is_initial_snapshot: false
                 })], { type: 'application/json' });
-                
+
                 const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
                 if (sent) {
                   console.log('UXCam SDK: ✅ Snapshots sent via sendBeacon (guaranteed delivery)');
@@ -2021,7 +2034,7 @@
                   flushSnapshots();
                 }
               }
-              
+
               // CRITICAL: Stop recording FIRST to prevent any new events
               try {
                 if (stopRecording) {
@@ -2032,10 +2045,10 @@
               } catch (e) {
                 console.warn('Error stopping recording:', e);
               }
-              
+
               // Flush remaining events
               flushEvents();
-              
+
               // Clear session when leaving website or closing tab
               try {
                 const STORAGE_KEY = 'uxcam_session_id';
@@ -2048,7 +2061,7 @@
               } catch (e) {
                 console.warn('Error clearing session:', e);
               }
-              
+
               // End session to mark it as complete
               endSession();
             } else if (isSameDomainNavigation && !isClosingTab) {
@@ -2057,21 +2070,21 @@
                 sessionId: sessionId
               });
             }
-            
+
             // CRITICAL: Send remaining data via sendBeacon ONLY if leaving website
             // sendBeacon is guaranteed to send even if page is closing
             const unloadCurrentOrigin = window.location.origin;
             const unloadReferrerOrigin = document.referrer ? new URL(document.referrer).origin : null;
             const unloadIsLeavingWebsite = unloadReferrerOrigin !== null && unloadReferrerOrigin !== unloadCurrentOrigin;
-            
+
             if (unloadIsLeavingWebsite && sessionId) {
               let pendingUploads = 0;
-              
+
               if (eventQueue.length > 0) {
                 const eventsToSend = [...eventQueue];
                 eventQueue = [];
                 pendingUploads++;
-                
+
                 const blob = new Blob([JSON.stringify({
                   sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
@@ -2079,7 +2092,7 @@
                   device_info: deviceInfo,
                   user_properties: {}
                 })], { type: 'application/json' });
-                
+
                 const sent = navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
                 if (sent) {
                   console.log('UXCam SDK: ✅ Events sent via sendBeacon (leaving website)', { count: eventsToSend.length });
@@ -2107,9 +2120,9 @@
                 const snapshots = [...snapshotQueue];
                 snapshotQueue = [];
                 pendingUploads++;
-                
+
                 const compressed = compressSnapshots(snapshots);
-                
+
                 const blob = new Blob([JSON.stringify({
                   sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
@@ -2117,7 +2130,7 @@
                   snapshot_count: snapshots.length,
                   is_initial_snapshot: false
                 })], { type: 'application/json' });
-                
+
                 const sent = navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
                 if (sent) {
                   console.log('UXCam SDK: ✅ All snapshots sent via sendBeacon (leaving website)', {
@@ -2142,7 +2155,7 @@
                   });
                 }
               }
-              
+
               if (pendingUploads > 0) {
                 console.log('UXCam SDK: 📤 Final uploads initiated via sendBeacon (leaving website)', {
                   uploadCount: pendingUploads
@@ -2150,7 +2163,7 @@
               }
             }
           });
-          
+
           // Also handle pagehide event (more reliable on mobile devices)
           // This fires when page is actually being unloaded (browser close, tab close, navigation)
           window.addEventListener('pagehide', (event) => {
@@ -2161,7 +2174,7 @@
               action: isClosing ? 'Stopping recording (closing tab/browser)' : 'Continuing session (navigation)'
             });
             stopPeriodicFlush();
-            
+
             if (sessionId) {
               // CRITICAL: Always stop recording when page is hiding (whether closing or navigating)
               // This ensures recording stops immediately
@@ -2174,7 +2187,7 @@
                   console.warn('Error stopping recording on pagehide:', e);
                 }
               }
-              
+
               // Flush remaining events
               if (eventQueue.length > 0) {
                 const events = [...eventQueue];
@@ -2188,7 +2201,7 @@
                 })], { type: 'application/json' });
                 navigator.sendBeacon(`${config.apiUrl}/api/events/ingest`, blob);
               }
-              
+
               // Flush remaining snapshots
               if (snapshotQueue.length > 0) {
                 console.log('UXCam SDK: Page hiding, flushing snapshots', {
@@ -2197,7 +2210,7 @@
                 const snapshots = [...snapshotQueue];
                 snapshotQueue = [];
                 const compressed = compressSnapshots(snapshots);
-                
+
                 const blob = new Blob([JSON.stringify({
                   sdk_key: getCurrentSdkKey(),
                   session_id: sessionId,
@@ -2205,10 +2218,10 @@
                   snapshot_count: snapshots.length,
                   is_initial_snapshot: false
                 })], { type: 'application/json' });
-                
+
                 navigator.sendBeacon(`${config.apiUrl}/api/snapshots/ingest`, blob);
               }
-              
+
               // If page is NOT being persisted (user is closing browser/tab, not navigating),
               // end the session and clear storage. Otherwise, keep it alive for next page.
               if (isClosing) {
@@ -2231,9 +2244,9 @@
               }
             }
           });
-          
+
           // Note: visibilitychange handler is already set up above to flush data when page becomes hidden
-          
+
           // Track errors/crashes
           window.addEventListener('error', (event) => {
             trackEvent('error', {
@@ -2244,24 +2257,24 @@
               error: event.error ? event.error.toString() : null
             });
           });
-          
+
           // Track unhandled promise rejections
           window.addEventListener('unhandledrejection', (event) => {
             trackEvent('unhandled_promise_rejection', {
               reason: event.reason ? event.reason.toString() : 'Unknown error'
             });
           });
-          
+
           // ============================================
           // NETWORK CALLS TRACKING
           // ============================================
           // Intercept fetch() API calls
           const originalFetch = window.fetch;
-          window.fetch = function(...args) {
+          window.fetch = function (...args) {
             const startTime = Date.now();
             const url = typeof args[0] === 'string' ? args[0] : args[0].url || args[0].toString();
             const method = args[1]?.method || 'GET';
-            
+
             // Track request start
             trackEvent('network_request', {
               url: url,
@@ -2269,10 +2282,10 @@
               timestamp: new Date().toISOString(),
               status: 'pending'
             });
-            
+
             // Call original fetch
             const fetchPromise = originalFetch.apply(this, args);
-            
+
             // Track response
             fetchPromise
               .then(response => {
@@ -2299,27 +2312,27 @@
                 });
                 throw error;
               });
-            
+
             return fetchPromise;
           };
-          
+
           // Intercept XMLHttpRequest
           const originalXHROpen = XMLHttpRequest.prototype.open;
           const originalXHRSend = XMLHttpRequest.prototype.send;
-          
-          XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+
+          XMLHttpRequest.prototype.open = function (method, url, ...rest) {
             this._uxcam_method = method;
             this._uxcam_url = url;
             this._uxcam_startTime = Date.now();
             return originalXHROpen.apply(this, [method, url, ...rest]);
           };
-          
-          XMLHttpRequest.prototype.send = function(...args) {
+
+          XMLHttpRequest.prototype.send = function (...args) {
             const xhr = this;
             const url = xhr._uxcam_url || '';
             const method = xhr._uxcam_method || 'GET';
             const startTime = xhr._uxcam_startTime || Date.now();
-            
+
             // Track request
             trackEvent('network_request', {
               url: url,
@@ -2328,9 +2341,9 @@
               status: 'pending',
               type: 'xhr'
             });
-            
+
             // Track response
-            xhr.addEventListener('loadend', function() {
+            xhr.addEventListener('loadend', function () {
               const duration = Date.now() - startTime;
               trackEvent('network_response', {
                 url: url,
@@ -2343,9 +2356,9 @@
                 type: 'xhr'
               });
             });
-            
+
             // Track errors
-            xhr.addEventListener('error', function() {
+            xhr.addEventListener('error', function () {
               const duration = Date.now() - startTime;
               trackEvent('network_error', {
                 url: url,
@@ -2356,22 +2369,22 @@
                 type: 'xhr'
               });
             });
-            
+
             return originalXHRSend.apply(this, args);
           };
 
           // Check session timeout periodically
           setInterval(checkSessionTimeout, 60000); // Check every minute
 
-          console.log('UXCam SDK: ✅ Initialized', { 
-            sessionId, 
+          console.log('UXCam SDK: ✅ Initialized', {
+            sessionId,
             sdkKey: getCurrentSdkKey(),
             domReady: document.readyState,
             rrwebReady: !!window.rrweb,
             hasDOMRecording: !!stopRecording
           });
         }
-        
+
         // CRITICAL: Reduced timeout - if rrweb doesn't load in 2 seconds, try loading manually
         // This prevents long delays when CDN is slow
         const fallbackTimeout = setTimeout(() => {
@@ -2386,7 +2399,7 @@
             });
           }
         }, 2000); // Reduced from 5s to 2s for faster fallback
-        
+
         // CRITICAL: Wait for rrweb with fast retry (50ms intervals)
         // If rrweb is already loaded (via script tag), this will start instantly (0ms)
         waitForRrweb(() => {
@@ -2396,7 +2409,7 @@
             timestamp: initTime,
             note: 'Type 2 snapshot will be captured right away'
           });
-          
+
           // Start everything immediately - no delays
           initDeviceInfo();
           startSession();
@@ -2411,11 +2424,11 @@
       // Track pushState/replaceState for SPAs
       const originalPushState = history.pushState;
       const originalReplaceState = history.replaceState;
-      
-      history.pushState = function(...args) {
+
+      history.pushState = function (...args) {
         const previousUrl = window.location.href;
         originalPushState.apply(history, args);
-        
+
         // Track SPA route change (works for ANY route change)
         setTimeout(() => {
           const newUrl = window.location.href;
@@ -2433,20 +2446,20 @@
               },
               timestamp: Date.now()
             };
-            
+
             events.push(navEvent);
             snapshotQueue.push(navEvent);
-            
+
             // Update stored URL
             localStorage.setItem(STORAGE_URL_KEY, newUrl);
-            
+
             console.log('UXCam SDK: 📍 SPA route change detected', {
               from: previousUrl,
               to: newUrl,
               sessionId: sessionId,
               note: 'Works for ANY route change (not just specific pages)'
             });
-            
+
             // Flush navigation event
             if (snapshotQueue.length > 0) {
               flushSnapshots();
@@ -2455,12 +2468,12 @@
         }, 0);
         trackPageView();
       };
-      
-      history.replaceState = function(...args) {
+
+      history.replaceState = function (...args) {
         originalReplaceState.apply(history, args);
         trackPageView();
       };
-      
+
       // Track popstate (back/forward)
       window.addEventListener('popstate', () => {
         trackPageView();
@@ -2469,18 +2482,18 @@
 
     // Public API - Set early so status checks can detect SDK - ALL METHODS ARE SAFE
     window.UXCam = {
-      track: function(type, data) {
-        return safeExecute(function() {
+      track: function (type, data) {
+        return safeExecute(function () {
           trackEvent(type, data);
         }, null, null, 'UXCam.track failed');
       },
-      trackPageView: function() {
-        return safeExecute(function() {
+      trackPageView: function () {
+        return safeExecute(function () {
           trackPageView();
         }, null, null, 'UXCam.trackPageView failed');
       },
-      identify: function(userId, properties) {
-        return safeExecute(function() {
+      identify: function (userId, properties) {
+        return safeExecute(function () {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.log('UXCam: User identified', userId, properties);
           }
@@ -2490,8 +2503,8 @@
           }
         }, null, null, 'UXCam.identify failed');
       },
-      setUserProperties: function(properties) {
-        return safeExecute(function() {
+      setUserProperties: function (properties) {
+        return safeExecute(function () {
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.log('UXCam: User properties set', properties);
           }
@@ -2501,23 +2514,23 @@
           }
         }, null, null, 'UXCam.setUserProperties failed');
       },
-      start: function() {
-        return safeExecute(function() {
+      start: function () {
+        return safeExecute(function () {
           startNewSession();
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.log('UXCam: Session started manually');
           }
         }, null, null, 'UXCam.start failed');
       },
-      stop: function() {
-        return safeExecute(function() {
+      stop: function () {
+        return safeExecute(function () {
           endSession();
           if (window.UXCamSDK && window.UXCamSDK.debug) {
             console.log('UXCam: Session stopped manually');
           }
         }, null, null, 'UXCam.stop failed');
       },
-      setPrivacyMode: function(enabled) {
+      setPrivacyMode: function (enabled) {
         // Privacy mode - stop recording if enabled
         if (enabled && stopRecording) {
           stopRecording();
@@ -2527,7 +2540,7 @@
           console.log('UXCam: Privacy mode disabled - recording started');
         }
       },
-      maskElement: function(selector) {
+      maskElement: function (selector) {
         // Add mask class to specific elements
         const elements = document.querySelectorAll(selector);
         elements.forEach(el => {
@@ -2536,11 +2549,11 @@
         console.log(`UXCam: Masked ${elements.length} elements with selector: ${selector}`);
       },
       // Status check
-      isReady: function() {
+      isReady: function () {
         return !!sessionId;
       }
     };
-    
+
     // Log that SDK API is available (even if not fully initialized)
     console.log('UXCam SDK: Public API available (initialization in progress...)');
 
@@ -2553,7 +2566,7 @@
         hasTakeFullSnapshot: typeof window.rrweb?.record?.takeFullSnapshot === 'function',
         hasRecord: typeof window.rrweb?.record === 'function'
       });
-      
+
       // Step 2: SPECIFICALLY wait for rrweb object (not just DOM)
       // SIMPLIFIED: Check if rrweb is already loaded (bundled version)
       if (window.rrweb) {
@@ -2566,7 +2579,7 @@
           console.log('UXCam SDK: ✅ rrweb object is ready, initializing...');
           init();
         });
-        
+
         // If rrweb doesn't load, try loading manually
         setTimeout(() => {
           if (!window.rrweb) {
@@ -2580,18 +2593,18 @@
       }
     });
   }
-  
+
   // Check if we should exclude this domain/page from recording
   // This prevents the SDK from recording the analytics dashboard itself
   // Users can disable recording by setting window.UXCamSDK.disabled = true
   function shouldExcludeRecording() {
     try {
       var pathname = window.location.pathname;
-      
+
       // NO DEFAULT EXCLUSIONS - Track all pages by default
       // Users can explicitly exclude paths via window.UXCamSDK.excludePaths if needed
       // This allows tracking of dashboard, admin, login, and all other pages
-      
+
       // Check if explicitly disabled by user
       if (window.UXCamSDK && window.UXCamSDK.disabled === true) {
         if (window.UXCamSDK.debug) {
@@ -2599,7 +2612,7 @@
         }
         return true;
       }
-      
+
       // Check if user wants to exclude specific paths (custom exclusion only)
       // Users can set window.UXCamSDK.excludePaths = ['/path1', '/path2'] to exclude specific paths
       if (window.UXCamSDK && window.UXCamSDK.excludePaths) {
@@ -2615,7 +2628,7 @@
           }
         }
       }
-      
+
       // By default, allow recording on ALL pages (dashboard, admin, login, etc.)
       return false;
     } catch (e) {
@@ -2633,16 +2646,16 @@
   var initAttempts = 0;
   var maxInitAttempts = 50; // Try for up to 5 seconds (50 * 100ms)
   var isInitializing = false;
-  
+
   function tryInitialize() {
     // Prevent multiple simultaneous initialization attempts
     if (isInitializing) {
       return;
     }
-    
+
     initAttempts++;
-    
-    safeExecute(function() {
+
+    safeExecute(function () {
       // First check if we should exclude this page
       if (shouldExcludeRecording()) {
         if (window.UXCamSDK && window.UXCamSDK.debug) {
@@ -2650,12 +2663,12 @@
         }
         return; // Don't initialize SDK if explicitly excluded
       }
-      
+
       // Check if config is available
       if (window.UXCamSDK && window.UXCamSDK.key && window.UXCamSDK.apiUrl) {
         // Mark as initializing to prevent duplicate calls
         isInitializing = true;
-        
+
         // Initialize SDK - works on ANY page (homepage, login, signup, dashboard, etc.)
         if (window.UXCamSDK.debug) {
           console.log('UXCam SDK: ✅ Configuration found, starting initialization on:', window.location.pathname);
@@ -2663,7 +2676,7 @@
           // Even without debug mode, log a simple message so users know SDK is working
           console.log('UXCam SDK: Initializing on', window.location.pathname);
         }
-        
+
         try {
           initSDK();
           return true; // Success
@@ -2693,21 +2706,21 @@
       }
     }, null, null, 'SDK initialization attempt failed');
   }
-  
+
   // Start trying to initialize immediately
   tryInitialize();
-  
+
   // Also try when DOM is ready (in case script loaded before DOM)
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
       if (!isInitializing && initAttempts < maxInitAttempts) {
         tryInitialize();
       }
     });
   }
-  
+
   // Also try when page is fully loaded (in case config is set very late)
-  window.addEventListener('load', function() {
+  window.addEventListener('load', function () {
     if (!isInitializing && initAttempts < maxInitAttempts) {
       setTimeout(tryInitialize, 500);
     }
