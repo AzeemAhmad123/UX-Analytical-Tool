@@ -1415,6 +1415,9 @@ export function SessionReplayPlayer() {
         showWarning: false, // Suppress warnings about missing nodes (they're often false positives)
         // CRITICAL FIX: Automatically resize iframe when container size changes
         autoResize: true, // Type assertion needed as TypeScript types may not include this yet
+        // CRITICAL FIX: Set zoom to 1.0 (100%) to prevent incorrect scaling
+        // Without this, replay may display at 150% or other incorrect zoom levels
+        zoom: 1.0, // Force 100% zoom (normal size)
         // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
           strokeStyle: '#9333ea',
