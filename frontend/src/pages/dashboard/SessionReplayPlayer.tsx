@@ -1415,9 +1415,6 @@ export function SessionReplayPlayer() {
         showWarning: false, // Suppress warnings about missing nodes (they're often false positives)
         // CRITICAL FIX: Automatically resize iframe when container size changes
         autoResize: true, // Type assertion needed as TypeScript types may not include this yet
-        // CRITICAL FIX: Set zoom to 1.0 (100%) to prevent incorrect scaling
-        // Without this, replay may display at 150% or other incorrect zoom levels
-        zoom: 1.0, // Force 100% zoom (normal size)
         // Enhanced mouse cursor visualization - MUST be enabled
         mouseTail: {
           strokeStyle: '#9333ea',
@@ -1869,7 +1866,7 @@ export function SessionReplayPlayer() {
         iframes.forEach(iframe => {
           fixSandboxAttribute(iframe as HTMLIFrameElement)
 
-          // CRITICAL FIX: Add CSS to ensure iframe scales properly
+          // CRITICAL FIX: Add CSS to ensure iframe scales properly at 100% (not 150%)
           const iframeElement = iframe as HTMLIFrameElement
           // Ensure iframe takes full container space and scales content to fit
           if (iframeElement.style.maxWidth !== '100%') {
@@ -1880,7 +1877,10 @@ export function SessionReplayPlayer() {
             iframeElement.style.display = 'block'
             iframeElement.style.margin = '0 auto' // Center horizontally
             iframeElement.style.transformOrigin = 'center center' // Scale from center
-            console.log('🔧 Applied scaling CSS to iframe')
+            // CRITICAL: Force scale to 1.0 (100%) to fix 150% zoom issue
+            // rrweb may apply incorrect scaling via transform - override it
+            iframeElement.style.transform = 'scale(1)' // Force 100% scale
+            console.log('🔧 Applied 100% scaling CSS to iframe (transform: scale(1))')
           }
         })
       }
