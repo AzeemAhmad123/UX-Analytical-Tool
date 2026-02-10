@@ -19,10 +19,10 @@ const getCachedSessionData = (projectId: string, sessionId: string): any | null 
     const cacheKey = `${SESSION_DATA_CACHE_PREFIX}${projectId}_${sessionId}`
     const cached = localStorage.getItem(cacheKey)
     if (!cached) return null
-    
+
     const { data, timestamp } = JSON.parse(cached)
     const age = Date.now() - timestamp
-    
+
     if (age < CACHE_EXPIRY_MS && data) {
       console.log(`📦 Loaded cached session data for ${sessionId}`)
       return data
@@ -52,10 +52,10 @@ const getCachedSnapshots = (projectId: string, sessionId: string): any[] => {
       console.log(`📭 No cached snapshots found for ${sessionId}`)
       return []
     }
-    
+
     const { snapshots, timestamp } = JSON.parse(cached)
     const age = Date.now() - timestamp
-    
+
     if (age < CACHE_EXPIRY_MS && Array.isArray(snapshots)) {
       console.log(`📦 Loaded ${snapshots.length} cached snapshots for ${sessionId} (age: ${Math.round(age / 1000)}s)`)
       return snapshots
@@ -85,10 +85,10 @@ const getCachedEvents = (projectId: string, sessionId: string): any[] => {
     const cacheKey = `${SESSION_EVENTS_CACHE_PREFIX}${projectId}_${sessionId}`
     const cached = localStorage.getItem(cacheKey)
     if (!cached) return []
-    
+
     const { events, timestamp } = JSON.parse(cached)
     const age = Date.now() - timestamp
-    
+
     if (age < CACHE_EXPIRY_MS && Array.isArray(events)) {
       console.log(`📦 Loaded ${events.length} cached events for ${sessionId}`)
       return events
@@ -116,10 +116,10 @@ const getCachedPosition = (projectId: string, sessionId: string): number | null 
     const cacheKey = `${SESSION_POSITION_CACHE_PREFIX}${projectId}_${sessionId}`
     const cached = localStorage.getItem(cacheKey)
     if (!cached) return null
-    
+
     const { position, timestamp } = JSON.parse(cached)
     const age = Date.now() - timestamp
-    
+
     // Position cache expires after 7 days (user might want to resume even after cache expiry)
     if (age < 7 * 24 * 60 * 60 * 1000 && typeof position === 'number' && position > 0) {
       console.log(`📍 Loaded cached position for ${sessionId}: ${Math.round(position / 1000)}s`)
@@ -150,7 +150,7 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
   return sessionsToFilter.filter(s => {
     // Calculate duration: use stored duration, or calculate from timestamps for active sessions
     let duration = (s.duration || 0) / 1000 // Convert to seconds
-    
+
     // If duration is 0 or missing, calculate from timestamps (for active sessions)
     if (duration === 0 && s.start_time && s.last_activity_time) {
       const startTime = new Date(s.start_time).getTime()
@@ -160,27 +160,27 @@ const applyDefaultFilters = (sessionsToFilter: any[]): any[] => {
         duration = calculatedDuration
       }
     }
-    
+
     // Filter out sessions with insufficient events (event_count <= 2)
     // OR duration <= 10 seconds
     // Keep only sessions with BOTH: event_count > 2 AND duration > 10 seconds
     const eventCount = s.event_count || 0
-    
+
     if (eventCount <= 2) {
       return false
     }
-    
+
     // Exclude sessions with duration <= 10 seconds
     if (duration <= 10) {
       return false
     }
-    
+
     // Exclude sessions without video recordings (no snapshots)
     const snapshotCount = s.snapshot_count || 0
     if (snapshotCount === 0) {
       return false
     }
-    
+
     return true
   })
 }
@@ -219,12 +219,12 @@ export function SessionReplayPlayer() {
   // CRITICAL: Clean up previous session when switching sessions
   useLayoutEffect(() => {
     if (!projectId || !sessionId) return
-    
+
     // Clean up previous player if it exists (when switching sessions)
     if (playerRef.current) {
       try {
         console.log('🧹 Cleaning up previous player before loading new session')
-        
+
         // Clean up cursor overlay BEFORE destroying player or clearing container
         if ((playerRef.current as any)._cursorOverlay) {
           const overlay = (playerRef.current as any)._cursorOverlay
@@ -241,7 +241,7 @@ export function SessionReplayPlayer() {
             console.debug('Overlay already removed or not in DOM')
           }
         }
-        
+
         // Clean up all intervals and listeners
         if ((playerRef.current as any)._sandboxObserver) {
           (playerRef.current as any)._sandboxObserver.disconnect()
@@ -299,7 +299,7 @@ export function SessionReplayPlayer() {
             // Ignore errors
           }
         }
-        
+
         // Pause and destroy player
         try {
           playerRef.current.pause()
@@ -313,19 +313,19 @@ export function SessionReplayPlayer() {
         console.error('Error cleaning up previous player:', e)
       }
     }
-    
+
     // Clear container for new session (AFTER cleaning up player)
     // Don't clear here - let initializePlayer() handle it to avoid React conflicts
     // The container will be cleared in initializePlayer() before creating new player
-    
+
     // Load cached data FIRST for new session (before clearing state)
     const cachedSessionData = getCachedSessionData(projectId, sessionId)
     const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
     const cachedEvents = getCachedEvents(projectId, sessionId)
-    
+
     // Load cached resume position (if available)
     const cachedPosition = getCachedPosition(projectId, sessionId)
-    
+
     // Reset state for new session (only if no cached data, or always reset to ensure clean state)
     // But preserve cached position if available
     setCurrentTime(cachedPosition || 0)
@@ -334,17 +334,17 @@ export function SessionReplayPlayer() {
     setError(null)
     setHasVideo(false)
     setVideoUrl(null)
-    
+
     // Store cached position for later use (when video/replay loads)
     if (cachedPosition && cachedPosition > 0) {
       console.log(`📍 Will resume from cached position: ${Math.round(cachedPosition / 1000)}s`)
     }
-    
+
     // Set cached data immediately (or clear if no cache)
     if (cachedSessionData) {
       console.log(`⚡ Loading cached session data immediately for ${sessionId}`)
       setSession(cachedSessionData.session || cachedSessionData)
-      
+
       // Set platform if available
       if (cachedSessionData.session?.device_info || cachedSessionData.device_info) {
         const deviceInfo = cachedSessionData.session?.device_info || cachedSessionData.device_info
@@ -352,11 +352,11 @@ export function SessionReplayPlayer() {
         const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
         setSelectedPlatform(detectedPlatform)
       }
-      
+
       // Check for video in cached data
       const videoUrl = cachedSessionData.session?.video_url || cachedSessionData.session?.videoUrl || cachedSessionData.video_url || cachedSessionData.videoUrl || null
       const hasVideoFlag = cachedSessionData.session?.has_video || cachedSessionData.session?.hasVideo || cachedSessionData.has_video || cachedSessionData.hasVideo || false
-      
+
       if (hasVideoFlag && videoUrl) {
         setHasVideo(true)
         setVideoUrl(videoUrl)
@@ -372,7 +372,7 @@ export function SessionReplayPlayer() {
           setDuration(videoDuration)
         }
       }
-      
+
       // Set duration
       if (cachedSessionData.session) {
         const startTime = new Date(cachedSessionData.session.start_time).getTime()
@@ -386,7 +386,7 @@ export function SessionReplayPlayer() {
       setSession(null)
       setDuration(0)
     }
-    
+
     // Set cached snapshots (or clear if no cache)
     if (cachedSnapshots.length > 0) {
       console.log(`⚡ Loading ${cachedSnapshots.length} cached snapshots immediately for ${sessionId}`)
@@ -394,7 +394,7 @@ export function SessionReplayPlayer() {
     } else {
       setSnapshots([])
     }
-    
+
     // Set cached events (or clear if no cache)
     if (cachedEvents.length > 0) {
       console.log(`⚡ Loading ${cachedEvents.length} cached events immediately for ${sessionId}`)
@@ -402,7 +402,7 @@ export function SessionReplayPlayer() {
     } else {
       setEvents([])
     }
-    
+
     // If we have cached data (snapshots or video), we're not loading
     // Otherwise, we need to fetch data, so set loading to true
     // Check for video in cached data (we may have just set it above)
@@ -413,21 +413,21 @@ export function SessionReplayPlayer() {
 
   useEffect(() => {
     let isMounted = true
-    
+
     if (projectId && sessionId) {
       // PRIORITY: Load the selected session's replay data FIRST
       // (Only if we don't have cached data - useLayoutEffect already handled that)
       const cachedSnapshots = getCachedSnapshots(projectId, sessionId)
       const cachedSessionData = getCachedSessionData(projectId, sessionId)
       const hasCachedData = cachedSnapshots.length > 0 || (cachedSessionData?.session?.video_url || cachedSessionData?.session?.videoUrl)
-      
+
       if (!hasCachedData) {
         setIsLoadingData(true)
       }
-      
+
       // Load fresh data in parallel for faster loading (non-blocking)
       // Cached data is already shown, so this just updates it
-      
+
       // Add timeout to prevent infinite loading (70 seconds - longer than backend 60s timeout)
       const timeoutId = setTimeout(() => {
         if (isMounted) {
@@ -436,23 +436,23 @@ export function SessionReplayPlayer() {
           setError('Loading timeout: The session data is taking too long to load. This may be due to network issues, CORS problems, or a very large session. Please check the browser console for errors and try refreshing the page.')
         }
       }, 70000)
-      
+
       // OPTIMIZATION: Make a SINGLE API call instead of 3 duplicate calls
       // This significantly reduces loading time and database load
       const loadSessionReplayData = async () => {
         if (!projectId || !sessionId) return
-        
+
         try {
           // Single API call that returns all data we need
           const response = await sessionsAPI.getById(projectId, sessionId)
-          
+
           // Cache the full response
           setCachedSessionData(projectId, sessionId, response)
-          
+
           // Process session data
           if (response.session) {
             setSession(response.session)
-            
+
             // Detect platform from device_info
             if (response.session?.device_info) {
               const deviceInfo = response.session.device_info
@@ -460,7 +460,7 @@ export function SessionReplayPlayer() {
               const detectedPlatform: Platform = viewportWidth > 0 && viewportWidth < 768 ? 'mobile' : 'web'
               setSelectedPlatform(detectedPlatform)
             }
-            
+
             // Debug: Log location data
             console.log('📍 Session location data:', {
               device_info: response.session?.device_info,
@@ -468,7 +468,7 @@ export function SessionReplayPlayer() {
               city: response.session?.device_info?.city || response.session?.location?.city,
               country: response.session?.device_info?.country || response.session?.location?.country,
             })
-            
+
             // Set duration from session data
             if (response.session.duration) {
               setDuration(response.session.duration)
@@ -485,11 +485,11 @@ export function SessionReplayPlayer() {
                 console.log(`✅ Calculated duration from timestamps: ${calculatedDuration}ms (${durationSeconds}s)`)
               }
             }
-            
+
             // Check for video (mobile sessions)
             const videoUrl = response.session.video_url || response.session.videoUrl || null
             const hasVideoFlag = response.session.has_video || response.session.hasVideo || false
-            
+
             if (hasVideoFlag && videoUrl) {
               setHasVideo(true)
               setVideoUrl(videoUrl)
@@ -508,27 +508,27 @@ export function SessionReplayPlayer() {
               console.log('📹 Video URL found (flag not set):', videoUrl)
             }
           }
-          
+
           // Process snapshots
           if (response.snapshots && Array.isArray(response.snapshots)) {
             // Flatten nested arrays and process snapshots for replay
             const processedSnapshots: any[] = []
-            
+
             const processSnapshot = (snapshot: any): void => {
               if (!snapshot) return
-              
+
               // If it's already a valid event object (has type and data)
               if (snapshot && typeof snapshot === 'object' && typeof snapshot.type === 'number' && snapshot.data !== undefined) {
                 processedSnapshots.push(snapshot)
                 return
               }
-              
+
               // If it's an array, recursively process each element
               if (Array.isArray(snapshot)) {
                 snapshot.forEach(item => processSnapshot(item))
                 return
               }
-              
+
               // If it's a string, try to parse it
               if (typeof snapshot === 'string') {
                 try {
@@ -539,7 +539,7 @@ export function SessionReplayPlayer() {
                 }
                 return
               }
-              
+
               // If it's an object but not a valid event, check if it has nested events
               if (snapshot && typeof snapshot === 'object') {
                 // Check if it has a nested array of events
@@ -554,15 +554,15 @@ export function SessionReplayPlayer() {
                 }
               }
             }
-            
+
             // Process all snapshots and flatten
             response.snapshots.forEach((snapshot: any) => processSnapshot(snapshot))
-            
+
             setSnapshots(processedSnapshots)
-            
+
             // Cache snapshots
             setCachedSnapshots(projectId, sessionId, processedSnapshots)
-            
+
             // Convert snapshots to events for activity timeline
             const eventList = processedSnapshots
               .filter((e: any) => e && typeof e.type === 'number')
@@ -572,7 +572,7 @@ export function SessionReplayPlayer() {
                 timestamp: e.timestamp,
                 data: e.data
               }))
-            
+
             setEvents(eventList)
             setCachedEvents(projectId, sessionId, eventList)
             console.log(`✅ Loaded ${processedSnapshots.length} snapshots and ${eventList.length} events from single API call`)
@@ -586,13 +586,13 @@ export function SessionReplayPlayer() {
             console.log('Request was cancelled (this is normal when navigating away)')
             return
           }
-          
+
           console.error('Error loading session replay data:', error)
           setError('Failed to load session data')
           throw error // Re-throw to trigger catch block
         }
       }
-      
+
       // Make single optimized API call
       loadSessionReplayData()
         .then(() => {
@@ -600,7 +600,7 @@ export function SessionReplayPlayer() {
           clearTimeout(timeoutId)
           if (isMounted) {
             setIsLoadingData(false)
-            
+
             // DEFERRED: Load all sessions AFTER replay data is ready
             // This prevents competing requests and makes replay load faster
             if (projectId) {
@@ -623,7 +623,7 @@ export function SessionReplayPlayer() {
             console.error('Error loading session replay data:', error)
             setIsLoadingData(false) // Stop loading on error
           }
-          
+
           // Even on error, try to load sessions list (non-critical)
           if (projectId && isMounted) {
             setTimeout(() => {
@@ -645,7 +645,7 @@ export function SessionReplayPlayer() {
         }
       })
     }
-    
+
     return () => {
       isMounted = false
     }
@@ -669,7 +669,7 @@ export function SessionReplayPlayer() {
       let rafId1: number
       const rafId2 = requestAnimationFrame(() => {
         rafId1 = requestAnimationFrame(() => {
-        initializePlayer()
+          initializePlayer()
         })
       })
       return () => {
@@ -698,17 +698,44 @@ export function SessionReplayPlayer() {
   // This implements UXCam-style skip inactivity by dynamically changing playback speed
   // Set up/tear down when skipInactivity toggle changes or player is initialized
   useEffect(() => {
-      // Only set up if skip inactivity is enabled and player exists
-      if (!skipInactivity || !playerRef.current || snapshots.length === 0) {
-        // Clean up if disabled
-        if (inactivityCheckIntervalRef.current) {
-          clearInterval(inactivityCheckIntervalRef.current)
-          inactivityCheckIntervalRef.current = null
+    // Only set up if skip inactivity is enabled and player exists
+    if (!skipInactivity || !playerRef.current || snapshots.length === 0) {
+      // Clean up if disabled
+      if (inactivityCheckIntervalRef.current) {
+        clearInterval(inactivityCheckIntervalRef.current)
+        inactivityCheckIntervalRef.current = null
+      }
+      // Reset speed if we were skipping
+      if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
+        try {
+          playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+          setIsSkippingInactivity(false)
+        } catch (e) {
+          // Ignore errors
         }
-        // Reset speed if we were skipping
-        if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
+      }
+      return
+    }
+
+    const INACTIVITY_THRESHOLD = 3000 // 3 seconds in milliseconds
+    const SKIP_SPEED = 12 // 12x speed during inactivity
+
+    // Calculate first event timestamp for relative time calculations
+    const firstEvent = snapshots.find((e: any) => e && e.timestamp)
+    if (!firstEvent || !firstEvent.timestamp) {
+      return // Can't calculate without timestamps
+    }
+    const firstEventTimestamp = firstEvent.timestamp
+
+    const checkInactivity = () => {
+      // Check if replayer is still valid
+      if (!playerRef.current || (playerRef.current as any).destroyed || !isPlaying) {
+        // If not playing, ensure we're at normal speed
+        if (isSkippingInactivity) {
           try {
-            playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+            if (playerRef.current && !(playerRef.current as any).destroyed) {
+              playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+            }
             setIsSkippingInactivity(false)
           } catch (e) {
             // Ignore errors
@@ -716,21 +743,98 @@ export function SessionReplayPlayer() {
         }
         return
       }
-      
-      const INACTIVITY_THRESHOLD = 3000 // 3 seconds in milliseconds
-      const SKIP_SPEED = 12 // 12x speed during inactivity
-      
-      // Calculate first event timestamp for relative time calculations
-      const firstEvent = snapshots.find((e: any) => e && e.timestamp)
-      if (!firstEvent || !firstEvent.timestamp) {
-        return // Can't calculate without timestamps
-      }
-      const firstEventTimestamp = firstEvent.timestamp
-      
-      const checkInactivity = () => {
-        // Check if replayer is still valid
-        if (!playerRef.current || (playerRef.current as any).destroyed || !isPlaying) {
-          // If not playing, ensure we're at normal speed
+
+      try {
+        // Get current playback time (relative to session start) - use replayer's time for accuracy
+        let currentPlaybackTime = currentTime
+        try {
+          if (playerRef.current && !(playerRef.current as any).destroyed) {
+            const replayerTime = playerRef.current.getCurrentTime()
+            if (typeof replayerTime === 'number' && !isNaN(replayerTime)) {
+              currentPlaybackTime = replayerTime
+            }
+          }
+        } catch (e) {
+          // Fallback to state
+        }
+
+        // Find the last event that has occurred (relative timestamp <= currentPlaybackTime)
+        let lastEventIndex = -1
+        let lastEventRelativeTime = 0
+        for (let i = snapshots.length - 1; i >= 0; i--) {
+          const event = snapshots[i]
+          if (event && event.timestamp) {
+            const relativeTime = event.timestamp - firstEventTimestamp
+            if (relativeTime <= currentPlaybackTime) {
+              lastEventIndex = i
+              lastEventRelativeTime = relativeTime
+              break
+            }
+          }
+        }
+
+        // Find the next event that will occur (relative timestamp > currentPlaybackTime)
+        let nextEventIndex = -1
+        let nextEventRelativeTime = Infinity
+        for (let i = 0; i < snapshots.length; i++) {
+          const event = snapshots[i]
+          if (event && event.timestamp) {
+            const relativeTime = event.timestamp - firstEventTimestamp
+            if (relativeTime > currentPlaybackTime) {
+              nextEventIndex = i
+              nextEventRelativeTime = relativeTime
+              break
+            }
+          }
+        }
+
+        // Calculate time gap between last and next event
+        if (lastEventIndex >= 0 && nextEventIndex >= 0) {
+          const timeGap = nextEventRelativeTime - lastEventRelativeTime
+          const timeSinceLastEvent = currentPlaybackTime - lastEventRelativeTime
+          const timeUntilNextEvent = nextEventRelativeTime - currentPlaybackTime
+
+          // Check if we're in an inactivity period (gap > 3 seconds and we're between events)
+          // Only skip if we're more than 100ms into the gap and more than 100ms before the next event
+          if (timeGap > INACTIVITY_THRESHOLD && timeSinceLastEvent > 100 && timeUntilNextEvent > 100) {
+            // We're in an inactive period - speed up
+            if (!isSkippingInactivity) {
+              try {
+                if (playerRef.current && !(playerRef.current as any).destroyed) {
+                  playerRef.current.setConfig({ speed: SKIP_SPEED })
+                  setIsSkippingInactivity(true)
+                  console.log('⏩ Skipping inactivity period', {
+                    gap: timeGap,
+                    timeSinceLast: timeSinceLastEvent,
+                    timeUntilNext: timeUntilNextEvent,
+                    currentTime: currentPlaybackTime,
+                    lastEventTime: lastEventRelativeTime,
+                    nextEventTime: nextEventRelativeTime
+                  })
+                }
+              } catch (e) {
+                console.warn('Error setting skip speed:', e)
+              }
+            }
+          } else {
+            // We're in an active period or near an event - normal speed
+            if (isSkippingInactivity) {
+              try {
+                if (playerRef.current && !(playerRef.current as any).destroyed) {
+                  playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+                  setIsSkippingInactivity(false)
+                  console.log('▶️ Resuming normal speed', {
+                    gap: timeGap,
+                    timeUntilNext: timeUntilNextEvent
+                  })
+                }
+              } catch (e) {
+                console.warn('Error resetting speed:', e)
+              }
+            }
+          }
+        } else if (nextEventIndex === -1) {
+          // No more events, return to normal speed
           if (isSkippingInactivity) {
             try {
               if (playerRef.current && !(playerRef.current as any).destroyed) {
@@ -741,141 +845,37 @@ export function SessionReplayPlayer() {
               // Ignore errors
             }
           }
-          return
         }
-        
+      } catch (error) {
+        console.warn('Error checking inactivity:', error)
+      }
+    }
+
+    // Check inactivity every 200ms for responsive speed changes
+    inactivityCheckIntervalRef.current = setInterval(checkInactivity, 200) as any
+
+    // Initial check
+    checkInactivity()
+
+    // Cleanup
+    return () => {
+      if (inactivityCheckIntervalRef.current) {
+        clearInterval(inactivityCheckIntervalRef.current)
+        inactivityCheckIntervalRef.current = null
+      }
+      // Reset speed on cleanup
+      if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
         try {
-          // Get current playback time (relative to session start) - use replayer's time for accuracy
-          let currentPlaybackTime = currentTime
-          try {
-            if (playerRef.current && !(playerRef.current as any).destroyed) {
-              const replayerTime = playerRef.current.getCurrentTime()
-              if (typeof replayerTime === 'number' && !isNaN(replayerTime)) {
-                currentPlaybackTime = replayerTime
-              }
-            }
-          } catch (e) {
-            // Fallback to state
-          }
-          
-          // Find the last event that has occurred (relative timestamp <= currentPlaybackTime)
-          let lastEventIndex = -1
-          let lastEventRelativeTime = 0
-          for (let i = snapshots.length - 1; i >= 0; i--) {
-            const event = snapshots[i]
-            if (event && event.timestamp) {
-              const relativeTime = event.timestamp - firstEventTimestamp
-              if (relativeTime <= currentPlaybackTime) {
-                lastEventIndex = i
-                lastEventRelativeTime = relativeTime
-                break
-              }
-            }
-          }
-          
-          // Find the next event that will occur (relative timestamp > currentPlaybackTime)
-          let nextEventIndex = -1
-          let nextEventRelativeTime = Infinity
-          for (let i = 0; i < snapshots.length; i++) {
-            const event = snapshots[i]
-            if (event && event.timestamp) {
-              const relativeTime = event.timestamp - firstEventTimestamp
-              if (relativeTime > currentPlaybackTime) {
-                nextEventIndex = i
-                nextEventRelativeTime = relativeTime
-                break
-              }
-            }
-          }
-          
-          // Calculate time gap between last and next event
-          if (lastEventIndex >= 0 && nextEventIndex >= 0) {
-            const timeGap = nextEventRelativeTime - lastEventRelativeTime
-            const timeSinceLastEvent = currentPlaybackTime - lastEventRelativeTime
-            const timeUntilNextEvent = nextEventRelativeTime - currentPlaybackTime
-            
-            // Check if we're in an inactivity period (gap > 3 seconds and we're between events)
-            // Only skip if we're more than 100ms into the gap and more than 100ms before the next event
-            if (timeGap > INACTIVITY_THRESHOLD && timeSinceLastEvent > 100 && timeUntilNextEvent > 100) {
-              // We're in an inactive period - speed up
-              if (!isSkippingInactivity) {
-                try {
-                  if (playerRef.current && !(playerRef.current as any).destroyed) {
-                    playerRef.current.setConfig({ speed: SKIP_SPEED })
-                    setIsSkippingInactivity(true)
-                    console.log('⏩ Skipping inactivity period', {
-                      gap: timeGap,
-                      timeSinceLast: timeSinceLastEvent,
-                      timeUntilNext: timeUntilNextEvent,
-                      currentTime: currentPlaybackTime,
-                      lastEventTime: lastEventRelativeTime,
-                      nextEventTime: nextEventRelativeTime
-                    })
-                  }
-                } catch (e) {
-                  console.warn('Error setting skip speed:', e)
-                }
-              }
-            } else {
-              // We're in an active period or near an event - normal speed
-              if (isSkippingInactivity) {
-                try {
-                  if (playerRef.current && !(playerRef.current as any).destroyed) {
-                    playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
-                    setIsSkippingInactivity(false)
-                    console.log('▶️ Resuming normal speed', {
-                      gap: timeGap,
-                      timeUntilNext: timeUntilNextEvent
-                    })
-                  }
-                } catch (e) {
-                  console.warn('Error resetting speed:', e)
-                }
-              }
-            }
-          } else if (nextEventIndex === -1) {
-            // No more events, return to normal speed
-            if (isSkippingInactivity) {
-              try {
-                if (playerRef.current && !(playerRef.current as any).destroyed) {
-                  playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
-                }
-                setIsSkippingInactivity(false)
-              } catch (e) {
-                // Ignore errors
-              }
-            }
-          }
-        } catch (error) {
-          console.warn('Error checking inactivity:', error)
+          playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+          setIsSkippingInactivity(false)
+        } catch (e) {
+          // Ignore errors
         }
       }
-      
-      // Check inactivity every 200ms for responsive speed changes
-      inactivityCheckIntervalRef.current = setInterval(checkInactivity, 200) as any
-      
-      // Initial check
-      checkInactivity()
-      
-      // Cleanup
-      return () => {
-        if (inactivityCheckIntervalRef.current) {
-          clearInterval(inactivityCheckIntervalRef.current)
-          inactivityCheckIntervalRef.current = null
-        }
-        // Reset speed on cleanup
-        if (isSkippingInactivity && playerRef.current && !(playerRef.current as any).destroyed) {
-          try {
-            playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
-            setIsSkippingInactivity(false)
-          } catch (e) {
-            // Ignore errors
-          }
-        }
-      }
-    }, [skipInactivity, isPlaying, currentTime, snapshots, isSkippingInactivity])
-    
-    // Cleanup on unmount
+    }
+  }, [skipInactivity, isPlaying, currentTime, snapshots, isSkippingInactivity])
+
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (playerRef.current) {
@@ -903,7 +903,7 @@ export function SessionReplayPlayer() {
             try {
               // Safely remove overlay - check if it's still connected to DOM
               if (overlay && overlay.parentNode && overlay.parentNode.contains(overlay)) {
-              overlay.parentNode.removeChild(overlay)
+                overlay.parentNode.removeChild(overlay)
               } else if (overlay && overlay.remove) {
                 // Use remove() method if available (more modern)
                 overlay.remove()
@@ -1008,7 +1008,7 @@ export function SessionReplayPlayer() {
       console.log('⚠️ Replayer already exists, skipping initialization to prevent recreation')
       return
     }
-    
+
     if (!replayContainerRef.current || snapshots.length === 0) {
       console.warn('Cannot initialize player: container or snapshots missing', {
         hasContainer: !!replayContainerRef.current,
@@ -1035,8 +1035,8 @@ export function SessionReplayPlayer() {
         } catch (e) {
           // If removing children fails, try innerHTML as fallback
           try {
-      if (replayContainerRef.current) {
-        replayContainerRef.current.innerHTML = ''
+            if (replayContainerRef.current) {
+              replayContainerRef.current.innerHTML = ''
             }
           } catch (e2) {
             console.error('Error clearing container:', e2)
@@ -1047,9 +1047,9 @@ export function SessionReplayPlayer() {
       // Validate snapshots format
       const validSnapshots = snapshots.filter((event: any) => {
         // rrweb events must have type (number) and data
-        return event && 
-               typeof event.type === 'number' && 
-               event.data !== undefined
+        return event &&
+          typeof event.type === 'number' &&
+          event.data !== undefined
       })
 
       if (validSnapshots.length === 0) {
@@ -1065,7 +1065,7 @@ export function SessionReplayPlayer() {
       // Subsequent Type 2 snapshots (for new pages) must stay in their chronological position
       const allType2Events = validSnapshots.filter((e: any) => e.type === 2)
       const firstType2Index = validSnapshots.findIndex((e: any) => e.type === 2)
-      
+
       if (allType2Events.length > 1) {
         console.log('🔍 Multiple Type 2 snapshots detected - preserving chronological order for navigation', {
           totalType2: allType2Events.length,
@@ -1074,7 +1074,7 @@ export function SessionReplayPlayer() {
           allType2Timestamps: allType2Events.map((e: any) => e.timestamp)
         })
       }
-      
+
       if (firstType2Index > 0) {
         // Move ONLY the first type 2 to front (chronologically first)
         // This is the initial page snapshot
@@ -1086,22 +1086,22 @@ export function SessionReplayPlayer() {
         console.error('Event types:', validSnapshots.map((e: any) => e.type))
         console.error('Total events:', validSnapshots.length)
         console.error('First few events:', validSnapshots.slice(0, 3))
-        
+
         // Try to find Type 2 in a different format or location
         // Sometimes Type 2 might be nested or have a different structure
         let foundType2 = false
         let extractedType2: any = null
-        
+
         // Recursive function to find Type 2 in nested structures
         const findType2 = (obj: any, depth: number = 0): any => {
           if (depth > 5) return null // Prevent infinite recursion
           if (!obj || typeof obj !== 'object') return null
-          
+
           // If this is a Type 2 event, return it
           if (typeof obj.type === 'number' && obj.type === 2 && obj.data !== undefined) {
             return obj
           }
-          
+
           // Check nested arrays
           if (Array.isArray(obj)) {
             for (const item of obj) {
@@ -1109,7 +1109,7 @@ export function SessionReplayPlayer() {
               if (found) return found
             }
           }
-          
+
           // Check nested objects (but skip if it's already a valid event structure)
           if (obj.type === undefined || typeof obj.type !== 'number') {
             for (const key in obj) {
@@ -1119,10 +1119,10 @@ export function SessionReplayPlayer() {
               }
             }
           }
-          
+
           return null
         }
-        
+
         // Search through all snapshots for nested Type 2
         for (let i = 0; i < validSnapshots.length; i++) {
           const event = validSnapshots[i]
@@ -1139,7 +1139,7 @@ export function SessionReplayPlayer() {
             break
           }
         }
-        
+
         if (!foundType2) {
           console.error('❌ Could not find Type 2 snapshot even after deep search')
           setError('Missing full snapshot. This session cannot be replayed. Please record a new session.')
@@ -1150,7 +1150,7 @@ export function SessionReplayPlayer() {
       // Check for navigation events (Type 4 Meta events and multiple Type 2 FullSnapshots)
       const type4Events = validSnapshots.filter((e: any) => e.type === 4)
       const type2Events = validSnapshots.filter((e: any) => e.type === 2)
-      
+
       // Verify event order: Type 4 Meta should come before corresponding Type 2 snapshot
       let navigationOrderValid = true
       if (type4Events.length > 0 && type2Events.length > 1) {
@@ -1191,7 +1191,7 @@ export function SessionReplayPlayer() {
           position: validSnapshots.indexOf(e)
         }))
       })
-      
+
       if (type2Events.length > 1) {
         console.log('✅ Multiple Type 2 events detected - this session has page navigations', {
           count: type2Events.length,
@@ -1231,11 +1231,13 @@ export function SessionReplayPlayer() {
       wrapper.style.position = 'relative'
       wrapper.style.backgroundColor = '#f9fafb'
       wrapper.style.overflow = 'hidden' // Changed from 'auto' to 'hidden' for better rendering
-      wrapper.style.display = 'block'
+      wrapper.style.display = 'flex' // Use flex to properly contain iframe
+      wrapper.style.alignItems = 'center' // Center iframe vertically
+      wrapper.style.justifyContent = 'center' // Center iframe horizontally
       wrapper.style.flex = '1' // Take full available space
       wrapper.style.minHeight = '0' // Important for flexbox
       wrapper.setAttribute('data-replay-wrapper', 'true')
-      
+
       // Create an overlay to block all user interactions (like a video player)
       const interactionBlocker = document.createElement('div')
       interactionBlocker.className = 'replay-interaction-blocker'
@@ -1251,7 +1253,7 @@ export function SessionReplayPlayer() {
         background: transparent;
       `
       interactionBlocker.setAttribute('data-interaction-blocker', 'true')
-      
+
       // Prevent all mouse and keyboard events
       interactionBlocker.addEventListener('click', (e) => {
         e.preventDefault()
@@ -1259,70 +1261,70 @@ export function SessionReplayPlayer() {
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('mousedown', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('mouseup', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('dblclick', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('contextmenu', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('keydown', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('keyup', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('keypress', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('submit', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('focus', (e) => {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
         return false
       }, true)
-      
+
       interactionBlocker.addEventListener('blur', (e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -1348,20 +1350,20 @@ export function SessionReplayPlayer() {
       // Override createElement to intercept iframe creation BEFORE rrweb sets sandbox
       // This is more aggressive but necessary to prevent sandbox restrictions
       const originalCreateElement = document.createElement.bind(document)
-      const createElementOverride = function(tagName: string, options?: any) {
+      const createElementOverride = function (tagName: string, options?: any) {
         const element = originalCreateElement(tagName, options)
-        
+
         if (tagName.toLowerCase() === 'iframe') {
           const iframe = element as HTMLIFrameElement
-          
+
           // Override setAttribute to prevent restrictive sandbox
           const originalSetAttribute = iframe.setAttribute.bind(iframe)
-          iframe.setAttribute = function(name: string, value: string) {
+          iframe.setAttribute = function (name: string, value: string) {
             if (name === 'sandbox') {
               // Always ensure allow-scripts and allow-same-origin are present
               const sandboxValue = value || ''
               if (!sandboxValue.includes('allow-scripts') || !sandboxValue.includes('allow-same-origin')) {
-                const newValue = sandboxValue 
+                const newValue = sandboxValue
                   ? `${sandboxValue} allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation`
                   : 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
                 console.log('🔧 Intercepted sandbox setAttribute, ensuring allow-scripts:', newValue)
@@ -1370,7 +1372,7 @@ export function SessionReplayPlayer() {
             }
             return originalSetAttribute(name, value)
           }
-          
+
           // Also override sandbox property setter
           let sandboxValue = ''
           Object.defineProperty(iframe, 'sandbox', {
@@ -1379,7 +1381,7 @@ export function SessionReplayPlayer() {
             },
             set(value: string) {
               if (!value.includes('allow-scripts') || !value.includes('allow-same-origin')) {
-                const newValue = value 
+                const newValue = value
                   ? `${value} allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation`
                   : 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
                 console.log('🔧 Intercepted sandbox property setter, ensuring allow-scripts:', newValue)
@@ -1392,13 +1394,13 @@ export function SessionReplayPlayer() {
             configurable: true,
             enumerable: true
           })
-          
+
           console.log('🔧 Intercepted iframe creation, sandbox protection enabled')
         }
-        
+
         return element
       }
-      
+
       // Temporarily override createElement only for iframe creation
       document.createElement = createElementOverride as any
 
@@ -1430,17 +1432,17 @@ export function SessionReplayPlayer() {
         // IMPORTANT: Ensure navigation events are processed
         // The replayer should automatically handle Type 4 Meta events and multiple Type 2 FullSnapshots
       } as any) // Type assertion to allow autoResize property
-      
-      // Mark replayer as not destroyed
-      ;(replayer as any).destroyed = false
-      
+
+        // Mark replayer as not destroyed
+        ; (replayer as any).destroyed = false
+
       // Override destroy method to mark as destroyed
       const originalDestroy = replayer.destroy.bind(replayer)
-      replayer.destroy = function() {
-        ;(this as any).destroyed = true
+      replayer.destroy = function () {
+        ; (this as any).destroyed = true
         return originalDestroy()
       }
-      
+
       // Restore original createElement after replayer is created
       document.createElement = originalCreateElement
 
@@ -1461,10 +1463,10 @@ export function SessionReplayPlayer() {
         // Allow other warnings through
         originalConsoleWarn(message, ...args)
       }
-      
+
       // Temporarily override console.warn to suppress rrweb warnings
       console.warn = suppressRrwebWarnings as any
-      
+
       // Restore console.warn after a delay (rrweb warnings happen during initialization)
       setTimeout(() => {
         console.warn = originalConsoleWarn
@@ -1505,7 +1507,7 @@ export function SessionReplayPlayer() {
       `
       wrapper.style.position = 'relative'
       wrapper.appendChild(cursorOverlay)
-      
+
       // Create click visualization container
       const clickContainer = document.createElement('div')
       clickContainer.id = 'rrweb-click-container'
@@ -1520,7 +1522,7 @@ export function SessionReplayPlayer() {
         overflow: hidden;
       `
       wrapper.appendChild(clickContainer)
-      
+
       // Create scroll visualization container
       const scrollContainer = document.createElement('div')
       scrollContainer.id = 'rrweb-scroll-container'
@@ -1535,7 +1537,7 @@ export function SessionReplayPlayer() {
         overflow: hidden;
       `
       wrapper.appendChild(scrollContainer)
-      
+
       // Ensure interaction blocker is always on top (after iframe is created)
       // Move it to the end so it's the last child and highest z-index
       setTimeout(() => {
@@ -1543,11 +1545,11 @@ export function SessionReplayPlayer() {
           interactionBlocker.parentElement.appendChild(interactionBlocker)
         }
       }, 1000)
-      
-      // Store containers for cleanup
-      ;(replayer as any)._clickContainer = clickContainer
-      ;(replayer as any)._scrollContainer = scrollContainer
-      
+
+        // Store containers for cleanup
+        ; (replayer as any)._clickContainer = clickContainer
+        ; (replayer as any)._scrollContainer = scrollContainer
+
       // Also add cursor trail element
       const cursorTrail = document.createElement('div')
       cursorTrail.id = 'rrweb-cursor-trail'
@@ -1563,11 +1565,11 @@ export function SessionReplayPlayer() {
         display: none;
       `
       wrapper.appendChild(cursorTrail)
-      
-      // Make cursor overlay globally accessible for debugging
-      ;(window as any).cursorOverlay = cursorOverlay
-      ;(window as any).cursorWrapper = wrapper
-      
+
+        // Make cursor overlay globally accessible for debugging
+        ; (window as any).cursorOverlay = cursorOverlay
+        ; (window as any).cursorWrapper = wrapper
+
       console.log('✅ Cursor overlay created and added to wrapper', {
         wrapper: wrapper,
         overlay: cursorOverlay,
@@ -1579,7 +1581,7 @@ export function SessionReplayPlayer() {
           zIndex: cursorOverlay.style.zIndex
         }
       })
-      
+
       // Cursor will be shown when mouse events are detected
 
       // Track mouse movements and clicks from replay events
@@ -1587,7 +1589,7 @@ export function SessionReplayPlayer() {
       let mouseMoveInterval: ReturnType<typeof setInterval> | null = null
       let lastKnownMouseX = 0
       let lastKnownMouseY = 0
-      
+
       // Function to find latest mouse position from events
       const findLatestMousePosition = () => {
         try {
@@ -1595,18 +1597,18 @@ export function SessionReplayPlayer() {
           if (!service || !service.state) {
             return { x: lastKnownMouseX, y: lastKnownMouseY, found: false }
           }
-          
+
           const currentIndex = service.state.currentIndex || 0
           const events = service.state.events || validSnapshots
-          
+
           // Search backwards from current position to find most recent mouse event
           // Check up to 200 events back for better coverage
           for (let i = Math.min(currentIndex, events.length - 1); i >= Math.max(0, currentIndex - 200); i--) {
             const event = events[i]
             if (!event || event.type !== 3 || !event.data) continue
-            
+
             const data = event.data
-            
+
             // Mouse move events (source: 1) - most common
             if (data.source === 1) {
               // Check positions array
@@ -1625,7 +1627,7 @@ export function SessionReplayPlayer() {
                 return { x: data.x, y: data.y, found: true }
               }
             }
-            
+
             // Click events (source: 2) - also have mouse position
             if (data.source === 2 && typeof data.x === 'number' && typeof data.y === 'number' && !isNaN(data.x) && !isNaN(data.y)) {
               lastKnownMouseX = data.x
@@ -1633,14 +1635,14 @@ export function SessionReplayPlayer() {
               return { x: data.x, y: data.y, found: true }
             }
           }
-          
+
           return { x: lastKnownMouseX, y: lastKnownMouseY, found: lastKnownMouseX > 0 || lastKnownMouseY > 0 }
         } catch (error) {
           console.warn('Error finding mouse position:', error)
           return { x: lastKnownMouseX, y: lastKnownMouseY, found: false }
         }
       }
-      
+
       // Function to update cursor overlay position
       const updateCursorPosition = () => {
         try {
@@ -1648,33 +1650,33 @@ export function SessionReplayPlayer() {
           if (!pos.found || (pos.x === 0 && pos.y === 0 && lastKnownMouseX === 0 && lastKnownMouseY === 0)) {
             return // No valid position found
           }
-          
+
           // Get iframe for positioning
           const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
           let cursorX = pos.x
           let cursorY = pos.y
-          
+
           if (iframe) {
             try {
               const iframeRect = iframe.getBoundingClientRect()
               const wrapperRect = wrapper.getBoundingClientRect()
-              
+
               // Calculate position relative to wrapper
               // Mouse positions in events are relative to the iframe content
               cursorX = pos.x + iframeRect.left - wrapperRect.left
               cursorY = pos.y + iframeRect.top - wrapperRect.top
-              
+
               // Debug logging (only first few times)
               if (!(cursorOverlay as any)._debugLogged) {
-                console.log('🖱️ Cursor position found:', { 
-                  eventX: pos.x, 
-                  eventY: pos.y, 
-                  cursorX, 
+                console.log('🖱️ Cursor position found:', {
+                  eventX: pos.x,
+                  eventY: pos.y,
+                  cursorX,
                   cursorY,
                   iframeRect: { left: iframeRect.left, top: iframeRect.top },
                   wrapperRect: { left: wrapperRect.left, top: wrapperRect.top }
                 })
-                ;(cursorOverlay as any)._debugLogged = true
+                  ; (cursorOverlay as any)._debugLogged = true
               }
             } catch (e) {
               // Use relative positioning if iframe access fails
@@ -1685,7 +1687,7 @@ export function SessionReplayPlayer() {
             cursorX = pos.x
             cursorY = pos.y
           }
-          
+
           // Update cursor overlay - make it very visible
           cursorOverlay.style.display = 'block'
           cursorOverlay.style.left = cursorX + 'px'
@@ -1693,24 +1695,24 @@ export function SessionReplayPlayer() {
           cursorOverlay.style.opacity = '1'
           cursorOverlay.style.zIndex = '999999'
           cursorOverlay.style.visibility = 'visible'
-          
+
           // Keep cursor visible
           clearTimeout((cursorOverlay as any)._hideTimeout)
-          ;(cursorOverlay as any)._hideTimeout = setTimeout(() => {
-            if (cursorOverlay.style.opacity === '1') {
-              cursorOverlay.style.opacity = '0.7'
-            }
-          }, 2000) // Keep visible for 2 seconds
+            ; (cursorOverlay as any)._hideTimeout = setTimeout(() => {
+              if (cursorOverlay.style.opacity === '1') {
+                cursorOverlay.style.opacity = '0.7'
+              }
+            }, 2000) // Keep visible for 2 seconds
         } catch (error) {
           console.warn('Error updating cursor position:', error)
         }
       }
-      
+
       // Update cursor on state changes
       replayer.on('state-change', () => {
         updateCursorPosition()
       })
-      
+
       // Also update cursor continuously while playing (more reliable)
       if (mouseMoveInterval) {
         clearInterval(mouseMoveInterval)
@@ -1720,33 +1722,33 @@ export function SessionReplayPlayer() {
           updateCursorPosition()
         }
       }, 16) // Update every 16ms (~60fps) for smooth cursor movement
-      
-      // Store interval for cleanup
-      ;(replayer as any)._mouseMoveInterval = mouseMoveInterval
-      
+
+        // Store interval for cleanup
+        ; (replayer as any)._mouseMoveInterval = mouseMoveInterval
+
       // Reset cursor on snapshot rebuild
       replayer.on('fullsnapshot-rebuilded', () => {
         cursorOverlay.style.display = 'none'
         lastKnownMouseX = 0
         lastKnownMouseY = 0
       })
-      
+
       // Initial cursor position - try multiple times to ensure it shows
       setTimeout(() => {
         updateCursorPosition()
         console.log('🖱️ Initial cursor update attempted')
       }, 500)
-      
+
       setTimeout(() => {
         updateCursorPosition()
         console.log('🖱️ Second cursor update attempted')
       }, 1000)
-      
+
       setTimeout(() => {
         updateCursorPosition()
         console.log('🖱️ Third cursor update attempted')
       }, 2000)
-      
+
       // Log event structure for debugging
       console.log('📊 Events structure:', {
         totalEvents: validSnapshots.length,
@@ -1757,13 +1759,13 @@ export function SessionReplayPlayer() {
           hasPositions: !!e.data?.positions,
           hasXY: typeof e.data?.x === 'number' && typeof e.data?.y === 'number'
         })),
-        mouseEvents: validSnapshots.filter((e: any) => 
+        mouseEvents: validSnapshots.filter((e: any) =>
           e.type === 3 && e.data && (e.data.source === 1 || e.data.source === 2)
         ).length
       })
-      
-      // Store cursor overlay for cleanup
-      ;(replayer as any)._cursorOverlay = cursorOverlay
+
+        // Store cursor overlay for cleanup
+        ; (replayer as any)._cursorOverlay = cursorOverlay
 
       // Fix iframe sandbox permissions using MutationObserver
       // This watches for when rrweb creates the iframe and fixes it immediately
@@ -1772,16 +1774,16 @@ export function SessionReplayPlayer() {
           // Set sandbox with allow-scripts permission instead of removing it
           // This prevents rrweb from re-adding restrictive sandbox and allows scripts to run
           const currentSandbox = iframe.getAttribute('sandbox') || ''
-          
+
           // Check if allow-scripts is already present
           if (currentSandbox.includes('allow-scripts') && currentSandbox.includes('allow-same-origin')) {
             return true // Already fixed
           }
-          
+
           // Set sandbox with proper permissions - always include all necessary permissions
           // Remove any existing sandbox restrictions and set full permissions
           const newSandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation'
-          
+
           // Multiple attempts to set sandbox attribute
           try {
             iframe.setAttribute('sandbox', newSandbox)
@@ -1797,7 +1799,7 @@ export function SessionReplayPlayer() {
               console.warn('Could not set sandbox via defineProperty:', e2)
             }
           }
-          
+
           // Verify it was set
           const verifySandbox = iframe.getAttribute('sandbox') || ''
           if (verifySandbox.includes('allow-scripts') && verifySandbox.includes('allow-same-origin')) {
@@ -1838,7 +1840,7 @@ export function SessionReplayPlayer() {
               })
             }
           })
-          
+
           // Watch for attribute changes (in case sandbox is added after creation)
           if (mutation.type === 'attributes' && mutation.attributeName === 'sandbox') {
             const target = mutation.target as HTMLIFrameElement
@@ -1863,28 +1865,42 @@ export function SessionReplayPlayer() {
         const iframes = wrapper.querySelectorAll('iframe')
         iframes.forEach(iframe => {
           fixSandboxAttribute(iframe as HTMLIFrameElement)
+
+          // CRITICAL FIX: Add CSS to ensure iframe scales properly
+          const iframeElement = iframe as HTMLIFrameElement
+          // Ensure iframe takes full container space and scales content to fit
+          if (iframeElement.style.maxWidth !== '100%') {
+            iframeElement.style.maxWidth = '100%'
+            iframeElement.style.maxHeight = '100%'
+            iframeElement.style.width = '100%'
+            iframeElement.style.height = '100%'
+            iframeElement.style.display = 'block'
+            iframeElement.style.margin = '0 auto' // Center horizontally
+            iframeElement.style.transformOrigin = 'center center' // Scale from center
+            console.log('🔧 Applied scaling CSS to iframe')
+          }
         })
       }
-      
+
       checkAndFixIframes() // Check immediately
-      
+
       // Also check periodically for the first 15 seconds (increased to catch late iframe creation)
       // Use a more frequent interval to catch sandbox changes immediately
       const checkInterval = setInterval(() => {
         checkAndFixIframes()
       }, 50) // Check every 50ms for faster response
-      
+
       // Stop checking after 15 seconds (increased to catch late iframe creation)
       setTimeout(() => {
         clearInterval(checkInterval)
         console.log('✅ Stopped sandbox monitoring (iframe should be created by now)')
       }, 15000)
 
-      // No need to restore - we're not overriding anything globally anymore
+        // No need to restore - we're not overriding anything globally anymore
 
-      // Store observer and interval for cleanup
-      ;(replayer as any)._sandboxObserver = observer
-      ;(replayer as any)._sandboxCheckInterval = checkInterval
+        // Store observer and interval for cleanup
+        ; (replayer as any)._sandboxObserver = observer
+        ; (replayer as any)._sandboxCheckInterval = checkInterval
 
       // CRITICAL: Handle container resize to ensure proper scaling
       // When the container is resized (minimized/maximized), the replayer needs to update
@@ -1896,13 +1912,13 @@ export function SessionReplayPlayer() {
             // The replayer should handle this automatically, but we ensure it happens
             const containerWidth = replayContainerRef.current.offsetWidth
             const containerHeight = replayContainerRef.current.offsetHeight
-            
+
             // Ensure iframe matches container size
             if (iframe.style.width !== '100%' || iframe.style.height !== '100%') {
               iframe.style.width = '100%'
               iframe.style.height = '100%'
             }
-            
+
             // Trigger a re-render by accessing the replayer's mirror
             try {
               const mirror = (replayer as any).getMirror?.()
@@ -1917,7 +1933,7 @@ export function SessionReplayPlayer() {
             } catch (e) {
               // Ignore errors - replayer might not expose mirror
             }
-            
+
             console.log('🔄 Container resized, updated replayer dimensions', {
               containerWidth,
               containerHeight,
@@ -1927,33 +1943,33 @@ export function SessionReplayPlayer() {
           }
         }
       }
-      
+
       // Use ResizeObserver for efficient resize detection
       const resizeObserver = new ResizeObserver(() => {
         // Debounce resize handling
         if ((replayer as any)._resizeTimeout) {
           clearTimeout((replayer as any)._resizeTimeout)
         }
-        ;(replayer as any)._resizeTimeout = setTimeout(() => {
+        ; (replayer as any)._resizeTimeout = setTimeout(() => {
           handleResize()
         }, 100) // 100ms debounce
       })
-      
+
       // Observe the replay container for size changes
       if (replayContainerRef.current) {
         resizeObserver.observe(replayContainerRef.current)
         console.log('👀 ResizeObserver attached to replay container')
       }
-      
+
       // Also listen to window resize as fallback
       const windowResizeHandler = () => {
         handleResize()
       }
       window.addEventListener('resize', windowResizeHandler)
-      
-      // Store resize handlers for cleanup
-      ;(replayer as any)._resizeObserver = resizeObserver
-      ;(replayer as any)._windowResizeHandler = windowResizeHandler
+
+        // Store resize handlers for cleanup
+        ; (replayer as any)._resizeObserver = resizeObserver
+        ; (replayer as any)._windowResizeHandler = windowResizeHandler
 
       playerRef.current = replayer
 
@@ -1986,7 +2002,7 @@ export function SessionReplayPlayer() {
           }
         }
       })
-      
+
       // Also listen for any event that might indicate navigation
       // Check if we have Type 4 events and log when they're processed
       const navType4Events = validSnapshots.filter((e: any) => e.type === 4)
@@ -2025,28 +2041,28 @@ export function SessionReplayPlayer() {
       // Set up event listeners with error handling (optimized - no console logs)
       replayer.on('start', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-        setIsPlaying(true)
-        setIsFinished(false) // Reset finished state when replay starts
+          setIsPlaying(true)
+          setIsFinished(false) // Reset finished state when replay starts
         }
       })
 
       replayer.on('pause', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-        setIsPlaying(false)
+          setIsPlaying(false)
         }
       })
 
       replayer.on('resume', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-        setIsPlaying(true)
-        setIsFinished(false) // Reset finished state when replay resumes
+          setIsPlaying(true)
+          setIsFinished(false) // Reset finished state when replay resumes
         }
       })
 
       replayer.on('finish', () => {
         if (!(replayer as any).destroyed && playerRef.current === replayer) {
-        setIsPlaying(false)
-        setIsFinished(true) // Mark replay as finished
+          setIsPlaying(false)
+          setIsFinished(true) // Mark replay as finished
           // Ensure progress bar shows final time when finished
           try {
             const finalTime = playerRef.current.getCurrentTime()
@@ -2075,7 +2091,7 @@ export function SessionReplayPlayer() {
                 const lastSaved = (replayer as any)._lastPositionSave || 0
                 if (payload.timeOffset - lastSaved > 5000) {
                   setCachedPosition(projectId, sessionId, payload.timeOffset)
-                  ;(replayer as any)._lastPositionSave = payload.timeOffset
+                    ; (replayer as any)._lastPositionSave = payload.timeOffset
                 }
               }
             }
@@ -2085,29 +2101,29 @@ export function SessionReplayPlayer() {
         }
       }
       replayer.on('progress', progressListener)
-      
-      // Store listener for cleanup
-      ;(replayer as any)._progressListener = progressListener
-      
+
+        // Store listener for cleanup
+        ; (replayer as any)._progressListener = progressListener
+
       // Click and Scroll Visualization
       // Track processed events to show visual indicators
       let lastProcessedEventIndex = -1
       const processedClickEvents = new Set<number>()
       const processedScrollEvents = new Set<number>()
-      
+
       // Function to create click ripple effect with enhanced visualization and clear message
       const createClickRipple = (x: number, y: number, clickType: 'left' | 'right' | 'double' = 'left') => {
         if (!clickContainer || !clickContainer.parentElement) {
           console.warn('Click container not available')
           return
         }
-        
+
         // Ensure coordinates are valid numbers
         if (isNaN(x) || isNaN(y) || !isFinite(x) || !isFinite(y)) {
           console.warn('Invalid click coordinates:', { x, y })
           return
         }
-        
+
         const colors = {
           left: '#3b82f6',    // Blue for left click
           right: '#ef4444',   // Red for right click
@@ -2115,7 +2131,7 @@ export function SessionReplayPlayer() {
         }
         const color = colors[clickType]
         const clickLabel = clickType === 'double' ? 'DOUBLE CLICK' : clickType === 'right' ? 'RIGHT CLICK' : 'BUTTON CLICKED'
-        
+
         // Create large, prominent ripple effect
         const ripple = document.createElement('div')
         ripple.style.cssText = `
@@ -2132,7 +2148,7 @@ export function SessionReplayPlayer() {
           z-index: 999998;
           animation: clickRipple 1s ease-out forwards;
         `
-        
+
         // Add large, visible click marker (circle)
         const marker = document.createElement('div')
         marker.style.cssText = `
@@ -2150,7 +2166,7 @@ export function SessionReplayPlayer() {
           animation: clickMarker 1.5s ease-out forwards;
           box-shadow: 0 0 0 8px rgba(${clickType === 'left' ? '59, 130, 246' : clickType === 'right' ? '239, 68, 68' : '16, 185, 129'}, 0.4), 0 0 20px ${color};
         `
-        
+
         // Add large, prominent click message banner
         const messageBanner = document.createElement('div')
         messageBanner.style.cssText = `
@@ -2174,7 +2190,7 @@ export function SessionReplayPlayer() {
           letter-spacing: 1px;
         `
         messageBanner.textContent = clickLabel
-        
+
         // Add click label badge near the click point
         const label = document.createElement('div')
         label.style.cssText = `
@@ -2195,12 +2211,12 @@ export function SessionReplayPlayer() {
           box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
         `
         label.textContent = '✓ Click'
-        
+
         clickContainer.appendChild(ripple)
         clickContainer.appendChild(marker)
         clickContainer.appendChild(messageBanner)
         clickContainer.appendChild(label)
-        
+
         // Remove after animation (longer duration for better visibility)
         setTimeout(() => {
           if (ripple.parentElement) ripple.remove()
@@ -2209,23 +2225,23 @@ export function SessionReplayPlayer() {
           if (label.parentElement) label.remove()
         }, 2000)
       }
-      
+
       // Track scroll path for visualization
-      let scrollPathPoints: Array<{x: number, y: number, time: number}> = []
-      
+      let scrollPathPoints: Array<{ x: number, y: number, time: number }> = []
+
       // Function to create enhanced scroll visualization with path
       const createScrollIndicator = (scrollX: number, scrollY: number, direction: 'up' | 'down' | 'left' | 'right') => {
         if (!scrollContainer || !scrollContainer.parentElement) {
           console.warn('Scroll container not available')
           return
         }
-        
+
         // Ensure coordinates are valid numbers
         if (isNaN(scrollX) || isNaN(scrollY) || !isFinite(scrollX) || !isFinite(scrollY)) {
           console.warn('Invalid scroll coordinates:', { scrollX, scrollY })
           return
         }
-        
+
         const colors = {
           up: '#9333ea',      // Purple for up
           down: '#f59e0b',    // Orange for down
@@ -2234,28 +2250,28 @@ export function SessionReplayPlayer() {
         }
         const color = colors[direction]
         const arrow = direction === 'up' ? '↑' : direction === 'down' ? '↓' : direction === 'left' ? '←' : '→'
-        
+
         // Get container dimensions for positioning
         const containerRect = scrollContainer.getBoundingClientRect()
         const containerWidth = containerRect.width
         const containerHeight = containerRect.height
-        
+
         // Calculate scroll position indicators on screen edges
         const scrollPercentX = containerWidth > 0 ? (scrollX / (containerWidth * 2)) * 100 : 0
         const scrollPercentY = containerHeight > 0 ? (scrollY / (containerHeight * 2)) * 100 : 0
-        
+
         // Add current scroll point to path
         const currentTime = Date.now()
         scrollPathPoints.push({ x: scrollX, y: scrollY, time: currentTime })
-        
+
         // Clean up old path points (older than 2 seconds)
         scrollPathPoints = scrollPathPoints.filter(point => currentTime - point.time < 2000)
-        
+
         // Draw scroll path line if we have previous point
         if (scrollPathPoints.length > 1) {
           const prevPoint = scrollPathPoints[scrollPathPoints.length - 2]
           const currentPoint = scrollPathPoints[scrollPathPoints.length - 1]
-          
+
           // Create SVG path element for scroll visualization
           let pathSvg = scrollContainer.querySelector('svg.scroll-path-svg') as SVGElement
           if (!pathSvg) {
@@ -2273,7 +2289,7 @@ export function SessionReplayPlayer() {
             `
             scrollContainer.appendChild(pathSvg)
           }
-          
+
           // Create path line
           const pathLine = document.createElementNS('http://www.w3.org/2000/svg', 'line')
           pathLine.setAttribute('x1', prevPoint.x.toString())
@@ -2288,13 +2304,13 @@ export function SessionReplayPlayer() {
             animation: scrollPathFade 2s ease-out forwards;
           `
           pathSvg.appendChild(pathLine)
-          
+
           // Remove path line after animation
           setTimeout(() => {
             if (pathLine.parentElement) pathLine.remove()
           }, 2000)
         }
-        
+
         // Create scroll position indicator on appropriate edge
         let indicatorPosition: { top?: string, bottom?: string, left?: string, right?: string } = {}
         if (direction === 'up' || direction === 'down') {
@@ -2310,7 +2326,7 @@ export function SessionReplayPlayer() {
             left: `${Math.min(95, Math.max(5, scrollPercentX))}%`
           }
         }
-        
+
         const indicator = document.createElement('div')
         indicator.style.cssText = `
           position: absolute;
@@ -2332,7 +2348,7 @@ export function SessionReplayPlayer() {
           transform: ${indicatorPosition.right ? 'translateX(0)' : indicatorPosition.bottom ? 'translateY(0)' : 'none'};
         `
         indicator.textContent = `${arrow}`
-        
+
         // Add scroll position text for better context
         const positionText = document.createElement('div')
         positionText.style.cssText = `
@@ -2356,37 +2372,37 @@ export function SessionReplayPlayer() {
         if (scrollX > 0) {
           positionText.textContent += ` X: ${Math.round(scrollX)}`
         }
-        
+
         scrollContainer.appendChild(indicator)
         scrollContainer.appendChild(positionText)
-        
+
         // Remove after animation
         setTimeout(() => {
           if (indicator.parentElement) indicator.remove()
           if (positionText.parentElement) positionText.remove()
         }, 1000)
       }
-      
+
       // Monitor events as they're processed
       const checkForNewEvents = () => {
         try {
           if (!playerRef.current || (playerRef.current as any).destroyed || playerRef.current !== replayer) {
             return
           }
-          
+
           const service = (replayer as any).service
           if (!service || !service.state) return
-          
+
           const currentIndex = service.state.currentIndex || 0
-          
+
           // Process new events since last check
           for (let i = lastProcessedEventIndex + 1; i <= currentIndex && i < validSnapshots.length; i++) {
             const event = validSnapshots[i]
             if (!event || event.type !== 3 || !event.data) continue
-            
+
             const data = event.data
             const source = data.source
-            
+
             // Handle click events - MouseInteraction events (source: 2)
             // In rrweb, clicks are MouseInteraction events with type 0 (click), 1 (mousedown), 2 (mouseup), etc.
             if (source === 2 && !processedClickEvents.has(i)) {
@@ -2395,18 +2411,18 @@ export function SessionReplayPlayer() {
               // Accept click (0), mousedown (1), and also check for any mouse interaction
               if (mouseType === 0 || mouseType === 1 || mouseType === undefined) { // 0 = click, 1 = mousedown, undefined = default click
                 processedClickEvents.add(i)
-                
-                
+
+
                 // Get click coordinates - rrweb stores these relative to the viewport
                 let clickX = data.x || 0
                 let clickY = data.y || 0
-                
+
                 // Get iframe and wrapper for coordinate conversion
                 const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
                 if (iframe) {
                   const iframeRect = iframe.getBoundingClientRect()
                   const wrapperRect = wrapper.getBoundingClientRect()
-                  
+
                   // Try to get element position if we have an element ID
                   if (data.id !== undefined && typeof data.id === 'number') {
                     try {
@@ -2434,35 +2450,35 @@ export function SessionReplayPlayer() {
                     clickY = clickY - wrapperRect.top
                   }
                 }
-                
+
                 // Determine click type
                 let clickType: 'left' | 'right' | 'double' = 'left'
                 // Check for double click or right click in the event data
                 if (data.type === 2) clickType = 'double'
                 else if (data.button === 2 || data.buttons === 2) clickType = 'right'
-                
+
                 createClickRipple(clickX, clickY, clickType)
               }
             }
-            
+
             // Handle scroll events - Scroll events (source: 3) or Input events with scroll (source: 5)
             if ((source === 3 || source === 5) && !processedScrollEvents.has(i)) {
               // Source 3 = Scroll event, Source 5 = Input event (can include scroll)
               const isScrollEvent = source === 3 || (source === 5 && (data.x !== undefined || data.y !== undefined))
-              
+
               if (isScrollEvent) {
                 processedScrollEvents.add(i)
-                
+
                 const scrollX = data.x || 0
                 const scrollY = data.y || 0
-                
+
                 // Determine scroll direction based on scroll deltas
                 let direction: 'up' | 'down' | 'left' | 'right' = 'down'
-                
+
                 // Compare with previous scroll position
                 const prevScrollY = (replayer as any)._lastScrollY || 0
                 const prevScrollX = (replayer as any)._lastScrollX || 0
-                
+
                 if (Math.abs(scrollY - prevScrollY) > Math.abs(scrollX - prevScrollX)) {
                   // Vertical scroll
                   if (scrollY < prevScrollY) direction = 'up'
@@ -2472,112 +2488,112 @@ export function SessionReplayPlayer() {
                   if (scrollX < prevScrollX) direction = 'left'
                   else if (scrollX > prevScrollX) direction = 'right'
                 }
-                
+
                 // Store current scroll position for next comparison
-                ;(replayer as any)._lastScrollX = scrollX
-                ;(replayer as any)._lastScrollY = scrollY
-                
+                ; (replayer as any)._lastScrollX = scrollX
+                  ; (replayer as any)._lastScrollY = scrollY
+
                 createScrollIndicator(scrollX, scrollY, direction)
               }
             }
           }
-          
+
           lastProcessedEventIndex = currentIndex
         } catch (error) {
           // Silently ignore errors
         }
       }
-      
+
       // Check for new events periodically during playback
       const eventCheckInterval = setInterval(() => {
         if (isPlaying && !(replayer as any).destroyed) {
           checkForNewEvents()
         }
       }, 50) // Check every 50ms for more responsive visualization
-      
-      ;(replayer as any)._eventCheckInterval = eventCheckInterval
-      
+
+        ; (replayer as any)._eventCheckInterval = eventCheckInterval
+
       // Also listen to replayer's internal events to catch events in real-time
       // Try multiple event names as rrweb versions may differ
       const eventListeners = ['event-cast', 'fullsnapshot-rebuilded', 'incremental-snapshot']
       eventListeners.forEach(eventName => {
         try {
           replayer.on(eventName as any, (event: any) => {
-        try {
-          if (!(replayer as any).destroyed && playerRef.current === replayer) {
-            // Handle incremental snapshot events
-            if (event && event.type === 3 && event.data) {
-              const data = event.data
-              const source = data.source
-              
-              // Handle click events immediately - catch all mouse interactions
-              if (source === 2) {
-                const mouseType = data.type
-                // Accept click (0), mousedown (1), and any mouse interaction that has coordinates
-                if ((mouseType === 0 || mouseType === 1 || mouseType === undefined) && (data.x !== undefined || data.y !== undefined)) {
-                  let clickX = data.x || 0
-                  let clickY = data.y || 0
-                  
-                  // Get iframe for coordinate conversion
-                  const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
-                  if (iframe) {
-                    const iframeRect = iframe.getBoundingClientRect()
-                    const wrapperRect = wrapper.getBoundingClientRect()
-                    
-                    // Convert viewport coordinates to wrapper-relative coordinates
-                    clickX = clickX - wrapperRect.left
-                    clickY = clickY - wrapperRect.top
-                    
-                    // If coordinates seem to be within iframe, they might be iframe-relative
-                    if (clickX >= 0 && clickX <= iframeRect.width && clickY >= 0 && clickY <= iframeRect.height) {
-                      // Coordinates are already correct (within iframe bounds in wrapper space)
-                    } else {
-                      // Try converting as if they're viewport-relative
-                      clickX = clickX - wrapperRect.left + iframeRect.left
-                      clickY = clickY - wrapperRect.top + iframeRect.top
+            try {
+              if (!(replayer as any).destroyed && playerRef.current === replayer) {
+                // Handle incremental snapshot events
+                if (event && event.type === 3 && event.data) {
+                  const data = event.data
+                  const source = data.source
+
+                  // Handle click events immediately - catch all mouse interactions
+                  if (source === 2) {
+                    const mouseType = data.type
+                    // Accept click (0), mousedown (1), and any mouse interaction that has coordinates
+                    if ((mouseType === 0 || mouseType === 1 || mouseType === undefined) && (data.x !== undefined || data.y !== undefined)) {
+                      let clickX = data.x || 0
+                      let clickY = data.y || 0
+
+                      // Get iframe for coordinate conversion
+                      const iframe = wrapper.querySelector('iframe') as HTMLIFrameElement
+                      if (iframe) {
+                        const iframeRect = iframe.getBoundingClientRect()
+                        const wrapperRect = wrapper.getBoundingClientRect()
+
+                        // Convert viewport coordinates to wrapper-relative coordinates
+                        clickX = clickX - wrapperRect.left
+                        clickY = clickY - wrapperRect.top
+
+                        // If coordinates seem to be within iframe, they might be iframe-relative
+                        if (clickX >= 0 && clickX <= iframeRect.width && clickY >= 0 && clickY <= iframeRect.height) {
+                          // Coordinates are already correct (within iframe bounds in wrapper space)
+                        } else {
+                          // Try converting as if they're viewport-relative
+                          clickX = clickX - wrapperRect.left + iframeRect.left
+                          clickY = clickY - wrapperRect.top + iframeRect.top
+                        }
+                      }
+
+                      let clickType: 'left' | 'right' | 'double' = 'left'
+                      if (data.button === 2 || data.buttons === 2) clickType = 'right'
+
+                      createClickRipple(clickX, clickY, clickType)
                     }
                   }
-                  
-                  let clickType: 'left' | 'right' | 'double' = 'left'
-                  if (data.button === 2 || data.buttons === 2) clickType = 'right'
-                  
-                  createClickRipple(clickX, clickY, clickType)
+
+                  // Handle scroll events immediately
+                  if (source === 3 || (source === 5 && (data.x !== undefined || data.y !== undefined))) {
+                    const scrollX = data.x || 0
+                    const scrollY = data.y || 0
+
+                    const prevScrollY = (replayer as any)._lastScrollY || 0
+                    const prevScrollX = (replayer as any)._lastScrollX || 0
+
+                    let direction: 'up' | 'down' | 'left' | 'right' = 'down'
+                    if (Math.abs(scrollY - prevScrollY) > Math.abs(scrollX - prevScrollX)) {
+                      if (scrollY < prevScrollY) direction = 'up'
+                      else if (scrollY > prevScrollY) direction = 'down'
+                    } else {
+                      if (scrollX < prevScrollX) direction = 'left'
+                      else if (scrollX > prevScrollX) direction = 'right'
+                    }
+
+                    ; (replayer as any)._lastScrollX = scrollX
+                      ; (replayer as any)._lastScrollY = scrollY
+
+                    createScrollIndicator(scrollX, scrollY, direction)
+                  }
                 }
               }
-              
-              // Handle scroll events immediately
-              if (source === 3 || (source === 5 && (data.x !== undefined || data.y !== undefined))) {
-                const scrollX = data.x || 0
-                const scrollY = data.y || 0
-                
-                const prevScrollY = (replayer as any)._lastScrollY || 0
-                const prevScrollX = (replayer as any)._lastScrollX || 0
-                
-                let direction: 'up' | 'down' | 'left' | 'right' = 'down'
-                if (Math.abs(scrollY - prevScrollY) > Math.abs(scrollX - prevScrollX)) {
-                  if (scrollY < prevScrollY) direction = 'up'
-                  else if (scrollY > prevScrollY) direction = 'down'
-                } else {
-                  if (scrollX < prevScrollX) direction = 'left'
-                  else if (scrollX > prevScrollX) direction = 'right'
-                }
-                
-                ;(replayer as any)._lastScrollX = scrollX
-                ;(replayer as any)._lastScrollY = scrollY
-                
-                createScrollIndicator(scrollX, scrollY, direction)
-              }
+            } catch (error) {
+              // Silently ignore errors
             }
-          }
-        } catch (error) {
-          // Silently ignore errors
-        }
           })
         } catch (e) {
           // Event name might not exist in this rrweb version, ignore
         }
       })
-      
+
       // 2. Listen to state-change events (fallback)
       replayer.on('state-change', (state: any) => {
         try {
@@ -2589,16 +2605,16 @@ export function SessionReplayPlayer() {
                 const lastSaved = (replayer as any)._lastPositionSave || 0
                 if (state.timeOffset - lastSaved > 5000) {
                   setCachedPosition(projectId, sessionId, state.timeOffset)
-                  ;(replayer as any)._lastPositionSave = state.timeOffset
+                    ; (replayer as any)._lastPositionSave = state.timeOffset
                 }
               }
             }
-            }
-          } catch (error) {
+          }
+        } catch (error) {
           // Silently ignore errors from destroyed replayer
         }
       })
-      
+
       // 3. Continuous polling using requestAnimationFrame for guaranteed updates
       // This ensures the progress bar always stays in sync, even if events are missed
       // This runs continuously regardless of play/pause state to keep progress bar accurate
@@ -2609,25 +2625,25 @@ export function SessionReplayPlayer() {
             const currentTime = playerRef.current.getCurrentTime()
             if (typeof currentTime === 'number' && currentTime >= 0) {
               setCurrentTime(currentTime)
-              }
             }
-          } catch (error) {
+          }
+        } catch (error) {
           // Ignore errors - continue polling
         }
-        
+
         // Continue polling as long as replayer exists (even when paused or finished)
         // Only stop when replayer is destroyed
         if (playerRef.current && !(playerRef.current as any).destroyed) {
           progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
-              } else {
+        } else {
           // Replayer destroyed, stop polling
           progressUpdateIntervalRef.current = null
         }
       }
-      
+
       // Start continuous progress updates
       progressUpdateIntervalRef.current = requestAnimationFrame(updateProgress) as any
-      ;(replayer as any)._progressUpdateInterval = progressUpdateIntervalRef.current
+        ; (replayer as any)._progressUpdateInterval = progressUpdateIntervalRef.current
 
       // Skip inactivity will be set up via useEffect when skipInactivity state changes
       // This ensures it works when toggled on/off dynamically
@@ -2644,22 +2660,22 @@ export function SessionReplayPlayer() {
             wrapperOffsetWidth: wrapper.offsetWidth,
             wrapperOffsetHeight: wrapper.offsetHeight
           })
-          
+
           // Ensure wrapper is visible
           wrapper.style.display = 'block'
           wrapper.style.visibility = 'visible'
           wrapper.style.opacity = '1'
-          
+
           // Check if replayer is still valid before playing
           if (!(replayer as any).destroyed && playerRef.current === replayer) {
             // Resume from cached position if available, otherwise start from beginning
             const cachedPosition = projectId && sessionId ? getCachedPosition(projectId, sessionId) : null
             const startTime = cachedPosition && cachedPosition > 0 && cachedPosition < duration ? cachedPosition : 0
-            
+
             replayer.play(startTime)
             setIsPlaying(true)
             setCurrentTime(startTime)
-            
+
             if (startTime > 0) {
               console.log(`✅ Auto-playing replay from cached position: ${Math.round(startTime / 1000)}s`)
             } else {
@@ -2668,7 +2684,7 @@ export function SessionReplayPlayer() {
           } else {
             console.warn('⚠️ Cannot auto-play: replayer has been destroyed')
           }
-          
+
           // Ensure controls remain visible after playback starts
           const ensureControlsVisible = () => {
             const controls = document.getElementById('session-replay-controls')
@@ -2695,13 +2711,13 @@ export function SessionReplayPlayer() {
               console.log('✅ Set wrapper z-index to 1')
             }
           }
-          
+
           // Check immediately and after delays
           ensureControlsVisible()
           setTimeout(ensureControlsVisible, 100)
           setTimeout(ensureControlsVisible, 500)
           setTimeout(ensureControlsVisible, 1000)
-          
+
           // Also check periodically to ensure controls stay visible
           const visibilityCheckInterval = setInterval(() => {
             const controls = document.getElementById('session-replay-controls')
@@ -2718,10 +2734,10 @@ export function SessionReplayPlayer() {
               }
             }
           }, 500)
-          
-          // Store interval for cleanup
-          ;(replayer as any)._visibilityCheckInterval = visibilityCheckInterval
-          
+
+            // Store interval for cleanup
+            ; (replayer as any)._visibilityCheckInterval = visibilityCheckInterval
+
           // Log wrapper content after delays to verify rendering
           setTimeout(() => {
             const iframe = wrapper.querySelector('iframe')
@@ -2739,7 +2755,7 @@ export function SessionReplayPlayer() {
               wrapperVisibility: window.getComputedStyle(wrapper).visibility
             })
           }, 500)
-          
+
           setTimeout(() => {
             const iframe = wrapper.querySelector('iframe')
             console.log('📊 Replay container state (2s):', {
@@ -2771,7 +2787,7 @@ export function SessionReplayPlayer() {
       setCurrentTime(0)
       return
     }
-    
+
     // Handle rrweb replayer for web sessions
     if (playerRef.current) {
       try {
@@ -2780,7 +2796,7 @@ export function SessionReplayPlayer() {
           console.warn('Replayer has been destroyed, cannot restart')
           return
         }
-        
+
         // Restart from beginning
         playerRef.current.play(0)
         setIsPlaying(true)
@@ -2798,7 +2814,7 @@ export function SessionReplayPlayer() {
       restartReplay()
       return
     }
-    
+
     // Handle video player for mobile sessions
     if (hasVideo && videoPlayerRef.current) {
       if (isPlaying) {
@@ -2810,7 +2826,7 @@ export function SessionReplayPlayer() {
       setIsFinished(false) // Reset finished state when playing
       return
     }
-    
+
     // Handle rrweb replayer for web sessions
     if (playerRef.current) {
       try {
@@ -2819,7 +2835,7 @@ export function SessionReplayPlayer() {
           console.warn('Replayer has been destroyed, cannot toggle play')
           return
         }
-        
+
         if (isPlaying) {
           // Pause the replay
           playerRef.current.pause()
@@ -2827,7 +2843,7 @@ export function SessionReplayPlayer() {
         } else {
           // Resume from current time - get the current playback time before resuming
           let resumeTime = currentTime
-          
+
           // Try to get the actual current time from the replayer
           try {
             const replayerTime = playerRef.current.getCurrentTime()
@@ -2838,7 +2854,7 @@ export function SessionReplayPlayer() {
             // Fallback to state currentTime if getCurrentTime fails
             resumeTime = currentTime
           }
-          
+
           // Resume playback from the current time
           playerRef.current.play(resumeTime)
           setIsPlaying(true)
@@ -2853,13 +2869,13 @@ export function SessionReplayPlayer() {
   const handleSpeedChange = (speed: number) => {
     setPlaybackSpeed(speed)
     basePlaybackSpeedRef.current = speed // Update base speed ref
-    
+
     // Handle video player
     if (hasVideo && videoPlayerRef.current) {
       videoPlayerRef.current.playbackRate = speed
       return
     }
-    
+
     // Handle rrweb replayer
     // Only update if not currently skipping inactivity (skip speed takes priority)
     if (playerRef.current) {
@@ -2869,9 +2885,9 @@ export function SessionReplayPlayer() {
           console.warn('Replayer has been destroyed, cannot change speed')
           return
         }
-        
-      if (!isSkippingInactivity || !skipInactivity) {
-        playerRef.current.setConfig({ speed })
+
+        if (!isSkippingInactivity || !skipInactivity) {
+          playerRef.current.setConfig({ speed })
         }
       } catch (error) {
         console.error('Error changing speed:', error)
@@ -2888,27 +2904,27 @@ export function SessionReplayPlayer() {
   // Format time relative to session start (MM:SS.ms format like picture 1)
   const formatTime = (timestamp: number) => {
     if (!timestamp || snapshots.length === 0) return '00:00.0'
-    
+
     // Get first event timestamp as session start
     const firstEvent = snapshots.find((s: any) => s.timestamp)
     if (!firstEvent || !firstEvent.timestamp) return '00:00.0'
-    
+
     // Calculate time offset from session start
     const timeOffset = timestamp - firstEvent.timestamp
     const totalSeconds = Math.floor(timeOffset / 1000)
     const minutes = Math.floor(totalSeconds / 60)
     const seconds = totalSeconds % 60
     const milliseconds = Math.floor((timeOffset % 1000) / 100) // First decimal of milliseconds
-    
+
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}.${milliseconds}`
   }
-  
+
 
   // Convert raw events into user-friendly descriptions with metadata
-  const parseEventDescription = (event: any): { 
-    icon: any, 
-    title: string, 
-    description: string, 
+  const parseEventDescription = (event: any): {
+    icon: any,
+    title: string,
+    description: string,
     category: 'events' | 'gestures' | 'screens',
     metadata?: { x?: number, y?: number, id?: number, elementId?: string, text?: string }
   } => {
@@ -3095,39 +3111,39 @@ export function SessionReplayPlayer() {
   // Highlight element in replay by ID
   const highlightElement = (elementId: number) => {
     if (!playerRef.current || !replayContainerRef.current) return
-    
+
     try {
       // Get the iframe containing the replay
       const iframe = replayContainerRef.current.querySelector('iframe') as HTMLIFrameElement
       if (!iframe || !iframe.contentWindow || !iframe.contentDocument) return
-      
+
       const iframeDoc = iframe.contentDocument
-      
+
       // Find element by ID (rrweb stores node IDs)
       // rrweb uses data-rrweb-id attribute or we can search by node ID
       const element = iframeDoc.querySelector(`[data-rrweb-id="${elementId}"]`) ||
-                     iframeDoc.querySelector(`[id="${elementId}"]`) ||
-                     Array.from(iframeDoc.querySelectorAll('*')).find((el: any) => {
-                       // Try to match by various attributes
-                       return el.getAttribute('data-rrweb-id') === String(elementId) ||
-                              el.id === String(elementId)
-                     })
-      
+        iframeDoc.querySelector(`[id="${elementId}"]`) ||
+        Array.from(iframeDoc.querySelectorAll('*')).find((el: any) => {
+          // Try to match by various attributes
+          return el.getAttribute('data-rrweb-id') === String(elementId) ||
+            el.id === String(elementId)
+        })
+
       if (element) {
         // Add pulse animation and red border
         const htmlElement = element as HTMLElement
         const originalBorder = htmlElement.style.border
         const originalOutline = htmlElement.style.outline
         const originalTransition = htmlElement.style.transition
-        
+
         htmlElement.style.border = '3px solid #ef4444'
         htmlElement.style.outline = '2px solid rgba(239, 68, 68, 0.3)'
         htmlElement.style.transition = 'all 0.3s ease'
         htmlElement.style.animation = 'pulse 1s ease-in-out 3'
-        
+
         // Scroll element into view
         htmlElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
-        
+
         // Remove highlight after 3 seconds
         setTimeout(() => {
           htmlElement.style.border = originalBorder
@@ -3135,7 +3151,7 @@ export function SessionReplayPlayer() {
           htmlElement.style.transition = originalTransition
           htmlElement.style.animation = ''
         }, 3000)
-        
+
         console.log(`✨ Highlighted element with ID: ${elementId}`)
       } else {
         console.warn(`⚠️ Could not find element with ID: ${elementId}`)
@@ -3148,23 +3164,23 @@ export function SessionReplayPlayer() {
   // Seek to a specific event timestamp
   const seekToEvent = (event: any, index: number) => {
     if (!event.timestamp) return
-    
+
     setSelectedEventIndex(index)
-    
+
     // Calculate time offset from first event
     const firstEvent = snapshots.find((s: any) => s.timestamp)
     if (!firstEvent) return
-    
+
     const eventTime = event.timestamp
     const firstTime = firstEvent.timestamp
     const timeOffset = eventTime - firstTime
-    
+
     // Pause playback first
     if (playerRef.current && isPlaying) {
       playerRef.current.pause()
       setIsPlaying(false)
     }
-    
+
     // Seek to the event timestamp
     if (playerRef.current) {
       try {
@@ -3174,10 +3190,10 @@ export function SessionReplayPlayer() {
         console.log("Seeking to:", timeOffset)
         const currentTime = playerRef.current.getCurrentTime()
         console.log("Current time:", currentTime)
-        
+
         try {
           // Use type assertion since seek() may not be in TypeScript definitions
-          ;(playerRef.current as any).seek(timeOffset)
+          ; (playerRef.current as any).seek(timeOffset)
           setCurrentTime(timeOffset)
           setIsFinished(false) // Reset finished state when seeking
           console.log(`🎯 Seeking to event at ${timeOffset}ms (${formatDuration(timeOffset)})`, { event, index })
@@ -3187,7 +3203,7 @@ export function SessionReplayPlayer() {
           // Fallback to goto if seek doesn't work
           console.warn('seek() not available, using goto():', error)
           try {
-            ;(playerRef.current as any).goto(timeOffset)
+            ; (playerRef.current as any).goto(timeOffset)
             setCurrentTime(timeOffset)
             setIsFinished(false) // Reset finished state when seeking
             playerRef.current.play()
@@ -3200,7 +3216,7 @@ export function SessionReplayPlayer() {
             setCurrentTime(timeOffset)
           }
         }
-        
+
         // Highlight element if ID is available
         const parsed = parseEventDescription(event)
         if (parsed.metadata?.id) {
@@ -3255,7 +3271,7 @@ export function SessionReplayPlayer() {
       navigate(`/dashboard/sessions/${projectId}`)
     }
   }, [error, navigate, projectId])
-  
+
   if (error) {
     return null // Don't render anything while redirecting
   }
@@ -3263,18 +3279,18 @@ export function SessionReplayPlayer() {
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* Left Panel - Session List */}
-      <div style={{ 
+      <div style={{
         width: isReplayExpanded ? '0' : '220px',
         overflow: isReplayExpanded ? 'hidden' : 'visible',
-        backgroundColor: 'white', 
+        backgroundColor: 'white',
         borderRight: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
         display: 'flex',
         flexDirection: 'column',
         transition: 'width 0.3s ease, border 0.3s ease',
         flexShrink: 0
       }}>
-        <div style={{ 
-          padding: '0.75rem', 
+        <div style={{
+          padding: '0.75rem',
           borderBottom: '1px solid #e5e7eb',
           fontWeight: '500',
           color: '#111827',
@@ -3282,20 +3298,20 @@ export function SessionReplayPlayer() {
         }}>
           Session
         </div>
-        
+
         <div style={{ flex: 1, overflowY: 'auto' }}>
           {sessions.map((s) => {
             const isSelected = s.id === sessionId || s.session_id === sessionId
             const sessionKey = s.session_id || s.id
             const isBookmarked = bookmarkedSessions.has(sessionKey)
-            
+
             return (
               <div
                 key={s.id}
                 onClick={(e) => {
                   // Don't navigate if clicking checkbox or bookmark
-                  if ((e.target as HTMLElement).closest('input[type="checkbox"]') || 
-                      (e.target as HTMLElement).closest('button')) {
+                  if ((e.target as HTMLElement).closest('input[type="checkbox"]') ||
+                    (e.target as HTMLElement).closest('button')) {
                     return
                   }
                   // Use session_id (SDK session ID) for navigation, not database id
@@ -3315,20 +3331,20 @@ export function SessionReplayPlayer() {
                 onMouseEnter={(e) => !isSelected && (e.currentTarget.style.backgroundColor = '#f9fafb')}
                 onMouseLeave={(e) => !isSelected && (e.currentTarget.style.backgroundColor = 'white')}
               >
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   onClick={(e) => e.stopPropagation()}
                   style={{ cursor: 'pointer', width: '14px', height: '14px', flexShrink: 0 }}
                 />
-                <Circle 
-                  className="icon-small" 
-                  style={{ 
-                    width: '6px', 
-                    height: '6px', 
+                <Circle
+                  className="icon-small"
+                  style={{
+                    width: '6px',
+                    height: '6px',
                     fill: isSelected ? '#3b82f6' : '#ef4444',
                     color: isSelected ? '#3b82f6' : '#ef4444',
                     flexShrink: 0
-                  }} 
+                  }}
                 />
                 <button
                   onClick={(e) => {
@@ -3351,14 +3367,14 @@ export function SessionReplayPlayer() {
                     flexShrink: 0
                   }}
                 >
-                  <Bookmark 
-                    className="icon-small" 
-                    style={{ 
-                      width: '12px', 
+                  <Bookmark
+                    className="icon-small"
+                    style={{
+                      width: '12px',
                       height: '12px',
                       fill: isBookmarked ? '#ef4444' : 'none',
                       color: isBookmarked ? '#ef4444' : '#9ca3af'
-                    }} 
+                    }}
                   />
                 </button>
                 {isSelected ? (
@@ -3370,42 +3386,42 @@ export function SessionReplayPlayer() {
                   {(() => {
                     // Format time/date: "23:45 - 01 Feb 2026"
                     const startTime = s.start_time ? new Date(s.start_time) : null
-                    const timeStr = startTime 
+                    const timeStr = startTime
                       ? `${startTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })} - ${startTime.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}`
                       : '—'
-                    
+
                     // Get city and country
                     const city = (s as any).location?.city ||
-                                 s.device_info?.city || 
-                                 (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).city : null) ||
-                                 s.user_properties?.city || 
-                                 null
+                      s.device_info?.city ||
+                      (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).city : null) ||
+                      s.user_properties?.city ||
+                      null
                     const country = (s as any).location?.country ||
-                                   s.device_info?.country || 
-                                   (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).country : null) ||
-                                   s.user_properties?.country || 
-                                   null
-                    
+                      s.device_info?.country ||
+                      (typeof s.device_info === 'object' && s.device_info !== null ? (s.device_info as any).country : null) ||
+                      s.user_properties?.country ||
+                      null
+
                     // Format duration
                     const duration = s.duration ? Math.round(s.duration / 1000) : 0
                     const mins = Math.floor(duration / 60)
                     const secs = duration % 60
                     const durationStr = `${mins}:${secs.toString().padStart(2, '0')}`
-                    
+
                     return (
                       <>
                         <div style={{ fontSize: '0.75rem', fontWeight: '500', color: '#111827', lineHeight: '1.3', marginBottom: '0.125rem' }}>
                           {timeStr}
-                  </div>
+                        </div>
                         {city && (
                           <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2' }}>
                             {city}
-                  </div>
+                          </div>
                         )}
                         {country && (
                           <div style={{ fontSize: '0.6875rem', color: '#6b7280', lineHeight: '1.2', marginBottom: '0.125rem' }}>
                             {country}
-                  </div>
+                          </div>
                         )}
                         <div style={{ fontSize: '0.625rem', color: '#9ca3af', lineHeight: '1.2' }}>
                           {durationStr}
@@ -3418,17 +3434,17 @@ export function SessionReplayPlayer() {
             )
           })}
         </div>
-        
+
         {/* Pagination */}
-        <div style={{ 
-          padding: '0.75rem', 
+        <div style={{
+          padding: '0.75rem',
           borderTop: '1px solid #e5e7eb',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           gap: '0.375rem'
         }}>
-          <button style={{ 
+          <button style={{
             padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
@@ -3438,7 +3454,7 @@ export function SessionReplayPlayer() {
           }}>
             &lt;
           </button>
-          <button style={{ 
+          <button style={{
             padding: '0.25rem 0.375rem',
             border: '1px solid #9333ea',
             borderRadius: '4px',
@@ -3449,7 +3465,7 @@ export function SessionReplayPlayer() {
           }}>
             1
           </button>
-          <button style={{ 
+          <button style={{
             padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
@@ -3459,7 +3475,7 @@ export function SessionReplayPlayer() {
           }}>
             2
           </button>
-          <button style={{ 
+          <button style={{
             padding: '0.25rem 0.375rem',
             border: '1px solid #e5e7eb',
             borderRadius: '4px',
@@ -3475,8 +3491,8 @@ export function SessionReplayPlayer() {
       {/* Center Panel - Replay */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: '#f9fafb', overflow: 'hidden', minHeight: 0 }}>
         {/* Top Bar */}
-        <div style={{ 
-          padding: '1rem 1.5rem', 
+        <div style={{
+          padding: '1rem 1.5rem',
           backgroundColor: 'white',
           borderBottom: '1px solid #e5e7eb',
           display: 'flex',
@@ -3485,49 +3501,49 @@ export function SessionReplayPlayer() {
           justifyContent: 'space-between'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', flex: 1 }}>
-          {session && (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <User className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>{session.session_id || session.id}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>
-                  {(() => {
-                    const city = (session as any).location?.city ||
-                                 session.device_info?.city || 
-                                 (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
-                                 session.user_properties?.city || 
-                                 null
-                    const country = (session as any).location?.country ||
-                                   session.device_info?.country || 
-                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
-                                   session.user_properties?.country || 
-                                   null
-                    if (city && country) {
-                      return `${city}, ${country}`
-                    } else if (city) {
-                      return city
-                    } else if (country) {
-                      return country
-                    }
-                    return 'Unknown'
-                  })()}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
-                <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
-                <span>Labels</span>
-              </div>
-            </>
-          )}
+            {session && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <User className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>{session.session_id || session.id}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <MapPin className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>
+                    {(() => {
+                      const city = (session as any).location?.city ||
+                        session.device_info?.city ||
+                        (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                        session.user_properties?.city ||
+                        null
+                      const country = (session as any).location?.country ||
+                        session.device_info?.country ||
+                        (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                        session.user_properties?.country ||
+                        null
+                      if (city && country) {
+                        return `${city}, ${country}`
+                      } else if (city) {
+                        return city
+                      } else if (country) {
+                        return country
+                      }
+                      return 'Unknown'
+                    })()}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <Calendar className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>{new Date(session.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#111827' }}>
+                  <Tag className="icon-small" style={{ width: '16px', height: '16px' }} />
+                  <span>Labels</span>
+                </div>
+              </>
+            )}
           </div>
-          
+
           {/* Expand/Collapse Button */}
           <button
             onClick={() => setIsReplayExpanded(!isReplayExpanded)}
@@ -3566,8 +3582,8 @@ export function SessionReplayPlayer() {
         </div>
 
         {/* Replay Container */}
-        <div style={{ 
-          flex: 1, 
+        <div style={{
+          flex: 1,
           padding: '0.5rem',
           display: 'flex',
           alignItems: selectedPlatform === 'mobile' ? 'center' : 'stretch',
@@ -3577,9 +3593,9 @@ export function SessionReplayPlayer() {
           minHeight: 0,
           position: 'relative' // Needed for absolute positioning of controls
         }}>
-          <div 
+          <div
             ref={replayContainerRef}
-            style={{ 
+            style={{
               width: selectedPlatform === 'mobile' ? '375px' : '100%',
               height: selectedPlatform === 'mobile' ? '667px' : '100%',
               maxWidth: selectedPlatform === 'mobile' ? '375px' : '100%',
@@ -3598,7 +3614,7 @@ export function SessionReplayPlayer() {
           >
             {/* Show loading state - only when no snapshots loaded yet */}
             {false && snapshots.length === 0 && (
-              <div style={{ 
+              <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -3613,12 +3629,12 @@ export function SessionReplayPlayer() {
                 zIndex: 10,
                 backgroundColor: 'white'
               }}>
-                <div style={{ 
-                  width: '32px', 
-                  height: '32px', 
-                  border: '2px solid #9333ea', 
-                  borderTop: 'transparent', 
-                  borderRadius: '50%', 
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  border: '2px solid #9333ea',
+                  borderTop: 'transparent',
+                  borderRadius: '50%',
                   animation: 'spin 1s linear infinite',
                   marginBottom: '0.5rem'
                 }}></div>
@@ -3627,7 +3643,7 @@ export function SessionReplayPlayer() {
             )}
             {/* Show error state - only when no snapshots */}
             {error && snapshots.length === 0 && (
-              <div style={{ 
+              <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -3715,10 +3731,10 @@ export function SessionReplayPlayer() {
                 />
               </div>
             )}
-            
+
             {/* Show loading message when data is being fetched */}
             {isLoadingData && snapshots.length === 0 && !hasVideo && (
-              <div style={{ 
+              <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -3733,12 +3749,12 @@ export function SessionReplayPlayer() {
                 zIndex: 10,
                 backgroundColor: 'white'
               }}>
-                <div style={{ 
-                  width: '48px', 
-                  height: '48px', 
-                  border: '3px solid #e5e7eb', 
-                  borderTop: '3px solid #9333ea', 
-                  borderRadius: '50%', 
+                <div style={{
+                  width: '48px',
+                  height: '48px',
+                  border: '3px solid #e5e7eb',
+                  borderTop: '3px solid #9333ea',
+                  borderRadius: '50%',
                   animation: 'spin 1s linear infinite',
                   marginBottom: '1rem'
                 }}></div>
@@ -3748,10 +3764,10 @@ export function SessionReplayPlayer() {
                 </p>
               </div>
             )}
-            
+
             {/* Show "no data" message only when NOT loading, no error, no snapshots, and no video */}
             {!isLoadingData && snapshots.length === 0 && !hasVideo && (
-              <div style={{ 
+              <div style={{
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -3781,7 +3797,7 @@ export function SessionReplayPlayer() {
               </div>
             )}
             {/* Replay player will be rendered here by initializePlayer() when snapshots.length > 0 */}
-            
+
             {/* Skip Inactivity Indicator */}
             {isSkippingInactivity && skipInactivity && (
               <div style={{
@@ -3807,11 +3823,11 @@ export function SessionReplayPlayer() {
                 <span>Skipping inactivity...</span>
               </div>
             )}
-            
+
           </div>
-          
+
           {/* Media Controls Container - White Container with Progress Bar Above - Like Picture 2 */}
-          <div 
+          <div
             id="session-replay-controls"
             style={{
               position: 'absolute',
@@ -3833,7 +3849,7 @@ export function SessionReplayPlayer() {
             }}
           >
             {/* Progress Bar Above Controls - Attached to Container */}
-            <div 
+            <div
               style={{
                 width: '100%',
                 height: '4px',
@@ -3848,7 +3864,7 @@ export function SessionReplayPlayer() {
                   const clickX = e.clientX - rect.left
                   const percentage = Math.max(0, Math.min(1, clickX / rect.width))
                   const targetTime = percentage * duration
-                  
+
                   if (hasVideo && videoPlayerRef.current) {
                     videoPlayerRef.current.currentTime = targetTime / 1000
                     setCurrentTime(targetTime)
@@ -3859,11 +3875,11 @@ export function SessionReplayPlayer() {
                       if (!playerRef.current || (playerRef.current as any).destroyed) {
                         return
                       }
-                      
+
                       // Direct seek - play() with timeOffset handles pause/play automatically
                       const wasPlaying = isPlaying
-                        playerRef.current.play(targetTime)
-                      
+                      playerRef.current.play(targetTime)
+
                       // Update state immediately for instant UI feedback
                       // The continuous progress update will take over from here
                       setCurrentTime(targetTime)
@@ -3879,7 +3895,7 @@ export function SessionReplayPlayer() {
               }}
             >
               {/* Blue progress overlay */}
-              <div 
+              <div
                 style={{
                   height: '100%',
                   width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
@@ -3906,7 +3922,7 @@ export function SessionReplayPlayer() {
                 }} />
               )}
             </div>
-            
+
             {/* Control Buttons Row */}
             <div style={{
               padding: '0.75rem 1rem',
@@ -3914,7 +3930,7 @@ export function SessionReplayPlayer() {
               alignItems: 'center',
               gap: '0.75rem'
             }}>
-              
+
               {/* Playback Controls */}
               <button
                 onClick={(e) => {
@@ -3930,14 +3946,14 @@ export function SessionReplayPlayer() {
                       if ((playerRef.current as any).destroyed) {
                         return
                       }
-                      
-                    const currentTime = playerRef.current.getCurrentTime()
-                    const targetTime = Math.max(0, currentTime - 5000)
-                      
+
+                      const currentTime = playerRef.current.getCurrentTime()
+                      const targetTime = Math.max(0, currentTime - 5000)
+
                       // Fast seek - directly use play(timeOffset)
                       const wasPlaying = isPlaying
-                        playerRef.current.play(targetTime)
-                      
+                      playerRef.current.play(targetTime)
+
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
                       setIsFinished(false) // Reset finished state when skipping
@@ -3965,7 +3981,7 @@ export function SessionReplayPlayer() {
               >
                 <SkipBack style={{ width: '18px', height: '18px' }} />
               </button>
-              
+
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -3994,7 +4010,7 @@ export function SessionReplayPlayer() {
                   <Play style={{ width: '18px', height: '18px' }} />
                 )}
               </button>
-              
+
               <button
                 onClick={(e) => {
                   e.stopPropagation()
@@ -4009,14 +4025,14 @@ export function SessionReplayPlayer() {
                       if ((playerRef.current as any).destroyed) {
                         return
                       }
-                      
-                    const currentTime = playerRef.current.getCurrentTime()
-                    const targetTime = Math.min(duration, currentTime + 5000)
-                      
+
+                      const currentTime = playerRef.current.getCurrentTime()
+                      const targetTime = Math.min(duration, currentTime + 5000)
+
                       // Fast seek - directly use play(timeOffset)
                       const wasPlaying = isPlaying
-                        playerRef.current.play(targetTime)
-                      
+                      playerRef.current.play(targetTime)
+
                       // Update state immediately - continuous progress update will take over
                       setCurrentTime(targetTime)
                       setIsFinished(false) // Reset finished state when skipping
@@ -4044,7 +4060,7 @@ export function SessionReplayPlayer() {
               >
                 <SkipForward style={{ width: '18px', height: '18px' }} />
               </button>
-              
+
               {/* Time Display */}
               <div style={{
                 color: '#6b7280',
@@ -4054,7 +4070,7 @@ export function SessionReplayPlayer() {
               }}>
                 {formatDuration(currentTime)}/{formatDuration(duration)} <span style={{ color: '#9333ea' }}>unknown</span>
               </div>
-              
+
               {/* Skip Inactivity */}
               <button
                 onClick={(e) => {
@@ -4064,12 +4080,12 @@ export function SessionReplayPlayer() {
                   // The useEffect will handle cleanup and speed reset
                   // But we can also reset immediately for better UX
                   if (!newSkipInactivity) {
-                  setIsSkippingInactivity(false)
+                    setIsSkippingInactivity(false)
                     if (playerRef.current && !(playerRef.current as any).destroyed) {
-                    try {
-                      playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
-                    } catch (e) {
-                      // Ignore errors
+                      try {
+                        playerRef.current.setConfig({ speed: basePlaybackSpeedRef.current })
+                      } catch (e) {
+                        // Ignore errors
                       }
                     }
                     // Clear interval immediately
@@ -4095,7 +4111,7 @@ export function SessionReplayPlayer() {
                 <FastForward style={{ width: '14px', height: '14px', color: '#3b82f6' }} />
                 Skip Inactivity: {skipInactivity ? 'On' : 'Off'}
               </button>
-              
+
               {/* Speed Selector */}
               <button
                 onClick={(e) => {
@@ -4118,7 +4134,7 @@ export function SessionReplayPlayer() {
                 {playbackSpeed}x
                 <ChevronRight style={{ width: '12px', height: '12px', transform: 'rotate(90deg)' }} />
               </button>
-              
+
               {/* Chat/Comments */}
               <button
                 onClick={(e) => {
@@ -4141,7 +4157,7 @@ export function SessionReplayPlayer() {
               >
                 <MessageCircle style={{ width: '18px', height: '18px' }} />
               </button>
-              
+
               {/* Settings */}
               <button
                 onClick={(e) => {
@@ -4164,7 +4180,7 @@ export function SessionReplayPlayer() {
               >
                 <Settings style={{ width: '18px', height: '18px' }} />
               </button>
-              
+
               {/* Fullscreen */}
               <button
                 onClick={(e) => {
@@ -4200,10 +4216,10 @@ export function SessionReplayPlayer() {
       </div>
 
       {/* Right Panel - Activity Timeline */}
-      <div style={{ 
+      <div style={{
         width: isReplayExpanded ? '0' : '280px',
         overflow: isReplayExpanded ? 'hidden' : 'visible',
-        backgroundColor: 'white', 
+        backgroundColor: 'white',
         borderLeft: isReplayExpanded ? 'none' : '1px solid #e5e7eb',
         display: 'flex',
         flexDirection: 'column',
@@ -4211,8 +4227,8 @@ export function SessionReplayPlayer() {
         flexShrink: 0
       }}>
         {/* Tabs */}
-        <div style={{ 
-          display: 'flex', 
+        <div style={{
+          display: 'flex',
           borderBottom: '1px solid #e5e7eb',
           padding: '0 0.75rem'
         }}>
@@ -4268,9 +4284,9 @@ export function SessionReplayPlayer() {
               <div>
                 {events.length > 0 ? (
                   <>
-                    <div style={{ 
-                      fontSize: '0.875rem', 
-                      color: '#6b7280', 
+                    <div style={{
+                      fontSize: '0.875rem',
+                      color: '#6b7280',
                       marginBottom: '1rem',
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -4286,7 +4302,7 @@ export function SessionReplayPlayer() {
                       const parsed = parseEventDescription(event)
                       const eventTime = event.timestamp ? formatTime(event.timestamp) : `${Math.round((index * 100) / 1000)}s`
                       const isSelected = selectedEventIndex === index
-                      
+
                       return (
                         <div
                           key={index}
@@ -4360,9 +4376,9 @@ export function SessionReplayPlayer() {
                             </button>
                           </div>
                           {parsed.metadata && parsed.metadata.id !== undefined && (
-                            <div style={{ 
-                              display: 'flex', 
-                              gap: '0.5rem', 
+                            <div style={{
+                              display: 'flex',
+                              gap: '0.5rem',
                               flexWrap: 'wrap',
                               marginTop: '0.25rem'
                             }}>
@@ -4387,9 +4403,9 @@ export function SessionReplayPlayer() {
                         <p style={{ fontSize: '0.75rem', marginTop: '0.5rem' }}>Try switching to another filter tab.</p>
                       </div>
                     )}
-                    <div style={{ 
-                      fontSize: '0.75rem', 
-                      color: '#6b7280', 
+                    <div style={{
+                      fontSize: '0.75rem',
+                      color: '#6b7280',
                       padding: '0.75rem',
                       fontStyle: 'italic',
                       textAlign: 'center'
@@ -4433,14 +4449,14 @@ export function SessionReplayPlayer() {
                   <div style={{ fontSize: '0.875rem', fontWeight: '500', color: '#111827' }}>
                     {(() => {
                       // Try multiple sources for location
-                      const city = session.device_info?.city || 
-                                   (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
-                                   session.user_properties?.city || 
-                                   null
-                      const country = session.device_info?.country || 
-                                     (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
-                                     session.user_properties?.country || 
-                                     null
+                      const city = session.device_info?.city ||
+                        (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).city : null) ||
+                        session.user_properties?.city ||
+                        null
+                      const country = session.device_info?.country ||
+                        (typeof session.device_info === 'object' && session.device_info !== null ? (session.device_info as any).country : null) ||
+                        session.user_properties?.country ||
+                        null
                       if (city && country) {
                         return `${city}, ${country}`
                       } else if (city) {
@@ -4468,7 +4484,7 @@ export function SessionReplayPlayer() {
             </div>
           )}
         </div>
-        
+
         {/* Navigation Buttons */}
         <div style={{
           padding: '1rem',
